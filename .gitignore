@@ -1,0 +1,11 @@
+.tools/
+.superpowers/
+build/
+dist/
+artifacts/
+**/bin/
+**/obj/
+.vs/
+*.user
+*.wav
+*.part

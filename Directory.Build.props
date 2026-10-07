@@ -1,0 +1,1 @@
+<Project><PropertyGroup><Deterministic>true</Deterministic><EnableNETAnalyzers>true</EnableNETAnalyzers><AnalysisLevel>latest</AnalysisLevel></PropertyGroup></Project>

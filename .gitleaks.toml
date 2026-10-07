@@ -1,0 +1,6 @@
+title = "SES source secret checks"
+[extend]
+useDefault = true
+[[allowlists]]
+description = "Generated binaries, portable tools and vendored upstream sources"
+paths = ['''(^|[/\\])(\.git|\.tools|build|dist|artifacts|third_party|bin|obj)([/\\]|$)''']
