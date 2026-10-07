@@ -1,0 +1,5 @@
+* text=auto eol=lf
+third_party/** -text
+*.ico -text
+*.png -text
+*.pth -text
