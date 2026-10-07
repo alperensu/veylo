@@ -264,6 +264,7 @@ public partial class MainWindow : Window
         var m=engine.Metrics();InputMeter.Value=Math.Max(-60,m.InputDb);OutputMeter.Value=Math.Max(-60,m.OutputDb);
         InputLevel.Text=$"{m.InputDb:0.0} dBFS";OutputLevel.Text=$"{m.OutputDb:0.0} dBFS";GainLevel.Text=$"{m.GainDb:+0.0;-0.0;0.0} dB";CompressionLevel.Text=$"{m.CompressionDb:0.0} dB";
         DiagnosticsText.Text=$"{T("dspTime")}: {m.ProcessingMs:0.00} ms  ·  {T("latency")}: {(m.Running!=0?m.EstimatedBufferMs.ToString("0.0")+" ms":"—")}  ·  {T("measuredLatency")}";
+        DiagnosticsText.Text+=$"\n{T("bufferErrors")}: {m.Underruns} / {m.Overruns}  ·  {T("clockDrift")}: {m.DriftPpm:0} ppm  ·  {T("inputClips")}: {m.ClippedSamples}";
         if(m.Running!=0&&m.Connected==0&&!sampling)Status("disconnected");
         else if(statusKey=="disconnected"&&m.Connected!=0)Status((OutputBox.SelectedItem as AudioDevice)?.Id.Length>0?"running":"localRunning");
         if(sampling&&!finishing){SampleProgress.Value=m.SampleFrames/48000d;if(calibrating)CalibrationMessage.Text=T(m.SampleFrames<240000?"ambientNow":"speechNow");if(m.SampleFrames>=(calibrating?720000u:960000u)||recordingClock.Elapsed.TotalSeconds>25)await FinishSample();}

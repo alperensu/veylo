@@ -105,4 +105,7 @@
  <s:String x:Key="imported">Profil içe aktarıldı.</s:String>
  <s:String x:Key="exported">Dosya kaydedildi.</s:String>
  <s:String x:Key="storeWarning">Kaydedilmiş ayarlar okunamadı; varsayılanlar yüklendi.</s:String>
+ <s:String x:Key="bufferErrors">Tampon hataları</s:String>
+ <s:String x:Key="clockDrift">Saat düzeltmesi</s:String>
+ <s:String x:Key="inputClips">Giriş taşmaları</s:String>
 </ResourceDictionary>

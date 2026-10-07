@@ -105,4 +105,7 @@
  <s:String x:Key="imported">Preset imported.</s:String>
  <s:String x:Key="exported">File saved.</s:String>
  <s:String x:Key="storeWarning">Saved settings could not be read; defaults were loaded.</s:String>
+ <s:String x:Key="bufferErrors">Buffer errors</s:String>
+ <s:String x:Key="clockDrift">Clock correction</s:String>
+ <s:String x:Key="inputClips">Input clips</s:String>
 </ResourceDictionary>

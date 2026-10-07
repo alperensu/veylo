@@ -83,7 +83,7 @@
      <CheckBox x:Name="StartupBox" Content="{DynamicResource startup}" Checked="StartupChanged" Unchecked="StartupChanged"/>
      <WrapPanel Margin="0,10,0,0"><TextBlock Text="{DynamicResource muteKey}" VerticalAlignment="Center"/><ComboBox x:Name="MuteKeyBox" Width="65" Margin="6,0,16,0" AutomationProperties.Name="{DynamicResource muteKey}"/><TextBlock Text="{DynamicResource bypassKey}" VerticalAlignment="Center"/><ComboBox x:Name="BypassKeyBox" Width="65" Margin="6,0,16,0" AutomationProperties.Name="{DynamicResource bypassKey}"/><Button Content="{DynamicResource applyKeys}" Click="ApplyKeysClick"/></WrapPanel>
     </StackPanel></Expander>
-    <TextBlock x:Name="DiagnosticsText" Style="{StaticResource Caption}" Margin="0,0,0,8"/>
+    <TextBlock x:Name="DiagnosticsText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,0,0,8"/>
    </StackPanel>
   </ScrollViewer>
   <Border Grid.Row="2" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,0" Margin="0,12,0,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock x:Name="StatusText" Text="{DynamicResource ready}" TextWrapping="Wrap" FontSize="12" AutomationProperties.LiveSetting="Polite"/><TextBlock Grid.Column="1" Text="{DynamicResource privacy}" Style="{StaticResource Caption}" Margin="16,0,0,0"/></Grid></Border>
