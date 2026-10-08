@@ -51,10 +51,12 @@ jobs:
           ./scripts/test.ps1 -Sanitize
       - name: Package self-contained Windows application
         run: ./scripts/package.ps1 -SkipBuild
+      - name: Test per-user installer lifecycle
+        run: ./scripts/test-installer.ps1
       - name: Verify published checksums
         run: |
-          $checksums = @(Get-ChildItem dist/*.zip.sha256)
-          if ($checksums.Count -ne 2) { throw 'Expected application and source archives only' }
+          $checksums = @(Get-ChildItem dist/*.sha256)
+          if ($checksums.Count -ne 3) { throw 'Expected application, installer and source checksums only' }
           foreach ($checksum in $checksums) {
             $archive = $checksum.FullName.Substring(0, $checksum.FullName.Length - 7)
             $expected = (Get-Content -LiteralPath $checksum.FullName -Raw).Trim().Split(' ')[0]
@@ -70,6 +72,8 @@ jobs:
             dist/Veylo-*-win-x64.zip
             dist/Veylo-*-source.zip
             dist/Veylo-*.zip.sha256
+            dist/Veylo-*-win-x64-Setup.exe
+            dist/Veylo-*-win-x64-Setup.exe.sha256
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
@@ -82,6 +86,8 @@ jobs:
             artifacts/ui/
             artifacts/security/*.json
             artifacts/security/clang.txt
+            artifacts/installer/result.json
+            artifacts/installer/*.log
             build/Testing/Temporary/LastTest.log
             build/asan/Testing/Temporary/LastTest.log
           if-no-files-found: ignore

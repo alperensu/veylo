@@ -7,7 +7,7 @@
 [Sürümler](https://github.com/alperensu/veylo/releases) ·
 [Katkı ve GitHub akışı](CONTRIBUTING.md)
 
-Repo başlangıçta özeldir. GitHub erişimi verilen hesaplar kaynakları ve paketleri görebilir.
+Kaynak kod ve indirilebilir paketler GitHub üzerinden dağıtılır.
 
 Ad değişikliği ve eski ayarlarla uyumluluk: [BRANDING.md](docs/BRANDING.md).
 
@@ -22,7 +22,7 @@ genel ses kalitesi kabulünü bu iki uygulama belirlemez. Kullanıcı 8 Ekim 202
 kendi kurulumunda seslerin temizlendiğini ve sorun olmadığını bildirdi.
 Bu geri bildirim tüm mikrofonlar ve uygulamalar için uyumluluk garantisi değildir.
 
-**0.7.1-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
+**0.7.2-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
 işleme başlar; Başlat/Durdur kaldırıldı. Pencereyi kapatmak bildirim alanına
 gizler; Veylo'dan çık mikrofonu bırakır. Eski profiller/kalibrasyonlar korunur.
 
@@ -39,7 +39,14 @@ Veylo Mikrofon seçeneği bu sürücü olmadan uygulamalara ses taşımaz. VB-CA
 bu sürücüye ihtiyaç duymaz; gerçek uygulama/uzun süreli performans kabulü beklenir.
 Sürücü sertifikası satın alınmadı veya imzalı sürücü yayımlanmadı; eski yerel paketler korunmuştur.
 
-ZIP'i tamamen çıkar ve Veylo.exe aç. Kullanım [INSTALL.md](docs/INSTALL.md),
+[Son sürümden](https://github.com/alperensu/veylo/releases) **win-x64-Setup.exe**
+indirerek kur veya taşınabilir **win-x64.zip** paketini tamamen çıkarıp Veylo.exe aç.
+Kurulum kullanıcı hesabına yapılır; yönetici izni istemez. Başlat menüsü kısayolu
+ekler, masaüstü kısayolu isteğe bağlıdır. Kaldırma profilleri/kalibrasyonları korur.
+VB-CABLE ayrı kurulur. Geliştirme kurulum dosyası kod imzalı değildir; Windows
+tanınmayan yayıncı/SmartScreen uyarısı gösterebilir. Güvenlik ayarlarını kapatma;
+dosya adını, GitHub kaynağını ve yayımlanan SHA-256 değerini doğrula.
+Kullanım [INSTALL.md](docs/INSTALL.md),
 sürücü/imzalama/laboratuvar [DRIVER.md](docs/DRIVER.md),
 kapsam ve ölçüm sınırları [VALIDATION.md](docs/VALIDATION.md),
 özellik bazında kabul durumu [ACCEPTANCE.md](docs/ACCEPTANCE.md).
@@ -69,6 +76,13 @@ Ayrıntı [UI.md](docs/UI.md). Gerçek oyun FPS/frametime testi yapılmadı.
     ./scripts/security.ps1
     ./scripts/build-driver.ps1 -DownloadKit
     ./scripts/package.ps1 -SkipBuild
+    ./scripts/test-installer.ps1
+
+Paketleme resmî Inno Setup 7.1.0 derleyicisini SHA-256 ile sabitler ve gerektiğinde
+`.tools` altına kurar. Üç çıktı üretilir: kurulum EXE'si, taşınabilir ZIP ve kaynak ZIP;
+her biri için `.sha256` dosyası vardır. Kurulum testleri ayrı ürün kimliği ve dizinle
+çalışır; gerçek kullanıcı profiline/başlangıç tercihine dokunmaz. Inno Setup ticari
+kullanımı için kendi lisans koşulları ayrıca değerlendirilmelidir.
 
 Profil kaydetme/içe aktarma sırasında diske yazma başarısızsa başarı mesajı
 gösterilmez. Masaüstü kayıt testleri, gerçek kullanıcı ayarlarına veya ses
