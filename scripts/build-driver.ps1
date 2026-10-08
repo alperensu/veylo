@@ -40,7 +40,8 @@ try {
     & (Join-Path $kit 'bin/10.0.26100.0/x86/Inf2Cat.exe') "/driver:$packet" /os:10_VB_X64,10_CO_X64,10_NI_X64,10_GE_X64 /uselocaltime 2>&1 | Tee-Object 'build/driver/inf2cat.log'
     if($LASTEXITCODE -ne 0){throw 'Catalog generation failed'}
     Copy-Item -LiteralPath 'driver/upstream/sysvad/LICENSE' -Destination (Join-Path $packet 'SYSVAD-LICENSE') -Force
-    $hashes=@{};Get-ChildItem -LiteralPath $packet -File | ForEach-Object {$hashes[$_.Name]=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
-    @{schema=1;version='0.5.0-dev';signed=$false;dailyUseReady=$false;abi=4;protocol=1;kit=$lock.kit;sysvadCommit=(Get-Content driver/upstream.lock.json -Raw | ConvertFrom-Json).commit;files=$hashes} | ConvertTo-Json -Depth 4 | Set-Content (Join-Path $packet 'development-manifest.json')
+    . (Join-Path $PSScriptRoot 'driver-package.ps1')
+    New-DevelopmentDriverManifest $packet
+    Assert-DevelopmentDriverPackage $packet | Out-Null
     Write-Output 'Development driver built and analyzed. Not signed, not installed, not validated in a Windows lab.'
 } finally {Pop-Location}

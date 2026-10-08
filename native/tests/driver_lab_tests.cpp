@@ -13,11 +13,18 @@ int main(int argc,char** argv){
     for(DWORD size=0;size<sizeof(hello);++size)check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&hello,size,&status,sizeof(status),&bytes,nullptr),"short hello rejected");
     auto bad=hello;bad.version=2;check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&bad,sizeof(bad),&status,sizeof(status),&bytes,nullptr),"version mismatch");
     bad=hello;bad.channels=2;check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&bad,sizeof(bad),&status,sizeof(status),&bytes,nullptr),"invalid channels");
+    bad=hello;bad.rate=44100;check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&bad,sizeof(bad),&status,sizeof(status),&bytes,nullptr),"invalid rate");
+    bad=hello;bad.bits=16;check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&bad,sizeof(bad),&status,sizeof(status),&bytes,nullptr),"producer must use PCM32");
+    bad=hello;bad.frames=0;check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&bad,sizeof(bad),&status,sizeof(status),&bytes,nullptr),"invalid hello frames");
+    bad=hello;bad.size=0;check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&bad,sizeof(bad),&status,sizeof(status),&bytes,nullptr),"invalid declared hello size");
+    check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status)-1,&bytes,nullptr),"short status output rejected");
     check(DeviceIoControl(first,SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status),&bytes,nullptr)&&status.version==1&&bytes==sizeof(status),"valid connect");
     HANDLE second=CreateFileW(SES_DRIVER_PATH,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,0,nullptr);
     if(second!=INVALID_HANDLE_VALUE){check(!DeviceIoControl(second,SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status),&bytes,nullptr),"second owner denied");CloseHandle(second);}else check(false,"second handle opens for ownership test");
     for(DWORD size=0;size<sizeof(packet);size+=31)check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,size,nullptr,0,&bytes,nullptr),"short packet rejected");
     packet.frames=0;check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"zero frame packet rejected");packet.frames=480;
+    packet.reserved=1;check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"reserved packet bits rejected");packet.reserved=0;
+    packet.sequence=1;check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"out-of-order packet rejected");packet.sequence=0;
     check(DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"valid PCM32 packet");
     check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"replayed packet rejected");
     check(!DeviceIoControl(first,SES_DRIVER_IOCTL(0x900),nullptr,0,nullptr,0,&bytes,nullptr),"unknown ioctl denied");

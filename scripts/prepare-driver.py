@@ -9,7 +9,12 @@ for file,digest in lock['files'].items():
 target=root/'build/driver/sysvad'
 shutil.copytree(source,target,dirs_exist_ok=True)
 def edit(file,transform):
-    p=target/file;p.write_text(transform(p.read_text(encoding='utf-8-sig')),encoding='utf-8')
+    p=target/file;original=p.read_text(encoding='utf-8-sig');adapted=transform(original)
+    if adapted==original:raise SystemExit('Required adaptation made no change: '+file)
+    p.write_text(adapted,encoding='utf-8')
+def replace_required(s,old,new,count=1):
+    if s.count(old)!=count:raise SystemExit('Unexpected SYSVAD transform anchor: '+old[:90])
+    return s.replace(old,new)
 def pairs(s):
     begin=s.index('static\nENDPOINT_MINIPAIR MicInMiniports')
     end=s.index('/*********************************************************************',begin)
@@ -40,7 +45,16 @@ def formats(s):
     return s
 edit('TabletAudioSample/micinwavtable.h',formats)
 def stream(s):
-    s=s.replace('#include <sysvad.h>','#include <sysvad.h>\n#include "bridge.h"')
+    s=replace_required(s,'#include <sysvad.h>','#include <sysvad.h>\n#include "bridge.h"\n#include "format_validation.h"')
+    s=replace_required(s,'    pWfEx = GetWaveFormatEx(DataFormat_);','    if(!SesValidateCaptureFormat(DataFormat_))return STATUS_INVALID_PARAMETER;\n    pWfEx = GetWaveFormatEx(DataFormat_);')
+    # Cancel/wait BEFORE releasing anything the notification callback uses.
+    a=s.index('    if (m_pNotificationTimer)')
+    b=s.index('    KeFlushQueuedDpcs();',a)+len('    KeFlushQueuedDpcs();')
+    timer_cleanup=s[a:b];s=s[:a]+s[b:]
+    s=replace_required(s,'    PAGED_CODE();\n    if (NULL != m_pMiniport)','    PAGED_CODE();\n'+timer_cleanup+'\n    if (NULL != m_pMiniport)')
+    s=replace_required(s,'    m_pDmaBuffer = (BYTE*)m_pPortStream->MapAllocatedPages(pBufferMdl, MmCached);','    m_pDmaBuffer = (BYTE*)m_pPortStream->MapAllocatedPages(pBufferMdl, MmCached);\n    if(!m_pDmaBuffer){m_pPortStream->FreePagesFromMdl(pBufferMdl);return STATUS_INSUFFICIENT_RESOURCES;}',2)
+    s=replace_required(s,'    ulBufferDurationMs = (RequestedSize_ * 1000) / m_ulDmaMovementRate;','    ulBufferDurationMs = static_cast<ULONG>((static_cast<ULONGLONG>(RequestedSize_) * 1000) / m_ulDmaMovementRate);')
+    s=replace_required(s,'    if ((NotificationCount_ == 0) || (RequestedSize_ % NotificationCount_ != 0))','    if (!ses_driver::validNotificationBuffer(RequestedSize_,NotificationCount_,m_pWfExt->Format.nBlockAlign))')
     begin=s.index('    if (m_bCapture)\n    {\n        ReadRegistrySettings();')
     end=s.index('    else if (!g_DoNotCreateDataFiles)',begin)
     s=s[:begin]+'''    if (m_bCapture)
@@ -54,9 +68,39 @@ def stream(s):
     s=s.replace('    ULONG bufferOffset = m_ullLinearPosition % m_ulDmaBufferSize;','''    if(!m_ulDmaBufferSize)return;
     if(ByteDisplacement>m_ulDmaBufferSize){RtlZeroMemory(m_pDmaBuffer,m_ulDmaBufferSize);return;}
     ULONG bufferOffset = m_ullLinearPosition % m_ulDmaBufferSize;''')
+    a=s.index('    ULONG TimeElapsedInMS = (ULONG)(hnsCurrentTime - m_ullDmaTimeStamp')
+    b=s.index('    // Increment presentation position',a)
+    s=s[:a]+'''    if(!m_ulDmaBufferSize||!m_pDmaBuffer)return;
+    const uint64_t elapsed=ses_driver::elapsedHns(static_cast<uint64_t>(hnsCurrentTime),static_cast<uint64_t>(m_ullDmaTimeStamp));
+    const auto movement=ses_driver::advancePcm(elapsed,m_pWfExt->Format.nBlockAlign,m_byteDisplacementCarryForward);
+    m_byteDisplacementCarryForward=movement.fraction;
+    m_hnsElapsedTimeCarryForward=movement.fraction/SES_DRIVER_RATE;
+    ULONGLONG ByteDisplacement=movement.bytes;
+
+'''+s[b:]
+    s=replace_required(s,'    _In_ ULONG ByteDisplacement','    _In_ ULONGLONG ByteDisplacement',2)
+    s=replace_required(s,'ULONG runWrite = min(ByteDisplacement, m_ulDmaBufferSize - bufferOffset);','ULONG runWrite = static_cast<ULONG>(min(ByteDisplacement, static_cast<ULONGLONG>(m_ulDmaBufferSize - bufferOffset)));',2)
+    a=s.index('    ULONG TimeElapsedInMS = (ULONG)(hnsCurrentTime - _this->m_ullLastDPCTimeStamp')
+    b=s.index('    if (!bufferCompleted',a)
+    s=s[:a]+'''    const uint64_t elapsed=ses_driver::elapsedHns(static_cast<uint64_t>(hnsCurrentTime),static_cast<uint64_t>(_this->m_ullLastDPCTimeStamp),static_cast<uint64_t>(_this->m_hnsDPCTimeCarryForward));
+    const uint64_t interval=static_cast<uint64_t>(_this->m_ulNotificationIntervalMs)*10000;
+    uint64_t completedIntervals=0;
+    if(interval&&elapsed>=interval){
+        completedIntervals=elapsed/interval;
+        _this->m_hnsDPCTimeCarryForward=elapsed%interval;
+        _this->m_ullLastDPCTimeStamp=hnsCurrentTime;
+        bufferCompleted=TRUE;
+    }
+
+'''+s[b:]
+    s=replace_required(s,'        _this->m_llPacketCounter++;','        _this->m_llPacketCounter+=static_cast<LONGLONG>(completedIntervals);')
+    # DMA progress must follow the 1ms emulation clock even when a client asks
+    # for a much larger notification period; otherwise the producer stalls.
+    s=replace_required(s,'    _this->UpdatePosition(qpc);','')
+    s=replace_required(s,'    if (!bufferCompleted && !_this->m_bEoSReceived)','    _this->UpdatePosition(qpc);\n    if (!bufferCompleted && !_this->m_bEoSReceived)')
     return s
 edit('EndpointsCommon/minwavertstream.cpp',stream)
-edit('EndpointsCommon/minwavertstream.h',lambda s:s.replace('#include "tonegenerator.h"','').replace('    ToneGenerator               m_ToneGenerator;',''))
+edit('EndpointsCommon/minwavertstream.h',lambda s:s.replace('#include "tonegenerator.h"','').replace('    ToneGenerator               m_ToneGenerator;','').replace('_In_ ULONG ByteDisplacement','_In_ ULONGLONG ByteDisplacement'))
 edit('EndpointsCommon/MiniportStreamAudioEngineNode.cpp',lambda s:s.replace('m_ToneGenerator.SetMute(protectionOption == CONSTRICTOR_OPTION_MUTE);','UNREFERENCED_PARAMETER(protectionOption);'))
 def no_sideband(s):
     # Upstream's engine-node methods have sideband branches outside feature guards.
@@ -77,8 +121,9 @@ def adapter(s):
     s=s.replace('#include <sysvad.h>','#include <sysvad.h>\n#include "bridge.h"')
     s=s.replace('    ReleaseRegistryStringBuffer();\n\n    if (DriverObject == NULL)','    SesBridgeShutdown();\n    ReleaseRegistryStringBuffer();\n\n    if (DriverObject == NULL)',1)
     s=s.replace('    ntStatus = STATUS_SUCCESS;\n    \nDone:', '    ntStatus = SesBridgeInitialize(DriverObject);\n    \nDone:',1)
-    s=s.replace('    return ntStatus;\n} // StartDevice','    if(NT_SUCCESS(ntStatus))SesBridgeOnline(TRUE);\n    return ntStatus;\n} // StartDevice')
-    s=s.replace('    case IRP_MN_STOP_DEVICE:\n','    case IRP_MN_STOP_DEVICE:\n        SesBridgeOnline(FALSE);\n')
+    s=replace_required(s,'    ntStatus = NewAdapterCommon(','    ntStatus = SesBridgeStart(DeviceObject);\n    IF_FAILED_JUMP(ntStatus, Exit);\n    ntStatus = NewAdapterCommon(')
+    s=replace_required(s,'    return ntStatus;\n} // StartDevice','    SesBridgeOnline(DeviceObject,NT_SUCCESS(ntStatus));\n    return ntStatus;\n} // StartDevice')
+    s=replace_required(s,'    case IRP_MN_STOP_DEVICE:\n','    case IRP_MN_STOP_DEVICE:\n        if(stack->MinorFunction==IRP_MN_REMOVE_DEVICE)SesBridgeRemove(_DeviceObject);\n        else SesBridgeOnline(_DeviceObject,FALSE);\n')
     # Remove SYSVAD's demonstration registration of the calling thread as a
     # streaming resource. SES has no driver-owned streaming thread to register.
     a=s.index('        //\n        // Test: add and remove current thread as streaming audio resource.')
@@ -114,6 +159,10 @@ def modules(s):
     return s
 edit('EndpointsCommon/AudioModuleHelper.cpp',modules)
 def no_kernel_modules(s):
+    s=replace_required(s,'#include <sysvad.h>','#include <sysvad.h>\n#include "format_validation.h"')
+    s=replace_required(s,'    *OutStream = NULL;','    *OutStream = NULL;\n    if(!SesValidateCaptureFormat(DataFormat))return STATUS_INVALID_PARAMETER;')
+    s=replace_required(s,'    cPinFormats = GetPinSupportedDeviceFormats(_ulPin, &pPinFormats);','    if(!SesValidateCaptureFormat(_pDataFormat))return STATUS_NO_MATCH;\n    cPinFormats = GetPinSupportedDeviceFormats(_ulPin, &pPinFormats);')
+    s=replace_required(s,'if (pFormat->DataFormat.FormatSize < sizeof(KSDATAFORMAT_WAVEFORMATEX))','if (_pDataFormat->FormatSize < sizeof(KSDATAFORMAT) + sizeof(WAVEFORMATEX))')
     begin=s.index('    ULONG cModules = GetAudioModuleListCount();')
     end=s.index('    //\n    // Init the audio-engine used by the render devices.',begin)
     s=s[:begin]+'    if(GetAudioModuleListCount()!=0)return STATUS_NOT_SUPPORTED;\n\n'+s[end:]

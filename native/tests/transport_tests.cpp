@@ -21,7 +21,7 @@ int main(){
     auto bad=hello;bad.version=2;check(!ring.connect(bad,0),"Reject incompatible version");bad=hello;bad.rate=44100;check(!ring.connect(bad,0),"Reject rate");
     check(ring.connect(hello,0),"Connect");SesDriverPacket p{1,sizeof(p),480,0,0,{}};for(auto& x:p.pcm)x=1073741824;
     bad=hello;bad.size=0;check(!ring.connect(bad,0),"Reject size");auto corrupt=p;corrupt.reserved=1;check(!ring.push(corrupt,0),"Reject reserved");
-    check(ring.push(p,0),"Push");check(!ring.push(p,0),"Reject replay");++p.sequence;check(ring.push(p,10),"Second packet");ring.pull(out.data(),480,32,10);check(out[0]==1073741824,"PCM32 preserved");
+    check(ring.push(p,0),"Push");check(!ring.push(p,0),"Reject replay");++p.sequence;check(ring.push(p,10),"Second packet");++p.sequence;check(ring.push(p,10),"Third packet primes with a complete reserve");ring.pull(out.data(),480,32,10);check(out[0]==1073741824,"PCM32 preserved");
     std::array<int16_t,480> narrow{};ring.pull(narrow.data(),480,16,20);check(narrow[0]==16384,"PCM16 conversion");
     ring.pull(out.data(),480,32,120);check(out[0]==0&&out.back()==0&&ring.queued()==0,"Timeout purges stale voice");
     ring.disconnect();check(!ring.push(p,130),"Disconnected rejects writes");check(ring.connect(hello,130),"Reconnect");p.sequence=0;check(ring.push(p,130),"New sequence starts at zero");ring.disconnect();ring.pull(out.data(),480,32,130);check(out[0]==0,"Disconnect silence");

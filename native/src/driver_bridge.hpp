@@ -24,22 +24,24 @@ class DriverBridge {
         if(!ok){lastError=GetLastError();return false;}if(bytes!=out){lastError=ERROR_INVALID_DATA;return false;}return true;
     }
     void loop(){
-        HANDLE device=INVALID_HANDLE_VALUE;uint64_t sequence=0;SesDriverPacket packet{1,sizeof(packet),480,0,0,{}};std::array<float,480> samples{};
+        HANDLE device=INVALID_HANDLE_VALUE;uint64_t sequence=0;SesDriverPacket packet{SES_DRIVER_PROTOCOL,sizeof(packet),SES_DRIVER_FRAMES,0,0,{}};std::array<float,480> samples{};
         while(running){
             if(device==INVALID_HANDLE_VALUE){
                 queue.discard();
                 device=CreateFileW(SES_DRIVER_PATH,GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED,nullptr);
                 if(device==INVALID_HANDLE_VALUE){DWORD error=GetLastError();lastError=error;status=error==ERROR_FILE_NOT_FOUND||error==ERROR_PATH_NOT_FOUND?1u:error==ERROR_ACCESS_DENIED?4u:error==ERROR_SHARING_VIOLATION?5u:6u;WaitForSingleObject(stopEvent,500);continue;}
-                SesDriverHello hello{1,sizeof(hello),48000,1,32,480};SesDriverStatus info{};
-                if(!call(device,SES_IOCTL_CONNECT,&hello,sizeof(hello),&info,sizeof(info))||info.version!=1||info.size!=sizeof(info)){
-                    status=lastError==ERROR_REVISION_MISMATCH||info.version!=1?3u:6u;CloseHandle(device);device=INVALID_HANDLE_VALUE;WaitForSingleObject(stopEvent,500);continue;}
+                SesDriverHello hello{SES_DRIVER_PROTOCOL,sizeof(hello),SES_DRIVER_RATE,1,32,SES_DRIVER_FRAMES};SesDriverStatus info{};
+                if(!call(device,SES_IOCTL_CONNECT,&hello,sizeof(hello),&info,sizeof(info))||info.version!=SES_DRIVER_PROTOCOL||info.size!=sizeof(info)){
+                    status=lastError==ERROR_REVISION_MISMATCH||info.version!=SES_DRIVER_PROTOCOL?3u:6u;CloseHandle(device);device=INVALID_HANDLE_VALUE;WaitForSingleObject(stopEvent,500);continue;}
                 sequence=0;status=2;protocol=info.version;lastError=0;
             }
             SesDriverStatus info{};
-            if(!call(device,SES_IOCTL_STATUS,nullptr,0,&info,sizeof(info))||info.version!=1||info.size!=sizeof(info)){
+            if(!call(device,SES_IOCTL_STATUS,nullptr,0,&info,sizeof(info))||info.version!=SES_DRIVER_PROTOCOL||info.size!=sizeof(info)){
                 status=6;CloseHandle(device);device=INVALID_HANDLE_VALUE;continue;}
+            if(info.connected!=1||info.reserved||info.queued_frames>SES_DRIVER_CAPACITY){
+                lastError=ERROR_INVALID_DATA;status=6;CloseHandle(device);device=INVALID_HANDLE_VALUE;continue;}
             queued=info.queued_frames;underruns=info.underruns;overruns=info.overruns;silence=info.silence_frames;drift=info.drift_ppm;
-            if(info.queued_frames<SES_DRIVER_TARGET+480&&queue.take(samples.data(),GetTickCount64())){
+            if(info.queued_frames<SES_DRIVER_TARGET*2+1&&queue.take(samples.data(),GetTickCount64())){
                 packet.sequence=sequence;for(unsigned i=0;i<480;++i){double x=samples[i];x=std::isfinite(x)?std::clamp(x,-1.,1.):0.;packet.pcm[i]=static_cast<int32_t>(x*2147483647.);}
                 if(!call(device,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0)){status=6;CloseHandle(device);device=INVALID_HANDLE_VALUE;continue;}
                 ++sequence;sent+=480;

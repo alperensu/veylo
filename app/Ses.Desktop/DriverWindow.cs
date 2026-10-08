@@ -34,19 +34,32 @@ internal sealed class DriverWindow : Window
         panel.Children.Add(new TextBlock{Text=english?"Installation requires administrator permission. Daily Veylo use does not. Production signing and isolated Windows lab validation are required before a daily-use driver release.":"Kurulum yönetici izni ister; günlük Veylo kullanımı istemez. Günlük sürücü teslimatı için Microsoft imzası ve ayrı Windows ortamında doğrulama gerekir.",TextWrapping=TextWrapping.Wrap,FontSize=12,Margin=new Thickness(0,8,0,0)});
         Content=new ScrollViewer{Content=panel,VerticalScrollBarVisibility=ScrollBarVisibility.Auto};Loaded+=async(_,_)=>await Refresh();Closing+=(_,e)=>{if(busy)e.Cancel=true;};
     }
-    private void Add(string label,string action){var button=new Button{Content=label,Margin=new Thickness(0,0,8,0)};button.Click+=async(_,_)=>await Manage(action);actions.Children.Add(button);}
+    private void Add(string label,string action){var button=new Button{Content=label,Margin=new Thickness(0,0,8,0),IsEnabled=false};button.Click+=async(_,_)=>await Manage(action);actions.Children.Add(button);}
     private void OpenGuide(){string path=Path.Combine(AppContext.BaseDirectory,"docs","DRIVER.md");if(File.Exists(path))Process.Start(new ProcessStartInfo(path){UseShellExecute=true});else Process.Start(new ProcessStartInfo("https://learn.microsoft.com/en-us/windows-hardware/drivers/dashboard/driver-signing-offerings"){UseShellExecute=true});}
+    private async Task<string?> ReadHelperStatus(string action)
+    {
+        using var process=Process.Start(new ProcessStartInfo(helper,action){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true});
+        if(process is null)return null;
+        using var timeout=new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(45));
+        try
+        {
+            var output=process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var error=process.StandardError.ReadToEndAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token);string text=await output;await error;
+            return process.ExitCode==0?text.Trim():null;
+        }
+        catch(OperationCanceledException){if(!process.HasExited)process.Kill();throw;}
+    }
     private async Task Refresh()
     {
-        bool installed=false;
+        bool installed=false,packaged=false;
         try{if(File.Exists(helper)){
-            using var process=Process.Start(new ProcessStartInfo(helper,"status"){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true});
-            if(process is not null){string output=await process.StandardOutput.ReadToEndAsync();await process.WaitForExitAsync();installed=process.ExitCode==0&&output.Trim()=="installed";}
-        }}catch(Exception ex)when(ex is Win32Exception or IOException or InvalidOperationException){status.Text=english?"Cannot inspect the Veylo driver. Extract the complete package and try again.":"Veylo sürücü durumu okunamadı. Paketi tüm dosyalarıyla yeniden çıkart.";actions.IsEnabled=false;return;}
-        bool packaged=File.Exists(Path.Combine(AppContext.BaseDirectory,"driver","SesMicrophone.cat"));
+            installed=await ReadHelperStatus("status")=="installed";
+            packaged=await ReadHelperStatus("package-status")=="ready";
+        }}catch(Exception ex)when(ex is Win32Exception or IOException or InvalidOperationException or OperationCanceledException){status.Text=english?"Cannot inspect the Veylo driver. Extract the complete package and try again.":"Veylo sürücü durumu okunamadı. Paketi tüm dosyalarıyla yeniden çıkart.";foreach(Button button in actions.Children)button.IsEnabled=false;return;}
         status.Text=installed?(english?"Veylo device is installed. The main screen shows whether its producer connection is active.":"Veylo cihazı kurulu. Üretici bağlantısının açık olup olmadığı ana ekranda gösterilir."):
             english?"Veylo driver is not installed. Select CABLE Input in the main window to use VB-CABLE. The Veylo Mikrofon route remains unavailable.":"Veylo sürücüsü kurulu değil. VB-CABLE kullanmak için ana pencerede CABLE Input seç. Veylo Mikrofon çıkışı henüz kullanılamaz.";
-        if(!packaged)status.Text+="\n\n"+(english?"This development package has no production-signed driver. See the guide for signing and lab requirements.":"Bu geliştirme paketinde üretim imzalı sürücü yok. İmzalama ve laboratuvar gereksinimleri rehberde yer alır.");
+        if(!packaged)status.Text+="\n\n"+(english?"A complete trusted Microsoft-signed driver package is unavailable. See the guide for signing and lab requirements.":"Tam ve güvenilir Microsoft imzalı sürücü paketi kullanılamıyor. İmzalama ve laboratuvar gereksinimleri rehberde yer alır.");
         ((Button)actions.Children[0]).IsEnabled=File.Exists(helper)&&packaged;
         ((Button)actions.Children[1]).IsEnabled=((Button)actions.Children[2]).IsEnabled=File.Exists(helper)&&installed;
     }

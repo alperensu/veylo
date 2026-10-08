@@ -3,6 +3,10 @@
 #include "pcm_ring.h"
 namespace {
 PDEVICE_OBJECT controlDevice=nullptr;
+PDEVICE_OBJECT adapterDevice=nullptr;
+PDRIVER_OBJECT bridgeDriver=nullptr;
+struct ControlExtension {ULONG signature;};
+constexpr ULONG controlSignature=0x53455343;
 PDRIVER_DISPATCH previous[IRP_MJ_MAXIMUM_FUNCTION+1]{};
 KSPIN_LOCK lock;
 ses_driver::PcmRing ring{};
@@ -18,18 +22,22 @@ _Dispatch_type_(IRP_MJ_DEVICE_CONTROL)
 DRIVER_DISPATCH dispatch;
 NTSTATUS dispatch(PDEVICE_OBJECT device,PIRP irp){
     auto* stack=IoGetCurrentIrpStackLocation(irp);
-    if(device!=controlDevice)return previous[stack->MajorFunction](device,irp);
+    // Deleted CDOs remain alive while old handles/IRPs refer to them. Recognize
+    // them by their own type/extension, never send them through PortCls.
+    if(device->DeviceType!=SES_DRIVER_DEVICE_TYPE)return previous[stack->MajorFunction](device,irp);
+    if(!device->DeviceExtension||static_cast<ControlExtension*>(device->DeviceExtension)->signature!=controlSignature)
+        return complete(irp,STATUS_INVALID_DEVICE_REQUEST);
     NTSTATUS result=STATUS_INVALID_DEVICE_REQUEST;ULONG_PTR information=0;
     KIRQL irql;KeAcquireSpinLock(&lock,&irql);
     switch(stack->MajorFunction){
-    case IRP_MJ_CREATE:result=online?STATUS_SUCCESS:STATUS_DEVICE_NOT_READY;break;
+    case IRP_MJ_CREATE:result=(device==controlDevice&&online)?STATUS_SUCCESS:STATUS_DEVICE_NOT_READY;break;
     case IRP_MJ_CLEANUP:
-    case IRP_MJ_CLOSE:if(owner==stack->FileObject){ring.disconnect();owner=nullptr;}result=STATUS_SUCCESS;break;
+    case IRP_MJ_CLOSE:if(device==controlDevice&&owner==stack->FileObject){ring.disconnect();owner=nullptr;}result=STATUS_SUCCESS;break;
     case IRP_MJ_DEVICE_CONTROL:{
         const ULONG code=stack->Parameters.DeviceIoControl.IoControlCode;
         const ULONG in=stack->Parameters.DeviceIoControl.InputBufferLength,out=stack->Parameters.DeviceIoControl.OutputBufferLength;
         void* data=irp->AssociatedIrp.SystemBuffer;
-        if(!online){result=STATUS_DEVICE_NOT_READY;break;}
+        if(device!=controlDevice||!online){result=STATUS_DEVICE_NOT_READY;break;}
         if(code==SES_IOCTL_CONNECT){
             if(in!=sizeof(SesDriverHello)||out!=sizeof(SesDriverStatus)||!data){result=STATUS_INVALID_BUFFER_SIZE;break;}
             if(owner&&owner!=stack->FileObject){result=STATUS_SHARING_VIOLATION;break;}
@@ -53,13 +61,7 @@ NTSTATUS dispatch(PDEVICE_OBJECT device,PIRP irp){
 }
 }
 NTSTATUS SesBridgeInitialize(PDRIVER_OBJECT driver){
-    KeInitializeSpinLock(&lock);UNICODE_STRING name,link,security;
-    RtlInitUnicodeString(&name,L"\\Device\\SesMicrophone");RtlInitUnicodeString(&link,L"\\DosDevices\\SesMicrophone");
-    // Interactive users can produce audio without elevation; no network/service users.
-    RtlInitUnicodeString(&security,L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)");
-    NTSTATUS status=IoCreateDeviceSecure(driver,0,&name,SES_DRIVER_DEVICE_TYPE,FILE_DEVICE_SECURE_OPEN,FALSE,&security,&controlClass,&controlDevice);
-    if(!NT_SUCCESS(status))return status;
-    status=IoCreateSymbolicLink(&link,&name);if(!NT_SUCCESS(status)){IoDeleteDevice(controlDevice);controlDevice=nullptr;return status;}
+    KeInitializeSpinLock(&lock);bridgeDriver=driver;
     const UCHAR majors[]={IRP_MJ_CREATE,IRP_MJ_CLEANUP,IRP_MJ_CLOSE,IRP_MJ_DEVICE_CONTROL};
     for(UCHAR major: majors){
         // WDM PortCls dispatch interposition for our own private control device.
@@ -68,10 +70,42 @@ NTSTATUS SesBridgeInitialize(PDRIVER_OBJECT driver){
         #pragma warning(suppress:28175)
         driver->MajorFunction[major]=dispatch;
     }
-    controlDevice->Flags|=DO_BUFFERED_IO;controlDevice->Flags&=~DO_DEVICE_INITIALIZING;return STATUS_SUCCESS;
+    return STATUS_SUCCESS;
 }
-void SesBridgeShutdown(){SesBridgeOnline(FALSE);UNICODE_STRING link;RtlInitUnicodeString(&link,L"\\DosDevices\\SesMicrophone");IoDeleteSymbolicLink(&link);if(controlDevice){IoDeleteDevice(controlDevice);controlDevice=nullptr;}}
-void SesBridgeOnline(BOOLEAN value){KIRQL irql;KeAcquireSpinLock(&lock,&irql);online=value;ring.disconnect();owner=nullptr;KeReleaseSpinLock(&lock,irql);}
+NTSTATUS SesBridgeStart(PDEVICE_OBJECT adapter){
+    // PnP serializes START/STOP/REMOVE for one FDO. A second FDO must fail
+    // before its capture filters are installed, because the ring is singleton.
+    KIRQL irql;KeAcquireSpinLock(&lock,&irql);
+    if(adapterDevice&&adapterDevice!=adapter){KeReleaseSpinLock(&lock,irql);return STATUS_DEVICE_BUSY;}
+    if(controlDevice){online=FALSE;ring.disconnect();owner=nullptr;KeReleaseSpinLock(&lock,irql);return STATUS_SUCCESS;}
+    adapterDevice=adapter;KeReleaseSpinLock(&lock,irql);
+    UNICODE_STRING name,link,security;
+    RtlInitUnicodeString(&name,L"\\Device\\SesMicrophone");RtlInitUnicodeString(&link,L"\\DosDevices\\SesMicrophone");
+    // Interactive users can produce audio without elevation; no network/service users.
+    RtlInitUnicodeString(&security,L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;IU)");
+    PDEVICE_OBJECT created=nullptr;
+    NTSTATUS status=IoCreateDeviceSecure(bridgeDriver,sizeof(ControlExtension),&name,SES_DRIVER_DEVICE_TYPE,FILE_DEVICE_SECURE_OPEN,FALSE,&security,&controlClass,&created);
+    if(NT_SUCCESS(status)){
+        static_cast<ControlExtension*>(created->DeviceExtension)->signature=controlSignature;
+        status=IoCreateSymbolicLink(&link,&name);
+        if(!NT_SUCCESS(status))IoDeleteDevice(created);
+    }
+    KeAcquireSpinLock(&lock,&irql);
+    if(NT_SUCCESS(status))controlDevice=created;else adapterDevice=nullptr;
+    KeReleaseSpinLock(&lock,irql);
+    if(NT_SUCCESS(status)){created->Flags|=DO_BUFFERED_IO;created->Flags&=~DO_DEVICE_INITIALIZING;}
+    return status;
+}
+void SesBridgeOnline(PDEVICE_OBJECT adapter,BOOLEAN value){KIRQL irql;KeAcquireSpinLock(&lock,&irql);if(adapter==adapterDevice){online=value;ring.disconnect();owner=nullptr;}KeReleaseSpinLock(&lock,irql);}
+void SesBridgeRemove(PDEVICE_OBJECT adapter){
+    PDEVICE_OBJECT deleted=nullptr;KIRQL irql;KeAcquireSpinLock(&lock,&irql);
+    if(adapter==adapterDevice){online=FALSE;ring.disconnect();owner=nullptr;deleted=controlDevice;controlDevice=nullptr;adapterDevice=nullptr;}
+    KeReleaseSpinLock(&lock,irql);
+    // IoDeleteDevice marks an open CDO delete-pending; existing references keep
+    // it alive until cleanup/close. Neither operation runs under the spinlock.
+    if(deleted){UNICODE_STRING link;RtlInitUnicodeString(&link,L"\\DosDevices\\SesMicrophone");IoDeleteSymbolicLink(&link);IoDeleteDevice(deleted);}
+}
+void SesBridgeShutdown(){if(adapterDevice)SesBridgeRemove(adapterDevice);}
 void SesBridgeCapture(void* buffer,ULONG bytes,ULONG bits){
     if(!buffer||!(bits==16||bits==32))return;
     // Never hold a spinlock for more than one 10ms block. Caller owns the DMA buffer.

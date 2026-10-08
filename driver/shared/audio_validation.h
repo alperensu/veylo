@@ -1,0 +1,34 @@
+#pragma once
+#include "ses_driver_protocol.h"
+namespace ses_driver {
+// KSDATAFORMAT is 64 bytes; WAVEFORMATEX is packed to 18 bytes on the wire.
+struct PcmFormat {
+    uint32_t format_bytes,tag,channels,rate,average_bytes,block_align,bits,extra_bytes;
+};
+inline bool validCaptureFormat(const PcmFormat& f) {
+    if(f.format_bytes<82||f.format_bytes>104||f.channels!=1||f.rate!=SES_DRIVER_RATE||
+       !(f.bits==16||f.bits==32)||f.block_align!=f.bits/8||
+       f.average_bytes!=SES_DRIVER_RATE*f.block_align)return false;
+    if(f.tag==1)return f.extra_bytes==0;
+    return f.tag==0xfffe&&f.extra_bytes==22&&f.format_bytes>=104;
+}
+struct PcmAdvance {uint64_t bytes;uint32_t fraction;};
+inline bool validNotificationBuffer(uint32_t bytes,uint32_t notifications,uint32_t align) {
+    return (align==2||align==4)&&bytes&&notifications&&bytes%align==0&&
+        bytes%notifications==0&&(bytes/notifications)%align==0&&
+        bytes/notifications>=SES_DRIVER_RATE*align/1000&&
+        (bytes/notifications)%(SES_DRIVER_RATE*align/1000)==0;
+}
+// Carry is a fractional frame in units of 1/10,000,000. Split seconds first
+// so an hours-long suspend cannot overflow a 32-bit byte-rate product.
+inline PcmAdvance advancePcm(uint64_t elapsed_hns,uint32_t block_align,uint32_t fraction) {
+    const uint64_t numerator=(elapsed_hns%10000000)*SES_DRIVER_RATE+fraction;
+    const uint64_t frames=(elapsed_hns/10000000)*SES_DRIVER_RATE+numerator/10000000;
+    return {frames*block_align,static_cast<uint32_t>(numerator%10000000)};
+}
+inline uint64_t elapsedHns(uint64_t current,uint64_t previous,uint64_t carry=0) {
+    if(current<previous)return 0;
+    const uint64_t delta=current-previous,max=~uint64_t(0);
+    return carry>max-delta?max:delta+carry;
+}
+}

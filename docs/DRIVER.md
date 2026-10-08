@@ -1,13 +1,13 @@
-> Veylo 0.5.2 varsayılan olarak kurulu VB-CABLE kullanır. Bu rehber yalnızca
+> Veylo 0.7.4-dev varsayılan olarak kurulu VB-CABLE kullanır. Bu rehber yalnızca
 > çıkış listesinden seçilen Veylo Mikrofon geliştirme sürücüsü içindir.
 
 # Veylo Mikrofon — sürücü geliştirme ve kurulum
 
 ## Mevcut durum
 
-Veylo-driver-0.5.0-development.zip imzasız geliştirme çıktısıdır; günlük bilgisayara
-yüklenmemelidir. SYS, INF ve imzasız katalog derlendi. Uygulama ZIP'i üretim
-sürücüsü içermez, yalnızca yerel işleme açar. Kur/güncelle üretim paketi yokken
+Veylo-driver-0.5.1.0-isolated-lab.zip imzasız geliştirme çıktısıdır; günlük bilgisayara
+yüklenmemelidir. SYS, INF ve imzasız katalog derlenir. Format doğrulaması, tampon rezervi ve PnP yaşam döngüsü kaynak/test düzeyinde güçlendirildi; gerçek kernel kabulü henüz yok. Uygulama ZIP'i üretim
+sürücüsü içermez, VB-CABLE ile çalışmaya devam eder. Kur/güncelle üretim paketi yokken
 devre dışıdır. Laboratuvar, Microsoft imzası ve gerçek oyun testleri tamamlanmadı.
 
 ## Üretim imzalı paketle normal kullanım
@@ -22,10 +22,10 @@ Kaldır yalnızca tam ROOT\SES_MICROPHONE donanım kimliğiyle eşleşen cihaz v
 ilişkili paketi yönetir. Sürücü çıkarılırsa uygulama yerelde işlemeye devam eder.
 
 Yardımcı komutları: Veylo.DriverSetup.exe status / install / remove / rollback.
-Status yönetici istemez; diğerleri gerektiğinde UAC açar. Kullanıcıdan INF yolu
+Status ve package-status yönetici istemez; kur/kaldır/geri al gerektiğinde UAC açar. Kurulum düğmesi yalnız tam paket, beklenen INF, güvenilir Microsoft katalog imzası ve INF/SYS katalog üyeliği doğrulanınca açılır; dosyanın varlığı yeterli değildir. Kullanıcıdan INF yolu
 veya kabuk komutu kabul edilmez. Paket derlenmiş Veylo INF'iyle birebir eşleşmelidir.
 Yükseltilmiş işlem paketi Program Files altında yeni klasöre alır; Microsoft
-Windows katalog imzasını/sertifika zincirini kontrol eder. Windows kurulum API'si
+Windows katalog imzasını/makine sertifika zincirini ve INF/SYS katalog üyeliğini kontrol eder. Windows kurulum API'si
 katalog üyeliği/kernel imza politikasını ayrıca doğrular. İmzasız veya test imzalı
 paket normal yardımcı tarafından reddedilir. Sertifika iptal kontrolü kurulumda
 ağ isteyebilir; ses motoru tamamen yereldir.
@@ -40,6 +40,9 @@ ağ isteyebilir; ses motoru tamamen yereldir.
     ./scripts/build.ps1 -Sanitize
     ./scripts/test.ps1 -Sanitize
     ./scripts/security.ps1
+    ./scripts/package-driver.ps1
+    ./scripts/driver-readiness.ps1 -OutFile artifacts/driver-readiness/preflight.json
+    # Normal uygulama; kernel sürücüsü eklenmez:
     ./scripts/package.ps1 -SkipBuild
 
 EWDK 26100.6584 / VS 2022 Build Tools 17.14.5 / MSVC 14.44.35207 sabitlenmiştir.
@@ -60,7 +63,7 @@ Windows 10 2004+ / Windows 11 x64 için ayrı VM veya test bilgisayarı ve geri
 dönüş snapshot'ı gerekir. Test sertifikası ve gerekiyorsa test signing yalnızca
 bu ortamda kullanılmalıdır. Resmî WDK/DevCon ve Microsoft test sertifikası
 prosedürüyle yükle; normal Veylo kurulum yardımcısını bypass etme. Bu proje için
-henüz laboratuvar bulunmuyor.
+henüz laboratuvar bulunmuyor. Somut hazırlık ve kabul adımları [DRIVER-LAB.md](DRIVER-LAB.md) içindedir.
 
 Uygulama kapalıyken sadece laboratuvarda:
 

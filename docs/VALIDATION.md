@@ -1,3 +1,39 @@
+# 0.7.4-dev / driver 0.5.1.0 readiness — 2026-10-08
+
+Passed: checksum-pinned EWDK 26100.6584 kernel build with WDK recommended
+analysis/W4/WX, InfVerif /w and Inf2Cat; no compiler/analysis/INF warnings or
+errors. Generated SYS/CAT are unsigned and were not installed. Manifest schema2
+binds current ABI5/protocol1/INF version to four fixed payload hashes; repeated
+builds cannot hash their own previous manifest. Explicit isolated-lab ZIP is
+separate from the normal portable/Setup flow.
+
+Passed: five native tests and their AddressSanitizer run, 110 managed checks,
+offline WPF/persistence/shutdown/automation, 18 read-only driver helper checks
+and eight package-integrity regressions. Shared driver validation covers invalid
+formats, aligned notifications, integer timing across long suspend, and bounded
+reserve/drift/jitter. These are portable models, not running-kernel acceptance.
+The 20ms synchronous burst stress reports five bounded queue drops, zero silence;
+the production source drains DMA every1ms. Do not infer arbitrary scheduler
+stall tolerance or full-route latency from those fixtures.
+
+Passed: helper preflight verifies exact INF, bounded held file handles, trusted
+machine-context Microsoft catalog chain and Windows SIP-hash INF/SYS catalog
+membership before reporting ready. OS driver installation policy remains the
+final kernel-signing gate. Temporary elevated staging only removes its own GUID
+and fixed files; removal snapshots devices and deduplicates OEM INF identities.
+Dependency/secret/static scans and analyzers passed. Two independent read-only
+Sol correctness/security reviews found no remaining confirmed high/medium issues.
+One local test-output process remained locked after an initial interop-size test
+fixture assertion; repeated tests used a separate output directory and passed.
+No security policy/certificate store was changed to work around it.
+
+Not run: actual Microsoft-signed positive package, kernel KS/IOCTL/PnP/sleep tests,
+HVCI, Driver Verifier, receiving applications, full-route performance and signed
+production driver packaging. No isolated lab is available. The daily machine's
+VB-CABLE routing, running application and state.json were preserved byte-for-byte.
+A separate Windows target and Microsoft signing prerequisites remain blockers.
+See DRIVER-LAB.md; this checkpoint does not complete the own-driver transition.
+
 # 0.7.3-dev calibration and profile checkpoint — 2026-10-08
 
 Passed: 10-second quick calibration (2 seconds room / 8 seconds natural speech),
