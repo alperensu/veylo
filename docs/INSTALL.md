@@ -4,13 +4,30 @@ Bu sürüm VB-CABLE yönlendirmesini geri getirir. Kendi Veylo sürücümüzün 
 beklemeden VB-CABLE ile kullanılabilir; VB-CABLE pakete dahil değildir.
 Veylo Mikrofon geliştirme seçeneği hâlâ imzalı sürücü gerektirir: [DRIVER.md](DRIVER.md).
 
-1. ZIP'in tamamını çıkar; eski Veylo örneğini bildirim alanından Veylo'dan çık ile kapat.
+1. [GitHub Releases](https://github.com/alperensu/veylo/releases) sayfasından
+   **Veylo-…-win-x64-Setup.exe** indir. Eski Veylo örneğini bildirim alanından
+   **Veylo'dan çık** ile kapat, ardından kurulumu çalıştır. Yönetici izni gerekmez;
+   varsayılan kurulum `%LOCALAPPDATA%\Programs\Veylo` altındadır. Başlat menüsü
+   kısayolu eklenir, masaüstü kısayolu isteğe bağlıdır. Alternatif olarak
+   **win-x64.zip** paketinin tamamını ayrı bir klasöre çıkar.
 2. Veylo.exe aç. Kayıtlı mikrofon, preset ve kalibrasyon korunur; işleme otomatik başlar.
 3. Ana ekranda Mikrofon fiziksel mikrofonun; Çıkış CABLE Input (VB-Audio Virtual Cable) olsun.
 4. Kayıt, yayın, toplantı veya sesli iletişim uygulamanda mikrofon/giriş aygıtını
    **CABLE Output** seç. Uygulamanın ses çıkışı kendi kulaklığın olsun.
 5. Veylo'nun etkisini karşılaştırırken kullanılan uygulamadaki ek gürültü azaltma ve
    otomatik kazanç işlemlerini varsa kapat.
+
+Kurulum EXE'si ve uygulama şu an kod imzalı değildir. Windows tanınmayan yayıncı
+veya SmartScreen uyarısı gösterebilir. Güvenlik özelliklerini kapatma; yalnız
+resmî GitHub sürümünden indirdiğin dosyanın yayımlanan SHA-256 değerini doğrula.
+PowerShell: `Get-FileHash .\Veylo-…-win-x64-Setup.exe -Algorithm SHA256`.
+
+Güncelleme için Veylo'dan çık, yeni Setup dosyasını çalıştır ve aynı dizini kullan.
+Kayıtlı profiller/kalibrasyonlar `%LOCALAPPDATA%\SES` altında korunur. Windows ile
+başlatma tercihi kurulum tarafından açılmaz; uygulama ilk normal açılışında mevcut
+etkin tercihin hedefini sürüm denetimiyle yeniler. Kaldırmak için Windows Ayarları →
+Uygulamalar → Veylo kullan. Kaldırma kişisel profilleri ve VB-CABLE'ı silmez;
+yalnız kaldırılan Veylo'yu hedefleyen başlangıç kaydını temizler.
 
 Örnek: Discord'da Ses ve Görüntü → Giriş aygıtı, Valorant'ta mikrofon seçimi
 **CABLE Output** olabilir. Veylo'nun kullanımı bu iki uygulamayla sınırlı değildir;

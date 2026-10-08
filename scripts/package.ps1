@@ -32,6 +32,7 @@ try{
     Compress-Archive -Path (Join-Path $output '*') -DestinationPath $zip -Force -CompressionLevel Optimal
     ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()+'  '+$packageName+'.zip') | Set-Content -LiteralPath ($zip+'.sha256') -Encoding ASCII
     Write-Output $zip
+    & "$PSScriptRoot/build-installer.ps1"
     if(Test-Path -LiteralPath 'build/driver/package/development-manifest.json'){
         $driverZip=Join-Path $root 'dist/Veylo-driver-0.5.0-development.zip'
         Copy-Item -LiteralPath 'docs/DRIVER.md' -Destination 'build/driver/package/DRIVER.md' -Force
