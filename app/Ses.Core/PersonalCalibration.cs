@@ -3,39 +3,53 @@ namespace Ses.Core;
 public sealed record PersonalCalibrationResult(
     bool Success, string Error, AudioSettings? Settings,
     float NoiseFloorDb=0, float SpeechDb=0, float QuietDb=0, float LoudDb=0,
-    float SignalToNoiseDb=0, string[]? Warnings=null);
+    float SignalToNoiseDb=0, string[]? Warnings=null, bool Detailed=true);
 
 // A bounded, offline starting-point estimator. It does not identify microphone
 // models, recover clipping, or claim a universally ideal voice spectrum.
 public static class PersonalCalibration
 {
     public const int Seconds=20;
-    public static string StageKey(uint frames)=>frames<5*AudioSamples.Rate?"autoAmbient":
-        frames<12*AudioSamples.Rate?"autoNormal":frames<16*AudioSamples.Rate?"autoQuiet":"autoLoud";
+    public const int QuickSeconds=10;
+    public static int Duration(bool detailed)=>detailed?Seconds:QuickSeconds;
+    public static int StageEndSeconds(uint frames,bool detailed=true)=>!detailed?(frames<2*AudioSamples.Rate?2:QuickSeconds):
+        frames<5*AudioSamples.Rate?5:frames<12*AudioSamples.Rate?12:frames<16*AudioSamples.Rate?16:Seconds;
+    public static string StageKey(uint frames,bool detailed=true)=>!detailed?(frames<2*AudioSamples.Rate?"autoQuickAmbient":"autoQuickSpeech"):
+        frames<5*AudioSamples.Rate?"autoAmbient":frames<12*AudioSamples.Rate?"autoNormal":frames<16*AudioSamples.Rate?"autoQuiet":"autoLoud";
 
-    public static PersonalCalibrationResult Analyze(float[]? raw)
+    public static PersonalCalibrationResult Analyze(float[]? raw,AudioSettings? baseline=null)
     {
-        if(raw is null||raw.Length!=Seconds*AudioSamples.Rate)return Failure("calibrationIncomplete");
+        if(raw is null||(raw.Length!=Seconds*AudioSamples.Rate&&raw.Length!=QuickSeconds*AudioSamples.Rate))return Failure("calibrationIncomplete");
+        bool detailed=raw.Length==Seconds*AudioSamples.Rate;
+        baseline?.Validate();
+        int ambientEnd=detailed?5:2,normalEnd=detailed?12:QuickSeconds;
         int clipped=0;
         foreach(float value in raw){if(!float.IsFinite(value))return Failure("autoInvalidAudio");if(Math.Abs(value)>=.995f)clipped++;}
         if(clipped>10)return Failure("calibrationClipped");
-        var ambient=Levels(raw,0,5,-121);
+        var ambient=Levels(raw,0,ambientEnd,-121);
         float noise=Percentile(ambient,.7f);
         if(Percentile(ambient,.95f)-Percentile(ambient,.2f)>12)return Failure("autoAmbientUnstable");
-        var normal=Levels(raw,5,12,Math.Max(-65,noise+8));
+        var normal=Levels(raw,ambientEnd,normalEnd,Math.Max(-65,noise+8));
         if(normal.Count<75)return Failure("calibrationNoSpeech");
         float speech=Percentile(normal,.5f);
         if(noise>-25||speech-noise<10)return Failure("autoTooNoisy");
-        var quiet=Levels(raw,12,16,Math.Max(-70,noise+3));
-        if(quiet.Count<40)return Failure("autoQuietMissing");
-        var loud=Levels(raw,16,20,Math.Max(-60,noise+8));
-        if(loud.Count<40)return Failure("autoLoudMissing");
-        float quietDb=Percentile(quiet,.5f),loudDb=Percentile(loud,.8f);
-        if(quietDb>speech+3||loudDb<speech-3)return Failure("autoStageMismatch");
+        // Quick mode uses the observed range of ordinary speech. It does not
+        // claim to have measured separately prompted quiet/loud speech.
+        float quietDb=Percentile(normal,.15f),loudDb=Percentile(normal,.9f);
+        if(detailed){
+            var quiet=Levels(raw,12,16,Math.Max(-70,noise+3));
+            if(quiet.Count<40)return Failure("autoQuietMissing");
+            var loud=Levels(raw,16,20,Math.Max(-60,noise+8));
+            if(loud.Count<40)return Failure("autoLoudMissing");
+            quietDb=Percentile(quiet,.5f);loudDb=Percentile(loud,.8f);
+            if(quietDb>speech+3||loudDb<speech-3)return Failure("autoStageMismatch");
+        }
         float snr=speech-noise,span=Math.Max(0,loudDb-quietDb);
         var settings=new AudioSettings {
             NoiseEnabled=true,NoiseAutoEnabled=true,AgcEnabled=true,
             SensitivityEnabled=true,SensitivityAutoEnabled=true,SensitivityThresholdDb=Math.Clamp(noise+10,-75,-20),
+            SensitivityMode=1,SensitivityAttackMs=2,SensitivityHoldMs=300,SensitivityReleaseMs=140,
+            SensitivityRatio=3,SensitivityMaxReductionDb=24,
             NoiseMix=Math.Clamp(.4f+(noise+65)*(.55f/35),.35f,.95f),
             TargetDb=-20,MinGainDb=Math.Clamp(-20-loudDb-2,-12,0),
             MaxGainDb=Math.Clamp(-20-quietDb+3,0,12),
@@ -46,36 +60,59 @@ public static class PersonalCalibration
         };
         // First-order analysis bands are deliberately used only for small tone
         // corrections. Ambient energy is removed before comparing speech bands.
-        double[] ambientBands=BandPowers(raw,0,5,noise-3),voiceBands=BandPowers(raw,5,12,Math.Max(-65,noise+8));
-        var powers=voiceBands.Select((p,i)=>Math.Max(1e-12,p-ambientBands[i])).ToArray();
-        double total=powers.Sum(),noiseTotal=ambientBands.Sum();
-        settings.HighpassHz=noiseTotal>1e-12&&ambientBands[0]/noiseTotal>.3?100:70;
-        settings.Bands[0].Frequency=180;settings.Bands[1].Frequency=600;
-        settings.Bands[2].Frequency=3000;settings.Bands[3].Frequency=8000;
-        float boost=snr>=20?1:0;
-        settings.Bands[0].GainDb=powers[1]/total>.65?-2:powers[1]/total<.1?boost:0;
-        settings.Bands[1].GainDb=powers[2]/total>.6?-1.5f:0;
-        settings.Bands[2].GainDb=powers[3]/total<.07?boost:powers[3]/total>.45?-1:0;
-        settings.Bands[3].GainDb=powers[4]/total>.3?-1:0;
-        settings.DeesserEnabled=powers[4]/total>.2;
-        settings.DeesserMaxDb=settings.DeesserEnabled?2:0;
+        if(detailed){
+            double[] ambientBands=BandPowers(raw,0,ambientEnd,noise-3),voiceBands=BandPowers(raw,ambientEnd,normalEnd,Math.Max(-65,noise+8));
+            var powers=voiceBands.Select((p,i)=>Math.Max(1e-12,p-ambientBands[i])).ToArray();
+            double total=powers.Sum(),noiseTotal=ambientBands.Sum();
+            settings.HighpassHz=noiseTotal>1e-12&&ambientBands[0]/noiseTotal>.3?100:70;
+            settings.Bands[0].Frequency=180;settings.Bands[1].Frequency=600;
+            settings.Bands[2].Frequency=3000;settings.Bands[3].Frequency=8000;
+            float boost=snr>=20?1:0;
+            settings.Bands[0].GainDb=powers[1]/total>.65?-2:powers[1]/total<.1?boost:0;
+            settings.Bands[1].GainDb=powers[2]/total>.6?-1.5f:0;
+            settings.Bands[2].GainDb=powers[3]/total<.07?boost:powers[3]/total>.45?-1:0;
+            settings.Bands[3].GainDb=powers[4]/total>.3?-1:0;
+            settings.DeesserEnabled=powers[4]/total>.2;
+            settings.DeesserMaxDb=settings.DeesserEnabled?2:0;
+        }else if(baseline is not null){
+            // Calibration of microphone levels must not flatten a chosen voice style.
+            settings.HighpassHz=baseline.HighpassHz;
+            settings.Bands=baseline.Clone().Bands;
+            settings.DeesserEnabled=baseline.DeesserEnabled;settings.DeesserMaxDb=baseline.DeesserMaxDb;
+        }
+        if(baseline is {NoiseEnabled:true}){
+            settings.NoiseMix=Math.Max(settings.NoiseMix,baseline.NoiseMix);
+            if(!baseline.NoiseAutoEnabled&&baseline.NoiseMix>=.99f){settings.NoiseMix=1;settings.NoiseAutoEnabled=false;}
+        }
+        if(baseline is {SensitivityEnabled:true}){
+            settings.SensitivityMode=baseline.SensitivityMode;
+            settings.SensitivityAttackMs=baseline.SensitivityAttackMs;settings.SensitivityHoldMs=baseline.SensitivityHoldMs;
+            settings.SensitivityReleaseMs=baseline.SensitivityReleaseMs;settings.SensitivityHysteresisDb=baseline.SensitivityHysteresisDb;
+            settings.SensitivityRatio=baseline.SensitivityRatio;settings.SensitivityMaxReductionDb=baseline.SensitivityMaxReductionDb;
+        }
         settings.Validate();
         List<string> warnings=[];
         if(-20-quietDb>12)warnings.Add("autoGainLimited");
         if(snr<20)warnings.Add("autoNoisyWarning");
-        if(span<4)warnings.Add("autoDynamicsSmall");
-        return new(true,"",settings,Math.Clamp(noise,-100,-25),speech,quietDb,loudDb,snr,warnings.ToArray());
+        if(detailed&&span<4)warnings.Add("autoDynamicsSmall");
+        if(!detailed)warnings.Add("autoQuickRange");
+        return new(true,"",settings,Math.Clamp(noise,-100,-25),speech,quietDb,loudDb,snr,warnings.ToArray(),detailed);
     }
     private static PersonalCalibrationResult Failure(string key)=>new(false,key,null);
     public static PersonalCalibrationResult VerifySpeech(PersonalCalibrationResult result,float[]? probabilities)
     {
         if(!result.Success)return result;
-        if(probabilities is null||probabilities.Length!=Seconds*100||probabilities.Any(p=>!float.IsFinite(p)||p<0||p>1))return Failure("autoInvalidAudio");
+        if(probabilities is null||probabilities.Length!=Duration(result.Detailed)*100||probabilities.Any(p=>!float.IsFinite(p)||p<0||p>1))return Failure("autoInvalidAudio");
         static int Count(float[] values,int start,int end,float threshold)=>values.AsSpan(start*100+40,(end-start)*100-60).ToArray().Count(p=>p>=threshold);
-        if(Count(probabilities,5,12,.2f)<50)return Failure("calibrationNoSpeech");
-        if(Count(probabilities,12,16,.08f)<15)return Failure("autoQuietMissing");
-        if(Count(probabilities,16,20,.2f)<25)return Failure("autoLoudMissing");
-        if(Count(probabilities,0,5,.5f)>80)return Failure("autoAmbientUnstable");
+        if(result.Detailed){
+            if(Count(probabilities,5,12,.2f)<50)return Failure("calibrationNoSpeech");
+            if(Count(probabilities,12,16,.08f)<15)return Failure("autoQuietMissing");
+            if(Count(probabilities,16,20,.2f)<25)return Failure("autoLoudMissing");
+            if(Count(probabilities,0,5,.5f)>80)return Failure("autoAmbientUnstable");
+        }else{
+            if(Count(probabilities,2,QuickSeconds,.2f)<80)return Failure("calibrationNoSpeech");
+            if(Count(probabilities,0,2,.5f)>25)return Failure("autoAmbientUnstable");
+        }
         return result;
     }
     private static List<float> Levels(float[] data,int startSeconds,int endSeconds,float threshold)

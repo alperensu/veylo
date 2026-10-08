@@ -81,24 +81,35 @@ public static class Profiles
     public static List<VoiceProfile> Factory()
     {
         var natural=new VoiceProfile { Name="Doğal",FactoryId="natural",Description="Hafif işleme. Sesinin doğal karakterini korur." };
-        var clear=new VoiceProfile { Name="Net Konuşma",FactoryId="clear",Description="Oyun içi iletişim için daha belirgin konuşma." };
-        clear.Settings.HighpassHz=100;clear.Settings.Bands[2].GainDb=2;clear.Settings.CompressorRatio=2.5f;clear.Settings.CompressorThresholdDb=-20;
-        var warm=new VoiceProfile { Name="Sıcak Ses",FactoryId="warm",Description="Ölçülü dolgunluk, yumuşak ton." };
-        warm.Settings.HighpassHz=70;warm.Settings.Bands[0].GainDb=2;
-        var broadcast=new VoiceProfile { Name="Yayın",FactoryId="broadcast",Description="Daha sıkı dinamikler ve belirgin ses." };
-        broadcast.Settings.Bands[0].Frequency=150;broadcast.Settings.Bands[0].GainDb=2;broadcast.Settings.Bands[2].GainDb=2;
+        var clear=new VoiceProfile { Name="Net Konuşma",FactoryId="clear",Description="Alt tonları azaltır, konuşma ayrıntısını ve parlaklığı öne çıkarır." };
+        clear.Settings.HighpassHz=110;clear.Settings.CompressorRatio=2.5f;clear.Settings.CompressorThresholdDb=-20;
+        clear.Settings.Bands=[new(){Type=1,Frequency=180,GainDb=-3,Q=.707f},
+            new(){Type=0,Frequency=450,GainDb=-3,Q=.9f},
+            new(){Type=0,Frequency=3000,GainDb=4,Q=.9f},
+            new(){Type=2,Frequency=8000,GainDb=2,Q=.707f}];
+        var warm=new VoiceProfile { Name="Sıcak Ses",FactoryId="warm",Description="Dolgun alt tonlar ve daha yumuşak üst frekanslar." };
+        warm.Settings.HighpassHz=65;
+        warm.Settings.Bands=[new(){Type=1,Frequency=180,GainDb=4,Q=.707f},
+            new(){Type=0,Frequency=450,GainDb=-2,Q=.9f},
+            new(){Type=0,Frequency=3000,GainDb=-2,Q=.8f},
+            new(){Type=2,Frequency=8000,GainDb=-3,Q=.707f}];
+        var broadcast=new VoiceProfile { Name="Yayın",FactoryId="broadcast",Description="Dolgun alt tonlar, belirgin konuşma ve parlak üst tonlarla daha sıkı dinamikler." };
+        broadcast.Settings.Bands=[new(){Type=1,Frequency=150,GainDb=3,Q=.707f},
+            new(){Type=0,Frequency=350,GainDb=-4,Q=.9f},
+            new(){Type=0,Frequency=3000,GainDb=4,Q=1},
+            new(){Type=2,Frequency=8000,GainDb=3,Q=.707f}];
         broadcast.Settings.CompressorRatio=3;broadcast.Settings.CompressorThresholdDb=-22;broadcast.Settings.DeesserEnabled=true;
-        var podcast=new VoiceProfile { Name="Podcast — Tok ve Net",FactoryId="podcast",Description="Dolgun alt ton, temiz konuşma ve güçlü gürültü azaltma. Ortam seslerini tamamen silme garantisi yoktur." };
+        var podcast=new VoiceProfile { Name="Podcast — Tok ve Net",FactoryId="podcast",Description="Tok alt tonlar, azaltılmış boğukluk, yumuşak üst tonlar ve güçlü gürültü azaltma. Ortam seslerini tamamen silme garantisi yoktur." };
         podcast.Settings=new AudioSettings {
             HighpassHz=70,NoiseEnabled=true,NoiseAutoEnabled=false,NoiseMix=1,
             SensitivityEnabled=true,SensitivityAutoEnabled=true,SensitivityThresholdDb=-50,
             AgcEnabled=true,TargetDb=-18,MinGainDb=-12,MaxGainDb=9,SpeechThreshold=.45f,
             CompressorThresholdDb=-22,CompressorRatio=3.5f,AttackMs=12,ReleaseMs=160,KneeDb=8,
             DeesserEnabled=true,DeesserMaxDb=3,OutputDb=0,
-            Bands=[new(){Type=1,Frequency=145,GainDb=2.5f,Q=.707f},
-                new(){Type=0,Frequency=350,GainDb=-2.5f,Q=.9f},
-                new(){Type=0,Frequency=3000,GainDb=2,Q=1},
-                new(){Type=2,Frequency=8000,GainDb=1,Q=.707f}]
+            Bands=[new(){Type=1,Frequency=145,GainDb=4,Q=.707f},
+                new(){Type=0,Frequency=350,GainDb=-4,Q=.9f},
+                new(){Type=0,Frequency=3000,GainDb=3,Q=1},
+                new(){Type=2,Frequency=8000,GainDb=-2,Q=.707f}]
         };
         return [natural,clear,warm,broadcast,podcast];
     }

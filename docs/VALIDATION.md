@@ -1,3 +1,27 @@
+# 0.7.3-dev calibration and profile checkpoint — 2026-10-08
+
+Passed: 10-second quick calibration (2 seconds room / 8 seconds natural speech),
+optional 20-second detailed stages, bounded bad-input rejection, preserved quick
+EQ/HP/de-esser and full-wet cleaning, independent sensitivity preservation,
+apply/undo and saved-device handling. Pending UI edits flush before analysis.
+Four native tests and 110 managed checks passed, including real native DSP
+profile probes with RMS-matched spectral separation and finite limiter-bounded
+full-chain output. These synthetic signals are not perceptual voice-quality scores.
+
+Passed: offline WPF smoke, profile settings reaching the controls without autoplay,
+empty-preview navigation, calibration apply/undo, persistence, shutdown and four
+unsigned/untrusted catalog rejection checks. 42 TR/EN layouts at 1160x840,
+780x650 and 640x480 passed automated checks; actual desktop/compact calibration
+and profile renders were inspected. Real user state SHA-256 was unchanged.
+
+Passed: dependency/secret/static analysis and managed analyzers. Independent
+read-only correctness and security reviews found no code/security issues; one
+inaccurate documentation section label was corrected.
+
+Not run: subjective listening with a real microphone, real Narrator/physical DPI
+changes, receiving-application speech acceptance and full-route performance.
+Installer/CI/release acceptance is reported separately in the GitHub run/release.
+
 # Veylo 0.6.12 rebrand checkpoint — 2026-10-08
 
 SES is now **Veylo**. Current application/window/tray/dialog/resource branding,

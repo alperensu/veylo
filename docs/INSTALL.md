@@ -69,8 +69,12 @@ kontrol et. Uygulama oyunlara müdahale/injection yapmaz ve FPS artışı vaat e
 
 ## Sesine ayarlama
 
-Dinle ve Kalibre Et → Sesime göre otomatik ayarla: 5 saniye sessizlik,
-7 saniye normal, 4 saniye hafif, 4 saniye yüksek konuşma. Mesafeyi sabit tut.
+Kalibrasyon ve Test → Sesime göre otomatik ayarla varsayılan olarak 10 saniyedir:
+2 saniye sessiz kal, ardından 8 saniye doğal sesinle konuş. Mesafeyi sabit tut.
+Hızlı ölçüm seçili EQ/ton karakterini koruyarak seviye ve kompresörü ayarlar;
+alt/üst seviyeler normal konuşmanın gözlenen aralığıdır. Ayrı hafif/yüksek ses
+ölçümü ve küçük ton önerileri için Ayrıntılı ölçüm seçeneğini aç: 5 saniye ortam,
+7 saniye normal, 4 saniye hafif, 4 saniye yüksek konuşma; toplam 20 saniye.
 Clipping, yetersiz konuşma veya kirli ortam örneğinde öneri reddedilir.
 Önerilen temizleme, dengeleme, EQ ve kompresörü önce dinle, sonra uygula.
 Kalibrasyon/karşılaştırma bittiğinde günlük işleme kapanmaz. Kişisel ayarlar
@@ -78,7 +82,14 @@ mikrofon bazında saklanır; Cihaz ayarını yükle ve son öneriyi Geri al bulu
 Preset kalibrasyonu silmez. Windows mikrofon seviyesi değiştirilmez.
 
 Doğal, Net Konuşma, Sıcak Ses, Yayın ve Podcast — Tok ve Net hazırdır.
+Net Konuşma daha açık, Sıcak Ses daha baslı/yumuşak, Yayın daha parlak ve
 Podcast dolgun/net ton, güçlü temizleme ve otomatik duyarlılık uygular.
+Profiller sayfasındaki ham/seçili profil düğmeleri
+aynı RAM örneğini gecikmesi ve ses yüksekliği eşlenmiş olarak dinletir. Kayıt
+yoksa kayıt bölümüne yönlendirir. Profil seçmek kendi başına ses çalmaz; canlı
+profil farkını duymak için Orijinal ses kapalı olmalıdır.
+Güncelleme kayıtlı ayarları değiştirmez. Yeni fabrika tonlarını yüklemek için
+başka bir hazır profili, ardından istediğin profili seç.
 Hafif kelimeleri kulaklıkla kontrol et; tüm dış seslerin yok olması veya
 herkeste aynı ton garanti edilmez. Donanımsal dalgalanmanın nedeni doğrulanmadı.
 
