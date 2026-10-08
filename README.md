@@ -22,7 +22,7 @@ genel ses kalitesi kabulünü bu iki uygulama belirlemez. Kullanıcı 8 Ekim 202
 kendi kurulumunda seslerin temizlendiğini ve sorun olmadığını bildirdi.
 Bu geri bildirim tüm mikrofonlar ve uygulamalar için uyumluluk garantisi değildir.
 
-**0.6.12-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
+**0.7.0-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
 işleme başlar; Başlat/Durdur kaldırıldı. Pencereyi kapatmak bildirim alanına
 gizler; Veylo'dan çık mikrofonu bırakır. Eski profiller/kalibrasyonlar korunur.
 
@@ -44,14 +44,17 @@ sürücü/imzalama/laboratuvar [DRIVER.md](docs/DRIVER.md),
 kapsam ve ölçüm sınırları [VALIDATION.md](docs/VALIDATION.md),
 özellik bazında kabul durumu [ACCEPTANCE.md](docs/ACCEPTANCE.md).
 
-## Cam arayüz ve oyun modu
+## Arayüz ve oyun modu
 
-Yeni cam yüzeyler, mint vurgu, yumuşak hover/press ve sayfa geçişleri, hareketli
-anahtarlar ve gerçek RMS seviye geçmişi. Ayarlar → Oyun modu varsayılan açık:
+Yeni açık çalışma alanı, koyu yan menü, bakır vurgu ve daha okunaklı kontroller.
+Ana ekranda mikrofon/çıkış, seviye ölçerler, kişisel kalibrasyon ve hazır profiller
+bir arada bulunur. Sustur ve Orijinal ses her sayfada erişilebilir. Kısa, isteğe
+bağlı geçişler ve gerçek RMS seviye geçmişi. Ayarlar → Oyun modu varsayılan açık:
 bilinen oyunlar arka planda, diğerleri tam ekran üzerinden algılanır. Oyun
-algılanınca animasyonlar/cam görünümü/canlı ses görseli kapanır; ölçerler5Hz,
+algılanınca animasyonlar/vurgu dekoru/canlı ses görseli kapanır; ölçerler5Hz,
 ses motoru ve susturma aynı şekilde çalışır. Özel süreç adları eklenebilir.
-Windows azaltılmış hareket tercihi animasyonları kapatır; cam görünümü kalır.
+Windows azaltılmış hareket tercihi animasyonları kapatır; yüksek kontrast
+tercihi arayüz renklerini Windows sistem paletine geçirir.
 Ayrıntı [UI.md](docs/UI.md). Gerçek oyun FPS/frametime testi yapılmadı.
 
 ## Derleme ve test

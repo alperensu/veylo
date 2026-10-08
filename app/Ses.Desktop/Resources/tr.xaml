@@ -2,7 +2,7 @@
  <s:String x:Key="tagline">Daha net. Daha dengeli. Senin sesin.</s:String>
  <s:String x:Key="title">Sesin, kontrol sende.</s:String>
  <s:String x:Key="intro">Gürültüyü azalt, seviyeyi dengele ve sesinin karakterini koru.</s:String>
- <s:String x:Key="devices">SES YOLU</s:String>
+ <s:String x:Key="devices">Ses bağlantısı</s:String>
  <s:String x:Key="input">Mikrofon</s:String>
  <s:String x:Key="output">Uygulamalara çıkış</s:String>
  <s:String x:Key="refresh">Yenile</s:String>
@@ -18,7 +18,7 @@
  <s:String x:Key="mute">Sustur</s:String>
  <s:String x:Key="bypass">Orijinal ses</s:String>
  <s:String x:Key="bypassTip">İşlemeyi geçici kapatır. Susturma ve güvenlik limiter'i korunur.</s:String>
- <s:String x:Key="levels">CANLI SEVİYELER</s:String>
+ <s:String x:Key="levels">Giriş ve çıkış</s:String>
  <s:String x:Key="raw">Ham giriş</s:String>
  <s:String x:Key="inputMeterName">Ham giriş seviyesi</s:String>
  <s:String x:Key="outputMeterName">İşlenmiş çıkış seviyesi</s:String>
@@ -31,7 +31,7 @@
  <s:String x:Key="gain">Dengeleme</s:String>
  <s:String x:Key="compression">Sıkıştırma</s:String>
  <s:String x:Key="latency">Tahmini tampon gecikmesi</s:String>
- <s:String x:Key="profiles">HAZIR SES PROFİLLERİ</s:String>
+ <s:String x:Key="profiles">Hazır ses profilleri</s:String>
  <s:String x:Key="profileHint">Bir başlangıç seç. Ayrıntıları kendi sesine göre ayarla.</s:String>
  <s:String x:Key="preset_natural">Doğal</s:String>
  <s:String x:Key="preset_clear">Net Konuşma</s:String>
@@ -228,10 +228,10 @@
  <s:String x:Key="windowMinimize">Bildirim alanına küçült</s:String>
  <s:String x:Key="windowMaximize">Büyüt veya önceki boyuta dön</s:String>
  <s:String x:Key="windowHide">Bildirim alanına gizle</s:String>
- <s:String x:Key="voiceStudio">SESİN İÇİN BİR ALAN</s:String>
+ <s:String x:Key="voiceStudio">Mikrofonuna özel</s:String>
  <s:String x:Key="scopeWaiting">Mikrofon bekleniyor</s:String>
  <s:String x:Key="scopeAccessible">İşlenmiş sesin son 5 saniyelik RMS seviye geçmişi</s:String>
- <s:String x:Key="voiceHeroHint">Sesini kendine göre ayarla. Tok, dengeli ve sana ait.</s:String>
+ <s:String x:Key="voiceHeroHint">Kısa bir kalibrasyonla sesine ve ortamına uygun ayarları bul. Sonucu dinleyerek uygula.</s:String>
  <s:String x:Key="tuneVoice">Sesimi ayarla</s:String>
  <s:String x:Key="scopeLive">Canlı seviye</s:String>
  <s:String x:Key="scopePaused">Görsel efektler duraklatıldı</s:String>
@@ -242,7 +242,7 @@
  <s:String x:Key="gameBadgeHint">Oyun modunu ve görsel efektleri yönet</s:String>
  <s:String x:Key="gameIntro">Oyununa alan aç. Oyun algılandığında arayüz sadeleşir; mikrofon işleme ve susturma çalışmaya devam eder.</s:String>
  <s:String x:Key="gameAuto">Oyun açılınca efektleri otomatik kapat</s:String>
- <s:String x:Key="effectsEnable">Animasyonlar ve cam efektleri</s:String>
+ <s:String x:Key="effectsEnable">Arayüz animasyonları</s:String>
  <s:String x:Key="gameDetected">Algılanan oyun</s:String>
  <s:String x:Key="gameActiveHint">Geçişler ve canlı ses görseli kapalı. Seviye ölçerler 5 Hz; ses motoru aynı ayarlarla çalışıyor.</s:String>
  <s:String x:Key="gameWaitingHint">Oyun bekleniyor. Bilinen oyunlar arka planda da algılanır; tam ekran uygulamalar ayrıca kontrol edilir.</s:String>
@@ -289,4 +289,18 @@
 <s:String x:Key="strongNoise">Güçlü temizlemeyi uygula</s:String>
 <s:String x:Key="strongNoiseHint">Klavye sesi belirgin kalıyorsa: %100 temizlenmiş ses ve yumuşak expander. Ham sesi karışımdan çıkarır; orijinal ses modunu kapatır. Susturma ve ton ayarların korunur. Her gürültüyü silme garantisi yoktur.</s:String>
 <s:String x:Key="strongNoiseApplied">Güçlü temizleme açık · ham ses karışımı %0</s:String>
+ <s:String x:Key="brandTag">Mikrofon stüdyosu</s:String>
+ <s:String x:Key="localFirst">Sesin burada kalır.</s:String>
+ <s:String x:Key="localFirstHint">Yerel işleme. Hesap gerekmez.</s:String>
+ <s:String x:Key="chooseSound">Ses karakterini seç</s:String>
+ <s:String x:Key="overviewPresetsHint">Bir profille başla. Mikrofonuna özel ayarlar için kalibrasyonu kullan.</s:String>
+ <s:String x:Key="noiseControls">Arka planı temizle</s:String>
+ <s:String x:Key="balanceControls">Tutarlı konuşma seviyesi</s:String>
+ <s:String x:Key="dynamicsControls">Dinamikler ve çıkış</s:String>
+ <s:String x:Key="dynamicsHint">Ani yükselmeleri kontrol et. Çıkış kazancını değiştirirken işlenmiş seviyeyi takip et.</s:String>
+ <s:String x:Key="saveProfileTitle">Kendi profilin</s:String>
+ <s:String x:Key="connectionTools">Bağlantı araçları</s:String>
+ <s:String x:Key="connectionToolsHint">VB-CABLE günlük aktarım için kullanılabilir. Veylo sürücüsü geliştirme aşamasındadır; kurulumu zorunlu değildir.</s:String>
+ <s:String x:Key="diagnosticsTitle">Teknik tanı bilgileri</s:String>
+ <s:String x:Key="noiseHelpTitle">Nasıl çalışır?</s:String>
 </ResourceDictionary>

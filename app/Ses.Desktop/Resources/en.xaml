@@ -2,7 +2,7 @@
  <s:String x:Key="tagline">Clearer. Steadier. Your voice.</s:String>
  <s:String x:Key="title">Your voice. Your control.</s:String>
  <s:String x:Key="intro">Reduce noise, steady your level and keep your voice natural.</s:String>
- <s:String x:Key="devices">AUDIO ROUTE</s:String>
+ <s:String x:Key="devices">Audio connection</s:String>
  <s:String x:Key="input">Microphone</s:String>
  <s:String x:Key="output">Output to your apps</s:String>
  <s:String x:Key="refresh">Refresh</s:String>
@@ -18,7 +18,7 @@
  <s:String x:Key="mute">Mute</s:String>
  <s:String x:Key="bypass">Original voice</s:String>
  <s:String x:Key="bypassTip">Temporarily bypass processing. Mute and the safety limiter remain active.</s:String>
- <s:String x:Key="levels">LIVE LEVELS</s:String>
+ <s:String x:Key="levels">Input &amp; output</s:String>
  <s:String x:Key="raw">Raw input</s:String>
  <s:String x:Key="inputMeterName">Raw input level</s:String>
  <s:String x:Key="outputMeterName">Processed output level</s:String>
@@ -31,7 +31,7 @@
  <s:String x:Key="gain">Level adjustment</s:String>
  <s:String x:Key="compression">Compression</s:String>
  <s:String x:Key="latency">Estimated buffer latency</s:String>
- <s:String x:Key="profiles">VOICE PRESETS</s:String>
+ <s:String x:Key="profiles">Ready-made voice profiles</s:String>
  <s:String x:Key="profileHint">Choose a starting point. Fine-tune it for your voice.</s:String>
  <s:String x:Key="preset_natural">Natural</s:String>
  <s:String x:Key="preset_clear">Clear Speech</s:String>
@@ -228,10 +228,10 @@
  <s:String x:Key="windowMinimize">Minimize to tray</s:String>
  <s:String x:Key="windowMaximize">Maximize or restore</s:String>
  <s:String x:Key="windowHide">Hide to tray</s:String>
- <s:String x:Key="voiceStudio">A SPACE FOR YOUR VOICE</s:String>
+ <s:String x:Key="voiceStudio">Made for your microphone</s:String>
  <s:String x:Key="scopeWaiting">Waiting for microphone</s:String>
  <s:String x:Key="scopeAccessible">Last 5 seconds of processed voice RMS level history</s:String>
- <s:String x:Key="voiceHeroHint">Make your voice your own. Rich, steady and clear.</s:String>
+ <s:String x:Key="voiceHeroHint">Find settings for your voice and room with a short calibration. Listen before applying them.</s:String>
  <s:String x:Key="tuneVoice">Tune my voice</s:String>
  <s:String x:Key="scopeLive">Live level</s:String>
  <s:String x:Key="scopePaused">Visual effects paused</s:String>
@@ -242,7 +242,7 @@
  <s:String x:Key="gameBadgeHint">Manage game mode and visual effects</s:String>
  <s:String x:Key="gameIntro">Make room for your game. When a game is detected, the interface becomes simpler; microphone processing and mute keep working.</s:String>
  <s:String x:Key="gameAuto">Automatically disable effects when gaming</s:String>
- <s:String x:Key="effectsEnable">Animations and glass effects</s:String>
+ <s:String x:Key="effectsEnable">Interface animations</s:String>
  <s:String x:Key="gameDetected">Detected game</s:String>
  <s:String x:Key="gameActiveHint">Transitions and live voice visualization are off. Meters run at 5 Hz; the audio engine keeps the same settings.</s:String>
  <s:String x:Key="gameWaitingHint">Waiting for a game. Known games are detected in the background; fullscreen apps are also checked.</s:String>
@@ -289,4 +289,18 @@
 <s:String x:Key="strongNoise">Apply strong cleaning</s:String>
 <s:String x:Key="strongNoiseHint">For audible keyboard noise: 100% cleaned audio with a soft expander. Removes the dry mix and turns off original voice. Mute and tone settings are preserved. Complete noise removal is not guaranteed.</s:String>
 <s:String x:Key="strongNoiseApplied">Strong cleaning on · dry audio mix 0%</s:String>
+ <s:String x:Key="brandTag">Microphone studio</s:String>
+ <s:String x:Key="localFirst">Your voice stays here.</s:String>
+ <s:String x:Key="localFirstHint">Local processing. No account needed.</s:String>
+ <s:String x:Key="chooseSound">Choose your sound</s:String>
+ <s:String x:Key="overviewPresetsHint">Start with a profile. Calibrate to tailor the settings to your microphone.</s:String>
+ <s:String x:Key="noiseControls">Clean up the background</s:String>
+ <s:String x:Key="balanceControls">Consistent voice level</s:String>
+ <s:String x:Key="dynamicsControls">Dynamics &amp; output</s:String>
+ <s:String x:Key="dynamicsHint">Control sudden peaks. Watch the processed level when adjusting output gain.</s:String>
+ <s:String x:Key="saveProfileTitle">Your own profile</s:String>
+ <s:String x:Key="connectionTools">Connection tools</s:String>
+ <s:String x:Key="connectionToolsHint">VB-CABLE is available for everyday routing. The Veylo driver is in development; installing it is optional.</s:String>
+ <s:String x:Key="diagnosticsTitle">Technical diagnostics</s:String>
+ <s:String x:Key="noiseHelpTitle">How it works</s:String>
 </ResourceDictionary>
