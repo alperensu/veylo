@@ -28,10 +28,14 @@ indirme için gereklidir; günlük ses işleme çevrimdışıdır.
 
 SDK/CMake/LLVM sürümleri ve SHA kontrolleri `scripts/bootstrap.ps1` içinde
 sabittir. RNNoise/miniaudio dosyaları `dependencies.lock.json` ile doğrulanır.
-CI aynı komutları temiz bir `windows-2022` makinesinde çalıştırır; mikrofon açmaz,
+CI testleri `./scripts/test.ps1 -Headless` ile temiz bir `windows-2022` makinesinde çalıştırır; mikrofon açmaz,
 sürücü kurmaz, EWDK indirmez ve Windows güvenlik ayarlarını değiştirmez.
 CI'da geliştirme sürücüsü derlenmediğinden unsigned development CAT kontrolü atlanır;
 diğer katalog reddetme testleri çalışır.
+Headless mod yalnızca boş cihaz listesinin kabul edilmesini sağlar; gerçek
+enumeration API'si ve dönen cihazların sınırları kontrol edilir. Mikrofon yoksa
+fiziksel cihaz bulunabilirliği açıkça `SKIP` raporlanır. Normal yerel test bu
+kontrolü zorunlu tutar; `-Live` ve `-Headless` birlikte kullanılamaz.
 
 ## Paketler ve sürümler
 

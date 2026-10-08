@@ -1,5 +1,6 @@
-param([switch]$Live,[switch]$Sanitize)
+param([switch]$Live,[switch]$Sanitize,[switch]$Headless)
 $ErrorActionPreference='Stop'
+if($Live -and $Headless){throw 'Headless mode cannot validate a live microphone'}
 $root=Split-Path $PSScriptRoot -Parent
 Push-Location $root
 try{
@@ -9,7 +10,9 @@ try{
     if($LASTEXITCODE -ne 0){throw 'Native tests failed'}
     if($Sanitize){return}
     $env:DOTNET_CLI_TELEMETRY_OPTOUT='1';$env:DOTNET_GENERATE_ASPNET_CERTIFICATE='false'
-    & '.tools/dotnet/dotnet.exe' run --project tests/Ses.Core.Tests -c Release -- (Join-Path $root 'build/bin')
+    $managedArgs=@((Join-Path $root 'build/bin'))
+    if($Headless){$managedArgs+='--allow-no-audio-device'}
+    & '.tools/dotnet/dotnet.exe' run --project tests/Ses.Core.Tests -c Release -- @managedArgs
     if($LASTEXITCODE -ne 0){throw 'Managed tests failed'}
     & '.tools/dotnet/dotnet.exe' run --project tests/Ses.Desktop.Tests -c Release
     if($LASTEXITCODE -ne 0){throw 'Desktop persistence tests failed'}

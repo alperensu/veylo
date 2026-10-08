@@ -130,7 +130,11 @@ Check("first run prefers a physical microphone over default cable",()=>{AudioDev
 Check("valid Windows default physical microphone is honored",()=>Assert(InputSelection.Choose([new("a","Microphone A",true,false),new("b","Microphone B",true,true)],"")?.Id=="b"));
 using var engine=new NativeEngine(args[0]);
 Check("optional stream diagnostics preserve ABI5 and expose no offline callbacks",()=>{var diagnostic=engine.Diagnostics();Assert(diagnostic is {Version:1,Size:96,CaptureCallbacks:0,PlaybackCallbacks:0});Assert(System.Runtime.InteropServices.Marshal.SizeOf<EngineMetrics>()==136&&System.Runtime.InteropServices.Marshal.SizeOf<StreamDiagnostics>()==96);});
-Check("native wrapper enumerates actual audio endpoints",()=>Assert(engine.Devices().Any(x=>x.Input)));
+var endpoints=engine.Devices();
+Check("native wrapper enumerates bounded endpoint metadata",()=>Assert(endpoints.Count<=128&&endpoints.All(d=>d.Id.Length is >0 and <512&&d.Name.Length<256)));
+if(endpoints.Any(d=>d.Input)||!args.Skip(1).Contains("--allow-no-audio-device",StringComparer.Ordinal))
+    Check("native wrapper finds an actual capture endpoint",()=>Assert(endpoints.Any(d=>d.Input)));
+else Console.WriteLine("SKIP physical capture endpoint availability: explicitly requested headless host; enumeration API was checked above.");
 Check("podcast chain reduces stationary room sample and safely handles level bursts",()=>{var podcast=Profiles.Factory().Single(p=>p.FactoryId=="podcast").Settings;var random=new Random(93);var room=Enumerable.Range(0,48000*3).Select(_=>(float)(random.NextDouble()-.5)*.003f).ToArray();using var p=new NativeEngine(args[0]);using var n=new NativeEngine(args[0]);var clean=p.Process(room,podcast);var normal=n.Process(room,Profiles.Factory()[0].Settings);double Energy(float[] samples)=>samples.Skip(48000).Sum(v=>(double)v*v);Assert(Energy(clean)<Energy(normal));var voice=PersonalSample(.08f);for(int i=790000;i<790480;i++)voice[i]*=12;var output=p.Process(voice,podcast);Assert(output.Length==voice.Length&&output.All(v=>float.IsFinite(v)&&Math.Abs(v)<=.891252f));});
 Check("native sensitivity flags threshold and gain cross ABI correctly",()=>{using var sensitivity=new NativeEngine(args[0]);var input=Enumerable.Range(0,48000*2).Select(i=>.001f*(float)Math.Sin(i*.03)).ToArray();var settings=new AudioSettings{NoiseEnabled=false,AgcEnabled=false,SensitivityEnabled=true,SensitivityAutoEnabled=false,SensitivityThresholdDb=-45};var output=sensitivity.Process(input,settings);var metrics=sensitivity.Metrics();Assert(metrics.SensitivityThresholdDb==-45&&metrics.SensitivityGain==0&&output.All(v=>v==0));settings.SensitivityAutoEnabled=true;sensitivity.Process(input,settings);Assert(sensitivity.Metrics().SensitivityThresholdDb!=-45);settings.SensitivityAutoEnabled=false;sensitivity.Process(input,settings);Assert(sensitivity.Metrics().SensitivityThresholdDb==-45);});
 Check("native wrapper passes automatic mode and reads actual strength",()=>{using var automatic=new NativeEngine(args[0]);var random=new Random(53);var x=Enumerable.Range(0,48000*4).Select(_=>(float)(random.NextDouble()-.5)*.12f).ToArray();automatic.Process(x,new AudioSettings{NoiseAutoEnabled=true,AgcEnabled=false});var metrics=automatic.Metrics();Assert(metrics.NoiseMix>.65f&&metrics.NoiseMix<=.95f&&float.IsFinite(metrics.NoiseFloorDb));});
@@ -202,4 +206,3 @@ Check("game unmatched span polling does not allocate process-name strings",()=>{
     Assert(!matched&&allocated==0);
 });
 Console.WriteLine($"{checks} tests, {failures} failures");return failures==0?0:1;
-

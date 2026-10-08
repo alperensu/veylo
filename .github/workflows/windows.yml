@@ -42,7 +42,7 @@ jobs:
       - name: Build desktop and native engine
         run: ./scripts/build.ps1
       - name: Native, managed and offscreen UI tests
-        run: ./scripts/test.ps1
+        run: ./scripts/test.ps1 -Headless
       - name: Dependency, secret and static analysis checks
         run: ./scripts/security.ps1
       - name: AddressSanitizer build and tests
