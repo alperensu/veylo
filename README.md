@@ -22,7 +22,7 @@ genel ses kalitesi kabulünü bu iki uygulama belirlemez. Kullanıcı 8 Ekim 202
 kendi kurulumunda seslerin temizlendiğini ve sorun olmadığını bildirdi.
 Bu geri bildirim tüm mikrofonlar ve uygulamalar için uyumluluk garantisi değildir.
 
-**0.7.3-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
+**0.7.4-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
 işleme başlar; Başlat/Durdur kaldırıldı. Pencereyi kapatmak bildirim alanına
 gizler; Veylo'dan çık mikrofonu bırakır. Eski profiller/kalibrasyonlar korunur.
 
@@ -38,6 +38,10 @@ ayrı Windows laboratuvarı ve sürücünün gerçek uygulamalarla uyumluluk do�
 Veylo Mikrofon seçeneği bu sürücü olmadan uygulamalara ses taşımaz. VB-CABLE yolu
 bu sürücüye ihtiyaç duymaz; gerçek uygulama/uzun süreli performans kabulü beklenir.
 Sürücü sertifikası satın alınmadı veya imzalı sürücü yayımlanmadı; eski yerel paketler korunmuştur.
+0.7.4-dev sürücü hazırlığını güçlendirir; günlük çıkış hâlâ VB-CABLE.
+[İzole laboratuvar ve geçiş kapıları](docs/DRIVER-LAB.md) tamamlanmadan
+kendi sürücümüze otomatik geçilmez. `package-driver.ps1` yalnız hash doğrulanmış,
+açıkça etiketlenmiş imzasız laboratuvar ZIP’i üretir; normal Setup’a eklemez.
 
 [Son sürümden](https://github.com/alperensu/veylo/releases) **win-x64-Setup.exe**
 indirerek kur veya taşınabilir **win-x64.zip** paketini tamamen çıkarıp Veylo.exe aç.

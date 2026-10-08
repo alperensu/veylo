@@ -28,18 +28,16 @@ try{
     Copy-Item -LiteralPath (Join-Path $cache 'microsoft.netcore.app.runtime.win-x64/10.0.11/THIRD-PARTY-NOTICES.TXT') -Destination (Join-Path $output 'ThirdPartyNotices.txt') -Force
     Copy-Item -LiteralPath (Join-Path $cache 'microsoft.windowsdesktop.app.runtime.win-x64/10.0.11/LICENSE') -Destination (Join-Path $licenses 'WPF-WINFORMS-LICENSE') -Force
     @{version=[string]$desktopProject.Project.PropertyGroup.Version;abi=5;driverProtocol=1;driverBundled=$false;defaultOutput="VB-CABLE";vbCableBundled=$false;dailyUseReady=$false;pending=@('Microsoft production signing','Isolated Windows 10/11 kernel validation','Receiving-application compatibility','Full-route performance measurements')} | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $output 'release-status.json') -Encoding utf8
+    # Validate BEFORE writing the portable ZIP, not only when compiling Setup.
+    foreach($file in Get-ChildItem -LiteralPath $output -Recurse -File){
+        if($file.Extension -in @('.sys','.cat','.pfx','.p12','.key','.wav') -or $file.Name -eq 'state.json' -or $file.Name -like 'unins*'){throw ('Unexpected portable payload: '+$file.Name)}
+    }
     $zip=Join-Path $root ('dist/'+$packageName+'.zip')
     Compress-Archive -Path (Join-Path $output '*') -DestinationPath $zip -Force -CompressionLevel Optimal
     ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()+'  '+$packageName+'.zip') | Set-Content -LiteralPath ($zip+'.sha256') -Encoding ASCII
     Write-Output $zip
     & "$PSScriptRoot/build-installer.ps1"
-    if(Test-Path -LiteralPath 'build/driver/package/development-manifest.json'){
-        $driverZip=Join-Path $root 'dist/Veylo-driver-0.5.0-development.zip'
-        Copy-Item -LiteralPath 'docs/DRIVER.md' -Destination 'build/driver/package/DRIVER.md' -Force
-        Compress-Archive -Path 'build/driver/package/*' -DestinationPath $driverZip -Force
-        ((Get-FileHash -LiteralPath $driverZip -Algorithm SHA256).Hash.ToLowerInvariant()+'  '+[IO.Path]::GetFileName($driverZip)) | Set-Content ($driverZip+'.sha256') -Encoding ASCII
-        Write-Output $driverZip
-    }
+    # Kernel lab packages use the explicit package-driver.ps1 flow; never bundle stale local binaries.
     $sourceZip=Join-Path $root ('dist/Veylo-'+$desktopProject.Project.PropertyGroup.Version+'-source.zip')
     $sourceFiles=@(& git ls-files --cached --others --exclude-standard)
     if($LASTEXITCODE -ne 0){throw 'Source inventory failed'}

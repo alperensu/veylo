@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings><TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <AssemblyName>Veylo</AssemblyName><Product>Veylo</Product><Title>Veylo</Title><RootNamespace>Ses.Desktop</RootNamespace><Version>0.7.3-dev</Version><ApplicationManifest>app.manifest</ApplicationManifest><ApplicationIcon>Assets/veylo.ico</ApplicationIcon><EnableNETAnalyzers>true</EnableNETAnalyzers><AnalysisLevel>latest</AnalysisLevel>
+    <AssemblyName>Veylo</AssemblyName><Product>Veylo</Product><Title>Veylo</Title><RootNamespace>Ses.Desktop</RootNamespace><Version>0.7.4-dev</Version><ApplicationManifest>app.manifest</ApplicationManifest><ApplicationIcon>Assets/veylo.ico</ApplicationIcon><EnableNETAnalyzers>true</EnableNETAnalyzers><AnalysisLevel>latest</AnalysisLevel>
     <NativeBinary Condition="'$(NativeBinary)' == ''">$(MSBuildThisFileDirectory)../../build/bin/ses_native.dll</NativeBinary>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Ses.Core/Ses.Core.csproj" /></ItemGroup>

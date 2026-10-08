@@ -26,10 +26,15 @@ struct PcmRing {
     void pull(void* buffer,uint32_t frames,uint32_t bits,uint64_t now){
         auto* pcm16=static_cast<int16_t*>(buffer);auto* pcm32=static_cast<int32_t*>(buffer);
         if(!attached||now-last_ms>SES_DRIVER_TIMEOUT_MS)discard();
-        if(!primed&&queued()>=SES_DRIVER_TARGET+1)primed=true;
-        int64_t correction=(static_cast<int64_t>(queued())-SES_DRIVER_TARGET)*65536/(SES_DRIVER_TARGET*200);
+        const uint32_t reserve=SES_DRIVER_TARGET+SES_DRIVER_FRAMES/2;
+        if(!primed&&queued()>=reserve+frames+1)primed=true;
+        // TARGET is the reserve AFTER this pull, not the initial fill. Keep
+        // one complete producer block in reserve through ordinary callback jitter.
+        // Half a producer packet compensates the occupancy sawtooth as the
+        // independent clocks cross a packet boundary; TARGET remains the floor.
+        int64_t correction=(static_cast<int64_t>(queued())-frames-reserve)*65536/(SES_DRIVER_TARGET*200);
         if(correction>328)correction=328;if(correction< -328)correction= -328;
-        const uint32_t step=static_cast<uint32_t>(65536+correction);drift_ppm=static_cast<int32_t>(correction*1000000/65536);
+        const uint32_t step=static_cast<uint32_t>(65536+correction);drift_ppm=primed?static_cast<int32_t>(correction*1000000/65536):0;
         for(uint32_t i=0;i<frames;++i){
             int32_t value=0;
             if(primed&&queued()>1){
