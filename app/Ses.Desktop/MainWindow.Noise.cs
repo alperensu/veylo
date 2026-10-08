@@ -18,7 +18,7 @@ public partial class MainWindow
     private async Task RunStrongNoiseSmoke(string directory)
     {
         Width=1120;Height=820;LanguageBox.SelectedIndex=0;
-        NavigationList.SelectedIndex=1;settings=Profiles.Factory()[0].Settings.Clone();LoadControls();
+        Navigate(WorkspacePage.Processing,ProcessingSection.Background);settings=Profiles.Factory()[0].Settings.Clone();LoadControls();
         MuteBox.IsChecked=true;BypassBox.IsChecked=true;
         StrongNoiseButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         if(settings.NoiseMix!=1||settings.NoiseAutoEnabled||!settings.SensitivityEnabled||settings.SensitivityMode!=1||BypassBox.IsChecked==true||MuteBox.IsChecked!=true)

@@ -37,9 +37,14 @@ public partial class MainWindow
             if(choice is not null)PresetList.SelectedItem=choice;
         }
     }
-    private void ApplyCommunicationKeys()
+    private ShortcutSettings RequestedShortcuts(bool transmission)=>transmission
+        ? new(state.MuteKey,state.BypassKey,TalkModeBox.SelectedIndex,HoldKeyBox.SelectedItem as string??"T",state.PresetKeysEnabled)
+        : new(MuteKeyBox.SelectedItem as string??"M",BypassKeyBox.SelectedItem as string??"B",state.TalkMode,state.HoldKey,PresetKeysBox.IsChecked==true);
+    private void ApplyTransmissionClick(object sender,RoutedEventArgs e)=>ApplyCommunicationKeys(true);
+    private void ApplyCommunicationKeys(bool transmission=false)
     {
-        var wanted=new ShortcutSettings(MuteKeyBox.SelectedItem as string??"M",BypassKeyBox.SelectedItem as string??"B",TalkModeBox.SelectedIndex,HoldKeyBox.SelectedItem as string??"T",PresetKeysBox.IsChecked==true);
+        if(!ready||busy||sampling||quitting)return;
+        var wanted=RequestedShortcuts(transmission);
         try
         {
             wanted.Validate();
@@ -71,13 +76,13 @@ public partial class MainWindow
         // Pure policy/native tests cover held state; no physical-key simulation. Temporary registrations are cleaned up.
         state.TalkMode=0;engine.SetTalkGate(0,false);BypassBox.IsChecked=false;RestoreShortcutControls();
         foreach(string id in ShortcutSettings.FactoryIds){SelectFactoryShortcut(id);if((PresetList.SelectedItem as ProfileChoice)?.Profile.FactoryId!=id)throw new InvalidOperationException("Wrong shortcut profile");}
-        NavigationList.SelectedIndex=1;SensitivityBox.IsChecked=true;SensitivityModeBox.SelectedIndex=1;
+        Navigate(WorkspacePage.Processing,ProcessingSection.Background);SensitivityBox.IsChecked=true;SensitivityModeBox.SelectedIndex=1;
         SensitivityAttackSlider.Value=5;SensitivityHoldSlider.Value=200;SensitivityReleaseSlider.Value=180;SensitivityHysteresisSlider.Value=4;SensitivityRatioSlider.Value=3;SensitivityReductionSlider.Value=30;ApplySettings();
         if(settings.SensitivityMode!=1||settings.SensitivityRatio!=3||settings.SensitivityHoldMs!=200)throw new InvalidOperationException("Advanced sensitivity not applied");
         SensitivityAdvanced.IsExpanded=true;SensitivityAdvanced.BringIntoView();await Task.Delay(100);Capture(Path.Combine(directory,"expander-tr.png"));
-        NavigationList.SelectedIndex=6;MainScroll.ScrollToTop();TalkModeBox.SelectedIndex=1;PresetKeysBox.IsChecked=true;CommunicationPanel.BringIntoView();await Task.Delay(100);Capture(Path.Combine(directory,"communication-tr.png"));
+        Navigate(WorkspacePage.Application);MainScroll.ScrollToTop();TalkModeBox.SelectedIndex=1;PresetKeysBox.IsChecked=true;CommunicationPanel.BringIntoView();await Task.Delay(100);Capture(Path.Combine(directory,"communication-tr.png"));
         LanguageBox.SelectedIndex=1;Width=640;Height=480;CommunicationPanel.BringIntoView();await Task.Delay(120);Capture(Path.Combine(directory,"communication-small-en.png"));
-        NavigationList.SelectedIndex=1;SensitivityAdvanced.BringIntoView();await Task.Delay(100);Capture(Path.Combine(directory,"expander-small-en.png"));
+        Navigate(WorkspacePage.Processing,ProcessingSection.Background);SensitivityAdvanced.BringIntoView();await Task.Delay(100);Capture(Path.Combine(directory,"expander-small-en.png"));
         File.WriteAllText(Path.Combine(directory,"communication-result.json"),"{\"success\":true,\"factoryHotkeys\":5,\"windowsRegistrationRollback\":true,\"globalKeyboardSimulation\":false,\"expander\":true}");
         RestoreShortcutControls();SensitivityAdvanced.IsExpanded=false;ApplySettings();
     }

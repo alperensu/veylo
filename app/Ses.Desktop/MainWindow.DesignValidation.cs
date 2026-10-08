@@ -15,22 +15,28 @@ public partial class MainWindow
     private async Task RunDesignSmoke(string directory)
     {
         if(!OfflineSmoke)throw new InvalidOperationException("Design validation requires offline mode");
-        var quickButtons=((StackPanel)OverviewPresets.Child).Children.OfType<WrapPanel>().Single().Children.OfType<Button>().ToArray();
-        int selectedProfile=PresetList.SelectedIndex;
         try{
             SetBusy(true);
-            quickButtons[(selectedProfile+1)%quickButtons.Length].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            if(OverviewPresets.IsEnabled||PresetList.SelectedIndex!=selectedProfile)throw new InvalidOperationException("Busy session allowed a quick profile change");
+            if(PresetList.IsEnabled)throw new InvalidOperationException("Busy session left profiles enabled");
             sampling=true;personalCalibrating=true;SetBusy(false);
-            if(OverviewPresets.IsEnabled)throw new InvalidOperationException("Calibration left quick presets enabled");
+            if(PresetList.IsEnabled)throw new InvalidOperationException("Calibration left profiles enabled");
         }finally{sampling=false;personalCalibrating=false;SetBusy(false);}
         int layouts=0;
+        var views=new[]{
+            (WorkspacePage.Overview,(ProcessingSection?)null),
+            (WorkspacePage.Processing,(ProcessingSection?)ProcessingSection.Background),
+            (WorkspacePage.Processing,(ProcessingSection?)ProcessingSection.Level),
+            (WorkspacePage.Processing,(ProcessingSection?)ProcessingSection.Tone),
+            (WorkspacePage.Profiles,(ProcessingSection?)null),
+            (WorkspacePage.Calibration,(ProcessingSection?)null),
+            (WorkspacePage.Application,(ProcessingSection?)null)
+        };
         foreach(var language in new[]{0,1}){
             LanguageBox.SelectedIndex=language;
             foreach(var size in new[]{(1160,840),(780,650),(640,480)}){
                 Width=size.Item1;Height=size.Item2;
-                for(int page=0;page<7;page++){
-                    NavigationList.SelectedIndex=page;MainScroll.ScrollToTop();await Task.Delay(40);UpdateLayout();
+                foreach(var (page,section) in views){
+                    Navigate(page,section);MainScroll.ScrollToTop();await Task.Delay(40);UpdateLayout();
                     if(MainScroll.ScrollableWidth>1||MainScroll.ActualWidth<400||MainScroll.ActualHeight<140)throw new InvalidOperationException("Page viewport became unusable");
                     foreach(var control in new FrameworkElement[]{MuteBox,BypassBox,LanguageBox}){
                         var bounds=control.TransformToAncestor((Visual)Content).TransformBounds(new Rect(control.RenderSize));
@@ -44,8 +50,14 @@ public partial class MainWindow
                         var bounds=icon.TransformToAncestor(item).TransformBounds(new Rect(icon.RenderSize));
                         if(bounds.Right>item.ActualWidth+1||icon.Width<18||icon.ActualWidth<12)throw new InvalidOperationException($"Navigation icon clipped at {size.Item1} page {page}: {AutomationProperties.GetName(item)}, right={bounds.Right}, item={item.ActualWidth}, icon={icon.ActualWidth}");
                     }
-                    if(page==0&&(InputBox.ActualWidth<180||OutputBox.ActualWidth<180))throw new InvalidOperationException("Device fields are too narrow");
-                    Capture(Path.Combine(directory,$"design-{(language==0?"tr":"en")}-{size.Item1}-page-{page}.png"));layouts++;
+                    if(page==WorkspacePage.Overview&&(InputBox.ActualWidth<180||OutputBox.ActualWidth<180))throw new InvalidOperationException("Device fields are too narrow");
+                    if(page==WorkspacePage.Processing){
+                        foreach(TabItem tab in ProcessingTabs.Items){
+                            var bounds=tab.TransformToAncestor(ProcessingTabs).TransformBounds(new Rect(tab.RenderSize));
+                            if(bounds.Right>ProcessingTabs.ActualWidth+1||bounds.Left<0||tab.ActualHeight<38)throw new InvalidOperationException("Processing tab is clipped");
+                        }
+                    }
+                    Capture(Path.Combine(directory,$"design-{(language==0?"tr":"en")}-{size.Item1}-{page}-{section}.png"));layouts++;
                 }
             }
         }
@@ -64,7 +76,7 @@ public partial class MainWindow
         if(engine.Metrics().Running!=0)throw new InvalidOperationException("Design validation opened audio");
         File.WriteAllText(Path.Combine(directory,"design-result.json"),System.Text.Json.JsonSerializer.Serialize(new{
             success=true,layouts,languages=new[]{"tr","en"},sizes=new[]{"1160x840","780x650","640x480"},persistentControlsVisible=true,
-            navigationIconsUnclipped=true,accessibleNavigationNames=true,systemPaletteMapping=true,quickPresetBusyGuard=true,rasterDpi=new[]{96,144,192},
+            navigationItems=NavigationList.Items.Count,processingSections=ProcessingTabs.Items.Count,navigationIconsUnclipped=true,accessibleNavigationNames=true,systemPaletteMapping=true,profileBusyGuard=true,rasterDpi=new[]{96,144,192},
             physicalDpiValidated=false,narratorValidated=false,liveAudioValidated=false
         }));
     }

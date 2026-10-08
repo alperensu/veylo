@@ -1,21 +1,34 @@
 # Veylo arayüzü ve oyun modu
 
-0.7.0-dev, arayüzün yeniden düzenlendiği geliştirme sürümüdür. Açık çalışma
+0.7.1-dev, arayüzün ve bölüm yerleşimlerinin yeniden düzenlendiği geliştirme sürümüdür. Açık çalışma
 alanı, koyu yan menü ve bakır vurgu; cam/blur/shader yerine okunaklı tipografi,
 belirgin odak ve tutarlı kontroller kullanılır. Görsel varlıklar mevcut özgün
 vektörlerdir; Segoe UI Variable/Segoe UI sistem fontları kullanılır.
 
 ## Günlük kullanım
 
-Ana ekranın sırası: mikrofon ve çıkış bağlantısı, hazır ses profilleri,
-gerçek giriş/çıkış seviyeleri ve kişisel kalibrasyon. Çıkış bulunamadığında aktarımın
+Ana ekranın sırası: mikrofon ve çıkış bağlantısı, gerçek giriş/çıkış seviyeleri
+ve kişisel kalibrasyon kısayolu. Etkin profil göstergesi Profiller'i açar.
+Çıkış bulunamadığında aktarımın
 kapalı olduğu açıkça yazılır. Hazır profiller tüm profil ayarlarını uygular;
 ses karakteri düğmeleri yalnız EQ değiştirmez. Gürültü azaltma sayfasında
 otomatik/elle kontrol öne çıkar; ayrıntılı açıklamalar “Nasıl çalışır?” altında
 bulunur. Dengeleme ve dinamik işlemler ayrı gruplardır.
 
-Yedi bölüm doğrudan yan menüden seçilir. Sustur ve Orijinal ses kontrolleri
-her sayfada alt alanda kalır. Sürücü araçları Ayarlar'dadır; VB-CABLE için
+Beş bölüm doğrudan yan menüden seçilir: Ana Ekran, Ses İşleme, Profiller,
+Kalibrasyon ve Test, Uygulama Ayarları. Ses İşleme içinde Gürültü ve İletim,
+Seviye, Ton ve EQ sekmeleri vardır. Gürültü/duyarlılık ve tuşla iletim ilk
+sekmededir; kompresörün ayrıntıları Seviye'de gelişmiş açıklık altında kalır.
+Hazır profillerin tek seçicisi Profiller'dedir; ton ayarlarında yinelenmez.
+Kalibrasyon ve karşılaştırma bir aradadır; eski ortam/seviye kalibrasyonu
+mikrofon ayarının gelişmiş seçeneğidir.
+
+Sustur ve Orijinal ses kontrolleri her sayfada alt alanda kalır. Başlangıç,
+oyun modu ve genel kısayollar Uygulama Ayarları'ndadır. İletim ayarlarını
+uygulamak yalnız konuşma modu/hold tuşunu, genel kısayolları uygulamak yalnız
+sustur/orijinal ses/profil tuşlarını kaydeder. Birbirlerinin bekleyen
+değişikliklerini uygulamazlar. Sürücü araçları ana ekranda ses bağlantısının
+gelişmiş açıklığı altındadır; VB-CABLE için
 kendi sürücümüzü kurmak gerekmez. Başlangıç, kısayollar, profil içe/dışa
 aktarma, kayıt/dinleme, kalibrasyon uygulama ve geri alma davranışları korunur.
 Pencereyi kapatmak bildirim alanına gizler; çıkış bildirim alanından yapılır.
@@ -60,8 +73,10 @@ sentetik ses örnekleri kullanır. VB-CABLE, fiziksel mikrofon ve kernel aktarı
 açılmaz; normal kullanıcı ayarları yazılmaz. Kalibrasyon uygulama/geri alma,
 profil geçişleri, yönlendirme seçimi, animasyon iptali ve gizlenme sınanır.
 
-Tasarım kontrolü iki dilde yedi sayfayı 1160×840, 780×650 ve 640×480 boyutlarında
-render eder: toplam 42 düzen. Yatay taşma, kırpılan menü simgeleri, cihaz
+Tasarım kontrolü iki dilde beş sayfayı ve Ses İşleme'nin üç sekmesini
+1160×840, 780×650 ve 640×480 boyutlarında render eder: toplam 42 düzen.
+Menü/sekmeler, profil-kalibrasyon-oyun kısayolları ve ayrı ayar uygulama
+kapsamları da sınanır. Yatay taşma, kırpılan menü simgeleri, cihaz
 seçici genişlikleri, kalıcı kontroller ve menü erişilebilir isimleri denetlenir.
 96/144/192 DPI bitmapleri raster ölçekleme kontrolüdür; fiziksel monitör DPI
 değişimi veya ekran okuyucuyla kullanıcı testi değildir. Sistem paleti

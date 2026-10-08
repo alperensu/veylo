@@ -80,40 +80,28 @@
                   <TextBlock x:Name="NavLabel0" Text="{DynamicResource overviewNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
                 </StackPanel>
               </ListBoxItem>
-              <ListBoxItem ToolTip="{DynamicResource noiseNav}" AutomationProperties.Name="{DynamicResource noiseNav}">
+              <ListBoxItem ToolTip="{DynamicResource processingNav}" AutomationProperties.Name="{DynamicResource processingNav}">
                 <StackPanel Orientation="Horizontal">
                   <Path Data="M2,10 H5 L8,3 L11,17 L14,7 L17,10 H20" Width="20" Height="20" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" StrokeThickness="1.4" VerticalAlignment="Center"/>
-                  <TextBlock x:Name="NavLabel1" Text="{DynamicResource noiseNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
-                </StackPanel>
-              </ListBoxItem>
-              <ListBoxItem ToolTip="{DynamicResource balanceNav}" AutomationProperties.Name="{DynamicResource balanceNav}">
-                <StackPanel Orientation="Horizontal">
-                  <Path Data="M3,5 H17 M3,10 H17 M3,15 H17 M7,3 V7 M13,8 V12 M9,13 V17" Width="20" Height="20" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" StrokeThickness="1.4" VerticalAlignment="Center"/>
-                  <TextBlock x:Name="NavLabel2" Text="{DynamicResource balanceNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
-                </StackPanel>
-              </ListBoxItem>
-              <ListBoxItem ToolTip="{DynamicResource qualityNav}" AutomationProperties.Name="{DynamicResource qualityNav}">
-                <StackPanel Orientation="Horizontal">
-                  <Path Data="M3,4 H17 M3,10 H17 M3,16 H17 M6,2 V6 M13,8 V12 M9,14 V18" Width="20" Height="20" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" StrokeThickness="1.4" VerticalAlignment="Center"/>
-                  <TextBlock x:Name="NavLabel3" Text="{DynamicResource qualityNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
+                  <TextBlock x:Name="NavLabel1" Text="{DynamicResource processingNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
                 </StackPanel>
               </ListBoxItem>
               <ListBoxItem ToolTip="{DynamicResource profilesNav}" AutomationProperties.Name="{DynamicResource profilesNav}">
                 <StackPanel Orientation="Horizontal">
                   <Path Data="M4,2 H14 L18,6 V18 H4 Z M14,2 V6 H18 M7,10 H15 M7,14 H13" Width="20" Height="20" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" StrokeThickness="1.4" VerticalAlignment="Center"/>
-                  <TextBlock x:Name="NavLabel4" Text="{DynamicResource profilesNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
+                  <TextBlock x:Name="NavLabel2" Text="{DynamicResource profilesNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
                 </StackPanel>
               </ListBoxItem>
               <ListBoxItem ToolTip="{DynamicResource testNav}" AutomationProperties.Name="{DynamicResource testNav}">
                 <StackPanel Orientation="Horizontal">
                   <Path Data="M4,3 L18,10 L4,17 Z" Width="20" Height="20" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" StrokeThickness="1.4" VerticalAlignment="Center"/>
-                  <TextBlock x:Name="NavLabel5" Text="{DynamicResource testNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
+                  <TextBlock x:Name="NavLabel3" Text="{DynamicResource testNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
                 </StackPanel>
               </ListBoxItem>
               <ListBoxItem ToolTip="{DynamicResource preferencesNav}" AutomationProperties.Name="{DynamicResource preferencesNav}">
                 <StackPanel Orientation="Horizontal">
                   <Path Data="M10,3 V17 M3,10 H17 M5,5 L15,15 M5,15 L15,5" Width="20" Height="20" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" StrokeThickness="1.4" VerticalAlignment="Center"/>
-                  <TextBlock x:Name="NavLabel6" Text="{DynamicResource preferencesNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
+                  <TextBlock x:Name="NavLabel4" Text="{DynamicResource preferencesNav}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="14" TextWrapping="Wrap"/>
                 </StackPanel>
               </ListBoxItem>
             </ListBox>
@@ -138,9 +126,9 @@
         <ScrollViewer x:Name="MainScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,10,0">
           <StackPanel x:Name="PageStack">
             <WrapPanel Margin="0,0,0,16">
-              <Border Background="{DynamicResource AccentWashBrush}" CornerRadius="6" Padding="10,6">
+              <Button Background="{DynamicResource AccentWashBrush}" Padding="10,6" Click="ProfilesClick" Style="{StaticResource QuietButton}" ToolTip="{DynamicResource manageProfiles}" AutomationProperties.Name="{DynamicResource manageProfiles}">
                 <TextBlock x:Name="ActiveProfileText" Foreground="{DynamicResource AccentInkBrush}" FontSize="12" FontWeight="SemiBold"/>
-              </Border>
+              </Button>
               <TextBlock x:Name="ModifiedLabel" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="10,6,0,0"/>
             </WrapPanel>
             <Grid x:Name="OverviewPage" Visibility="Collapsed">
@@ -243,25 +231,21 @@
                       </StackPanel>
                     </Grid>
                     <TextBlock x:Name="RouteHint" Style="{StaticResource BodyMuted}" Margin="0,14,0,0"/>
-                  </StackPanel>
+                  <Expander Header="{DynamicResource driverToolsTitle}" Margin="0,12,0,0"><Border Style="{StaticResource Panel}" Margin="0,10,0,0">
+                <StackPanel>
+                  <TextBlock Text="{DynamicResource connectionTools}" Style="{StaticResource SectionHeading}" Margin="0,0,0,12" TextWrapping="Wrap"/>
+                  <TextBlock Text="{DynamicResource connectionToolsHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,12" TextWrapping="Wrap"/>
+                  <Button Content="{DynamicResource driverLink}" Click="DriverClick" HorizontalAlignment="Left"/>
+                </StackPanel>
+              </Border>
+              </Expander></StackPanel>
                 </Border>
                 <TextBlock Grid.Row="3" Grid.ColumnSpan="3" Text="{DynamicResource overviewHint}" Style="{StaticResource BodyMuted}" Margin="0,12,0,0" Visibility="Collapsed" TextWrapping="Wrap"/>
-                <Border Style="{StaticResource Panel}" Margin="0,0,0,18" Grid.Row="1" Grid.ColumnSpan="3" x:Name="OverviewPresets" Padding="16">
-                  <StackPanel>
-                    <TextBlock Text="{DynamicResource chooseSound}" Style="{StaticResource SectionHeading}" Margin="0,0,0,12" TextWrapping="Wrap"/>
-                    <TextBlock Text="{DynamicResource overviewPresetsHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14" TextWrapping="Wrap" Visibility="Collapsed"/>
-                    <WrapPanel>
-                      <Button Content="{DynamicResource preset_natural}" Tag="0" Click="QuickPresetClick" Margin="0,0,8,8"/>
-                      <Button Content="{DynamicResource preset_clear}" Tag="1" Click="QuickPresetClick" Margin="0,0,8,8"/>
-                      <Button Content="{DynamicResource preset_warm}" Tag="2" Click="QuickPresetClick" Margin="0,0,8,8"/>
-                      <Button Content="{DynamicResource preset_broadcast}" Tag="3" Click="QuickPresetClick" Margin="0,0,8,8"/>
-                      <Button Content="{DynamicResource preset_podcast}" Tag="4" Click="QuickPresetClick" Margin="0,0,8,8"/>
-                    </WrapPanel>
-                  </StackPanel>
-                </Border>
-              </Grid>
+                </Grid>
             </Grid>
-            <StackPanel x:Name="NoisePage" Visibility="Collapsed">
+            <StackPanel x:Name="ProcessingPage" Visibility="Collapsed">
+ <TabControl x:Name="ProcessingTabs" Style="{StaticResource SectionTabs}" SelectionChanged="ProcessingTabChanged" AutomationProperties.Name="{DynamicResource processingSections}">
+  <TabItem Header="{DynamicResource backgroundSection}" AutomationProperties.Name="{DynamicResource backgroundSection}"><StackPanel x:Name="NoisePage" Visibility="Visible" TextElement.Foreground="{DynamicResource TextBrush}" TextElement.FontWeight="Normal" TextElement.FontSize="14">
               <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
                 <StackPanel>
                   <TextBlock Text="{DynamicResource noiseControls}" Style="{StaticResource SectionHeading}" Margin="0,0,0,12" TextWrapping="Wrap"/>
@@ -330,8 +314,23 @@
                   </Expander>
                 </StackPanel>
               </Border>
-            </StackPanel>
-            <StackPanel x:Name="BalancePage" Visibility="Collapsed">
+            <Border x:Name="TransmissionPanel" Style="{StaticResource Panel}" Margin="0,18,0,0"><StackPanel>
+ <TextBlock Text="{DynamicResource transmissionTitle}" Style="{StaticResource SectionHeading}" Margin="0,0,0,8"/>
+ <TextBlock Text="{DynamicResource transmissionHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,12"/>
+ <TextBlock Text="{DynamicResource talkMode}" Style="{StaticResource BodyMuted}" Margin="0,0,0,4" TextWrapping="Wrap"/>
+                  <ComboBox x:Name="TalkModeBox" AutomationProperties.Name="{DynamicResource talkMode}">
+                    <ComboBoxItem Content="{DynamicResource talkOpen}"/>
+                    <ComboBoxItem Content="{DynamicResource talkPush}"/>
+                    <ComboBoxItem Content="{DynamicResource talkMute}"/>
+                  </ComboBox>
+                  <WrapPanel Margin="0,10,0,0">
+                    <TextBlock Text="{DynamicResource holdKey}" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                    <TextBlock Text="Ctrl+Alt+" VerticalAlignment="Center" Margin="6,0,0,0"/>
+                    <ComboBox x:Name="HoldKeyBox" Width="65" Margin="6,0,0,0" AutomationProperties.Name="{DynamicResource holdKey}"/>
+                  </WrapPanel>
+                  <Button Content="{DynamicResource applyTransmission}" Click="ApplyTransmissionClick" HorizontalAlignment="Left" Margin="0,14,0,0"/></StackPanel></Border></StackPanel>
+            </TabItem>
+  <TabItem Header="{DynamicResource levelSection}" AutomationProperties.Name="{DynamicResource levelSection}"><StackPanel x:Name="BalancePage" Visibility="Visible" TextElement.Foreground="{DynamicResource TextBrush}" TextElement.FontWeight="Normal" TextElement.FontSize="14">
               <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
                 <StackPanel>
                   <TextBlock Text="{DynamicResource balanceControls}" Style="{StaticResource SectionHeading}" Margin="0,0,0,12" TextWrapping="Wrap"/>
@@ -362,7 +361,7 @@
                   </WrapPanel>
                 </StackPanel>
               </Border>
-              <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
+              <Expander Header="{DynamicResource advancedDynamics}" Margin="0,0,0,18"><Border Style="{StaticResource Panel}" Margin="0,0,0,18">
                 <StackPanel>
                   <TextBlock Text="{DynamicResource dynamicsControls}" Style="{StaticResource SectionHeading}" Margin="0,0,0,12" TextWrapping="Wrap"/>
                   <TextBlock Text="{DynamicResource dynamicsHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,16" TextWrapping="Wrap"/>
@@ -413,22 +412,12 @@
                   <TextBlock Text="{DynamicResource limiterHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" TextWrapping="Wrap"/>
                 </StackPanel>
               </Border>
-            </StackPanel>
-            <StackPanel x:Name="QualityPage" Visibility="Collapsed">
-              <Button Content="{DynamicResource personalTitle}" Click="OpenPersonalCalibrationClick" HorizontalAlignment="Left" Margin="0,0,0,16" Style="{StaticResource PrimaryButton}"/>
-              <TextBlock Text="{DynamicResource qualityIntro}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" TextWrapping="Wrap"/>
-              <TextBlock Text="{DynamicResource qualityQuick}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" TextWrapping="Wrap"/>
-              <WrapPanel Margin="0,0,0,18">
-                <Button Content="{DynamicResource preset_natural}" Tag="0" Click="QuickPresetClick" Margin="0,0,8,8"/>
-                <Button Content="{DynamicResource preset_clear}" Tag="1" Click="QuickPresetClick" Margin="0,0,8,8"/>
-                <Button Content="{DynamicResource preset_warm}" Tag="2" Click="QuickPresetClick" Margin="0,0,8,8"/>
-                <Button Content="{DynamicResource preset_broadcast}" Tag="3" Click="QuickPresetClick" Margin="0,0,8,8"/>
-                <Button Content="{DynamicResource preset_podcast}" Tag="4" Click="QuickPresetClick" Margin="0,0,8,8"/>
-              </WrapPanel>
-              <TextBlock Text="{DynamicResource qualityPresetHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" TextWrapping="Wrap"/>
+            </Expander></StackPanel>
+            </TabItem>
+  <TabItem Header="{DynamicResource toneSection}" AutomationProperties.Name="{DynamicResource toneSection}"><StackPanel x:Name="QualityPage" Visibility="Visible" TextElement.Foreground="{DynamicResource TextBrush}" TextElement.FontWeight="Normal" TextElement.FontSize="14">
               <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
                 <StackPanel>
-                  <TextBlock Text="{DynamicResource toneTitle}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                  <TextBlock Text="{DynamicResource toneSectionHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14"/><TextBlock Text="{DynamicResource toneTitle}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" TextWrapping="Wrap"/>
                   <TextBlock Text="{DynamicResource toneHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" TextWrapping="Wrap"/>
                   <Grid>
                     <Grid.ColumnDefinitions>
@@ -507,7 +496,9 @@
                 </Expander>
               </Border>
             </StackPanel>
-            <StackPanel x:Name="ProfilesPage" Visibility="Collapsed">
+            </TabItem>
+ </TabControl>
+</StackPanel><StackPanel x:Name="ProfilesPage" Visibility="Collapsed">
               <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
                 <StackPanel>
                   <TextBlock Text="{DynamicResource profiles}" Style="{StaticResource Caption}" Margin="0,2,0,8" TextWrapping="Wrap"/>
@@ -595,7 +586,18 @@
                     </WrapPanel>
                   </StackPanel>
                   <Button x:Name="UndoPersonalButton" Content="{DynamicResource personalUndo}" Click="UndoPersonalClick" IsEnabled="False" HorizontalAlignment="Left" Margin="0,10,0,0"/>
-                </StackPanel>
+                <Expander x:Name="BasicCalibrationExpander" Header="{DynamicResource basicCalibrationTitle}" Margin="0,18,0,0"><StackPanel Margin="0,12,0,0"><TextBlock Text="{DynamicResource basicCalibrationHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,12"/><Grid>
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="Auto"/>
+                      <ColumnDefinition/>
+                    </Grid.ColumnDefinitions>
+                    <Button x:Name="CalibrateButton" Content="{DynamicResource calibrate}" Click="CalibrateClick" Margin="0,0,14,0"/>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                      <TextBlock x:Name="CalibrationMessage" Text="{DynamicResource ambientPrompt}" Style="{StaticResource BodyMuted}" TextWrapping="Wrap"/>
+                      <TextBlock Text="{DynamicResource headphones}" Style="{StaticResource Caption}" Margin="0,5,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                  </Grid>
+                </StackPanel></Expander></StackPanel>
               </Border>
               <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
                 <StackPanel>
@@ -608,22 +610,12 @@
                     <Button x:Name="ExportWaveButton" Content="{DynamicResource exportWave}" Click="ExportWaveClick" IsEnabled="False" Margin="0,0,0,8"/>
                   </WrapPanel>
                   <ProgressBar x:Name="SampleProgress" Minimum="0" Maximum="20" Value="0" Margin="0,6,0,10" AutomationProperties.Name="{DynamicResource sampleProgressName}"/>
-                  <Grid>
-                    <Grid.ColumnDefinitions>
-                      <ColumnDefinition Width="Auto"/>
-                      <ColumnDefinition/>
-                    </Grid.ColumnDefinitions>
-                    <Button x:Name="CalibrateButton" Content="{DynamicResource calibrate}" Click="CalibrateClick" Margin="0,0,14,0"/>
-                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                      <TextBlock x:Name="CalibrationMessage" Text="{DynamicResource ambientPrompt}" Style="{StaticResource BodyMuted}" TextWrapping="Wrap"/>
-                      <TextBlock Text="{DynamicResource headphones}" Style="{StaticResource Caption}" Margin="0,5,0,0" TextWrapping="Wrap"/>
-                    </StackPanel>
-                  </Grid>
-                </StackPanel>
+                  </StackPanel>
               </Border>
             </StackPanel>
             <StackPanel x:Name="PreferencesPage" Visibility="Collapsed">
-              <Border x:Name="GameSettingsPanel" Style="{StaticResource Panel}" Margin="0,0,0,18">
+              <Border Style="{StaticResource Panel}" Margin="0,0,0,18"><StackPanel><TextBlock Text="{DynamicResource appStartupTitle}" Style="{StaticResource SectionHeading}" Margin="0,0,0,12"/><CheckBox x:Name="StartupBox" Content="{DynamicResource startup}" Checked="StartupChanged" Unchecked="StartupChanged"/>
+                </StackPanel></Border><Border x:Name="GameSettingsPanel" Style="{StaticResource Panel}" Margin="0,0,0,18">
                 <StackPanel>
                   <TextBlock Text="{DynamicResource gameMode}" FontSize="21" FontWeight="SemiBold" Margin="0,0,0,8" TextWrapping="Wrap"/>
                   <TextBlock Text="{DynamicResource gameIntro}" Style="{StaticResource BodyMuted}" Margin="0,0,0,16" TextWrapping="Wrap"/>
@@ -641,19 +633,8 @@
               </Border>
               <Border x:Name="CommunicationPanel" Style="{StaticResource Panel}" Margin="0,0,0,18">
                 <StackPanel>
-                  <TextBlock Text="{DynamicResource communicationTitle}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" TextWrapping="Wrap"/>
-                  <TextBlock Text="{DynamicResource communicationHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,12" TextWrapping="Wrap"/>
-                  <TextBlock Text="{DynamicResource talkMode}" Style="{StaticResource BodyMuted}" Margin="0,0,0,4" TextWrapping="Wrap"/>
-                  <ComboBox x:Name="TalkModeBox" AutomationProperties.Name="{DynamicResource talkMode}">
-                    <ComboBoxItem Content="{DynamicResource talkOpen}"/>
-                    <ComboBoxItem Content="{DynamicResource talkPush}"/>
-                    <ComboBoxItem Content="{DynamicResource talkMute}"/>
-                  </ComboBox>
-                  <WrapPanel Margin="0,10,0,0">
-                    <TextBlock Text="{DynamicResource holdKey}" VerticalAlignment="Center" TextWrapping="Wrap"/>
-                    <TextBlock Text="Ctrl+Alt+" VerticalAlignment="Center" Margin="6,0,0,0"/>
-                    <ComboBox x:Name="HoldKeyBox" Width="65" Margin="6,0,0,0" AutomationProperties.Name="{DynamicResource holdKey}"/>
-                  </WrapPanel>
+                  <TextBlock Text="{DynamicResource appShortcutsTitle}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                  <TextBlock Text="{DynamicResource appShortcutsHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,12" TextWrapping="Wrap"/>
                   <WrapPanel Margin="0,10,0,0">
                     <TextBlock Text="{DynamicResource muteKey}" VerticalAlignment="Center" TextWrapping="Wrap"/>
                     <ComboBox x:Name="MuteKeyBox" Width="65" Margin="6,0,16,0" AutomationProperties.Name="{DynamicResource muteKey}"/>
@@ -663,18 +644,6 @@
                   <CheckBox x:Name="PresetKeysBox" Content="{DynamicResource presetKeys}" Margin="0,14,0,4"/>
                   <TextBlock Text="{DynamicResource presetKeysHint}" Style="{StaticResource BodyMuted}" TextWrapping="Wrap"/>
                   <Button Content="{DynamicResource applyKeys}" Click="ApplyKeysClick" HorizontalAlignment="Left" Margin="0,12,0,0"/>
-                </StackPanel>
-              </Border>
-              <Expander Header="{DynamicResource preferences}" Margin="0,0,0,12">
-                <StackPanel Margin="0,12,0,0">
-                  <CheckBox x:Name="StartupBox" Content="{DynamicResource startup}" Checked="StartupChanged" Unchecked="StartupChanged"/>
-                </StackPanel>
-              </Expander>
-              <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
-                <StackPanel>
-                  <TextBlock Text="{DynamicResource connectionTools}" Style="{StaticResource SectionHeading}" Margin="0,0,0,12" TextWrapping="Wrap"/>
-                  <TextBlock Text="{DynamicResource connectionToolsHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,12" TextWrapping="Wrap"/>
-                  <Button Content="{DynamicResource driverLink}" Click="DriverClick" HorizontalAlignment="Left"/>
                 </StackPanel>
               </Border>
               <Border Style="{StaticResource Panel}" Margin="0,0,0,18">

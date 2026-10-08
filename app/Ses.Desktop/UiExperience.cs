@@ -75,8 +75,8 @@ public partial class MainWindow
         try{var values=new System.Collections.Generic.List<string>(names);GameModePolicy.ValidateNames(values);state.GameProcessNames=values;GameProcessesBox.Text=string.Join(", ",values);ScheduleSave();GameModeDetail.Text=T("gameListSaved");}
         catch(System.IO.InvalidDataException){GameModeDetail.Text=T("gameListInvalid");}
     }
-    private void GameBadgeClick(object sender,RoutedEventArgs e){NavigationList.SelectedIndex=6;GameSettingsPanel.BringIntoView();}
-    private void TuneVoiceClick(object sender,RoutedEventArgs e){NavigationList.SelectedIndex=5;PersonalCalibrateButton.BringIntoView();}
+    private void GameBadgeClick(object sender,RoutedEventArgs e){Navigate(WorkspacePage.Application);GameSettingsPanel.BringIntoView();}
+    private void TuneVoiceClick(object sender,RoutedEventArgs e){Navigate(WorkspacePage.Calibration);PersonalCalibrateButton.BringIntoView();}
     private void MinimizeClick(object sender,RoutedEventArgs e)=>WindowState=WindowState.Minimized;
     private void MaximizeClick(object sender,RoutedEventArgs e)=>WindowState=WindowState==WindowState.Maximized?WindowState.Normal:WindowState.Maximized;
     private void HideClick(object sender,RoutedEventArgs e)=>Close();
@@ -84,9 +84,9 @@ public partial class MainWindow
     private async Task RunExperienceSmoke(string directory){
         // Explicit visual-test override only: real windows always honor OS reduced motion.
         forceSmokeEffects=true;GameModeBox.IsChecked=true;EffectsBox.IsChecked=true;ApplyVisualPolicy();
-        MuteBox.IsChecked=false;BypassBox.IsChecked=false;Width=1120;Height=820;LanguageBox.SelectedIndex=0;NavigationList.SelectedIndex=0;
+        MuteBox.IsChecked=false;BypassBox.IsChecked=false;Width=1120;Height=820;LanguageBox.SelectedIndex=0;Navigate(WorkspacePage.Overview);
         await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-desktop-tr.png"));
-        NavigationList.SelectedIndex=4;await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-profiles-tr.png"));
+        Navigate(WorkspacePage.Profiles);await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-profiles-tr.png"));
         var settingsBefore=Profiles.Serialize(CurrentProfile());
         var observed=await Task.Run(GameDetector.Read);if(Array.Exists(observed,p=>string.IsNullOrWhiteSpace(p.ProcessName)))throw new InvalidOperationException("Detector returned invalid process metadata"); // Another Veylo instance is legitimate; self exclusion is by PID.
         // Visual policy is exercised against actual offline DSP, never a person's microphone.
@@ -95,21 +95,21 @@ public partial class MainWindow
         ProcessFixture();if(engine.Metrics().Running!=0)throw new InvalidOperationException("Offline game UI test opened an audio stream");
         GameBadge.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice,0){RoutedEvent=UIElement.MouseEnterEvent});
         if(GameBadge.RenderTransform is not ScaleTransform scale||!scale.HasAnimatedProperties)throw new InvalidOperationException("Hover animation did not start");
-        var before=engine.Metrics();gamePolicy.Update(true,new[]{new GameObservation("VALORANT-Win64-Shipping")},state.GameProcessNames,uiClock.Elapsed.TotalSeconds);ApplyVisualPolicy();NavigationList.SelectedIndex=0;
+        var before=engine.Metrics();gamePolicy.Update(true,new[]{new GameObservation("VALORANT-Win64-Shipping")},state.GameProcessNames,uiClock.Elapsed.TotalSeconds);ApplyVisualPolicy();Navigate(WorkspacePage.Overview);
         await Task.Delay(350);
         ProcessFixture();
         if(Motion.GetEnabled(GameBadge)||scale.HasAnimatedProperties||AmbientBackdrop.Visibility!=Visibility.Collapsed||meterTimer.Interval.TotalMilliseconds!=200||engine.Metrics().Running!=0||Profiles.Serialize(CurrentProfile())!=settingsBefore)throw new InvalidOperationException("Game mode changed audio settings or failed to stop effects");
         Capture(System.IO.Path.Combine(directory,"game-active-tr.png"));
-        NavigationList.SelectedIndex=6;await Task.Delay(150);Capture(System.IO.Path.Combine(directory,"game-settings-tr.png"));
+        Navigate(WorkspacePage.Application);await Task.Delay(150);Capture(System.IO.Path.Combine(directory,"game-settings-tr.png"));
         GameProcessesBox.Text="../bad.exe";SaveGameProcesses(this,new RoutedEventArgs());if(state.GameProcessNames.Count!=0)throw new InvalidOperationException("Invalid game process accepted");
         GameProcessesBox.Text="MyGame.exe";SaveGameProcesses(this,new RoutedEventArgs());if(state.GameProcessNames.Count!=1)throw new InvalidOperationException("Game process list did not save");
         GameModeBox.IsChecked=false;if(gamePolicy.Active||!Motion.GetEnabled(this))throw new InvalidOperationException("Manual game-mode disable did not restore effects");
         EffectsBox.IsChecked=false;if(Motion.GetEnabled(this))throw new InvalidOperationException("Manual effect disable failed");EffectsBox.IsChecked=true;
         Hide();ProcessFixture();if(Motion.GetEnabled(this)||engine.Metrics().Running!=0)throw new InvalidOperationException("Hidden offline UI must stop motion without opening audio");Show();
         MaximizeClick(this,new RoutedEventArgs());if(WindowState!=WindowState.Maximized)throw new InvalidOperationException("Maximize failed");MaximizeClick(this,new RoutedEventArgs());
-        Width=640;Height=480;LanguageBox.SelectedIndex=1;NavigationList.SelectedIndex=6;await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-settings-small-en.png"));
-        NavigationList.SelectedIndex=1;await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-noise-small-en.png"));
-        NavigationList.SelectedIndex=0;await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-small-en.png"));
+        Width=640;Height=480;LanguageBox.SelectedIndex=1;Navigate(WorkspacePage.Application);await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-settings-small-en.png"));
+        Navigate(WorkspacePage.Processing,ProcessingSection.Background);await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-noise-small-en.png"));
+        Navigate(WorkspacePage.Overview);await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-small-en.png"));
         if(MainScroll.ScrollableWidth>1)throw new InvalidOperationException("Small layout has horizontal overflow");
         ProcessFixture();
         if(engine.Metrics().Running!=0||engine.Metrics().ProcessedFrames<=before.ProcessedFrames)throw new InvalidOperationException("Offline frames did not advance through visual policy changes");

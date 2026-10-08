@@ -160,12 +160,12 @@ public partial class MainWindow
         PersonalInstruction.Text=T(stage)+$"  ·  {Math.Max(0,end-metrics.SampleFrames/48000d):0} {T("secondsRemaining")}";
         PersonalPhrase.Text=metrics.SampleFrames<240000?T("autoAmbientPhrase"):T("autoReadPhrase");
     }
-    private void OpenPersonalCalibrationClick(object sender,RoutedEventArgs e)=>NavigationList.SelectedIndex=5;
+    private void OpenPersonalCalibrationClick(object sender,RoutedEventArgs e)=>Navigate(WorkspacePage.Calibration);
     private async Task RunPersonalSmoke(string directory)
     {
         // Synthetic controller/render regression: does not record a person or
         // play sound. Actual RNNoise speech validation is covered separately.
-        NavigationList.SelectedIndex=5;PersonalCalibrateButton.BringIntoView();await Task.Delay(60);
+        Navigate(WorkspacePage.Calibration);PersonalCalibrateButton.BringIntoView();await Task.Delay(60);
         Capture(Path.Combine(directory,"personal-start-tr.png"));
         rawSample=new float[AudioSamples.MaxFrames];var random=new Random(38);
         for(int i=0;i<rawSample.Length;i++){
@@ -203,6 +203,6 @@ public partial class MainWindow
         if(RouteHint.Text!=T(expectedRoute))throw new InvalidOperationException("Transport language not updated");
         ApplyPersonalButton.BringIntoView();await Task.Delay(60);Capture(Path.Combine(directory,"personal-actions-small-en.png"));
         ClearCalibrationSuggestion();MainScroll.ScrollToTop();await Task.Delay(60);Capture(Path.Combine(directory,"personal-start-small-en.png"));
-        ClearCalibrationSuggestion();NavigationList.SelectedIndex=0;
+        ClearCalibrationSuggestion();Navigate(WorkspacePage.Overview);
     }
 }

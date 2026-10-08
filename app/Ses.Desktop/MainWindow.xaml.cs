@@ -58,7 +58,7 @@ public partial class MainWindow : Window
         MuteKeyBox.SelectedItem=state.MuteKey;BypassKeyBox.SelectedItem=state.BypassKey;
         InitializeCommunication();
         StartupBox.IsChecked=!smoke&&DesktopServices.StartsWithWindows();
-        RebuildProfiles();LoadControls();NavigationList.SelectedIndex=0;ResizeNavigation();
+        RebuildProfiles();LoadControls();Navigate(WorkspacePage.Overview);ResizeNavigation();
         meterTimer.Tick+=MeterTick;
         sessionTimer.Tick+=SessionTick;
         applyTimer.Tick+=(_,_)=>{applyTimer.Stop();ApplySettings();};
@@ -252,7 +252,7 @@ public partial class MainWindow : Window
     private void SetBusy(bool value)
     {
         busy=value;if(quitting)return;StrongNoiseButton.IsEnabled=!value&&!sampling&&!calibrating&&!personalCalibrating&&!finishing;InputBox.IsEnabled=!value&&!sampling;OutputBox.IsEnabled=!value&&!sampling;
-        OverviewPresets.IsEnabled=!value&&!sampling&&!personalCalibrating;
+        PresetList.IsEnabled=!value&&!sampling&&!personalCalibrating;
         RecordButton.IsEnabled=!value&&!calibrating;CalibrateButton.IsEnabled=!value&&!sampling;
         PersonalCalibrateButton.IsEnabled=!value&&!sampling;CancelPersonalButton.IsEnabled=!value&&personalCalibrating&&sampling;
         RestoreDeviceButton.IsEnabled=!value&&!sampling&&InputBox.SelectedItem is AudioDevice device&&state.Calibrations.TryGetValue(device.Id,out var saved)&&saved.TunedSettings is not null;
@@ -416,16 +416,12 @@ public partial class MainWindow : Window
     }
     private void ShowPage(int index)
     {
-        FrameworkElement[] pages=[OverviewPage,NoisePage,BalancePage,QualityPage,ProfilesPage,TestPage,PreferencesPage];
-        string[] keys=["overviewNav","noiseNav","balanceNav","qualityNav","profilesNav","testNav","preferencesNav"];
+        FrameworkElement[] pages=[OverviewPage,ProcessingPage,ProfilesPage,TestPage,PreferencesPage];
+        string[] keys=["overviewNav","processingNav","profilesNav","testNav","preferencesNav"];
+        if(index<0||index>=pages.Length)return;
         for(int i=0;i<pages.Length;i++)pages[i].Visibility=i==index?Visibility.Visible:Visibility.Collapsed;
         PageTitle.Text=T(keys[index]);PageDescription.Text=T(keys[index]+"Description");MainScroll.ScrollToTop();
         Motion.Reveal(pages[index]);
-    }
-    private void QuickPresetClick(object sender,RoutedEventArgs e)
-    {
-        if(!ready||busy||sampling||quitting)return;
-        if(sender is Button button&&int.TryParse(button.Tag as string,out int index))PresetList.SelectedIndex=index;
     }
     private void ResizeNavigation()
     {
@@ -433,7 +429,7 @@ public partial class MainWindow : Window
         bool compact=ActualWidth>0&&ActualWidth<940;
         NavigationColumn.Width=new GridLength(compact?88:216);
         NavigationShell.Padding=compact?new Thickness(8,24,8,16):new Thickness(16,24,16,18);
-        foreach(var label in new[]{NavLabel0,NavLabel1,NavLabel2,NavLabel3,NavLabel4,NavLabel5,NavLabel6})label.Visibility=compact?Visibility.Collapsed:Visibility.Visible;
+        foreach(var label in new[]{NavLabel0,NavLabel1,NavLabel2,NavLabel3,NavLabel4})label.Visibility=compact?Visibility.Collapsed:Visibility.Visible;
         foreach(var element in new FrameworkElement[]{NavCaption,SidebarBrand,SidebarFooter,GameBadgeText})element.Visibility=compact?Visibility.Collapsed:Visibility.Visible;
         ContentShell.Margin=new Thickness(compact?20:28,compact?18:24,compact?20:28,16);
         PageTitle.FontSize=compact?26:30;
@@ -477,12 +473,12 @@ public partial class MainWindow : Window
             await Task.Delay(300);Capture(Path.Combine(directory,"desktop-tr.png"));
             // Page changes retain settings and cannot start or stop the audio engine.
             AutoNoiseBox.IsChecked=true;ApplySettings();float manualStrength=settings.NoiseMix;
-            for(int page=0;page<7;page++){
+            for(int page=0;page<NavigationList.Items.Count;page++){
                 NavigationList.SelectedIndex=page;await Task.Delay(40);
                 if(!settings.NoiseAutoEnabled||settings.NoiseMix!=manualStrength||engine.Metrics().Running!=0)throw new InvalidOperationException("Navigation changed audio state");
                 Capture(Path.Combine(directory,$"page-{page}-tr.png"));
             }
-            NavigationList.SelectedIndex=1;
+            Navigate(WorkspacePage.Processing,ProcessingSection.Background);
             if(NoiseSlider.IsEnabled)throw new InvalidOperationException("Manual slider enabled during auto mode");
             AutoNoiseBox.IsChecked=false;ApplySettings();if(!NoiseSlider.IsEnabled)throw new InvalidOperationException("Manual mode not restored");
             SensitivityBox.IsChecked=true;SensitivityAutoBox.IsChecked=false;SensitivitySlider.Value=-57;ApplySettings();
@@ -494,10 +490,10 @@ public partial class MainWindow : Window
             if(!SensitivitySlider.IsEnabled||SensitivitySlider.Value!=-57)throw new InvalidOperationException("Sensitivity manual threshold not restored");
             Capture(Path.Combine(directory,"sensitivity-manual-tr.png"));SensitivityBox.IsChecked=false;ApplySettings();
             if(SensitivitySlider.IsEnabled||SensitivityAutoBox.IsEnabled)throw new InvalidOperationException("Disabled sensitivity controls active");
-            var quickButtons=QualityPage.Children.OfType<WrapPanel>().First().Children.OfType<Button>().ToArray();
-            if(quickButtons.Length!=Profiles.Factory().Count)throw new InvalidOperationException("Missing quick presets");
-            for(int i=0;i<quickButtons.Length;i++){quickButtons[i].RaiseEvent(new RoutedEventArgs(Button.ClickEvent));await Task.Delay(40);if(PresetList.SelectedIndex!=i||settings.CompressorRatio<1)throw new InvalidOperationException("Quick preset not applied");}
-            NavigationList.SelectedIndex=3;MainScroll.ScrollToTop();await Task.Delay(80);Capture(Path.Combine(directory,"podcast-tone-tr.png"));
+            Navigate(WorkspacePage.Profiles);
+            if(PresetList.Items.Count!=Profiles.Factory().Count)throw new InvalidOperationException("Missing factory profiles");
+            for(int i=0;i<Profiles.Factory().Count;i++){PresetList.SelectedIndex=i;await Task.Delay(40);if(settings.CompressorRatio<1)throw new InvalidOperationException("Profile not applied");}
+            Navigate(WorkspacePage.Processing,ProcessingSection.Tone);MainScroll.ScrollToTop();await Task.Delay(80);Capture(Path.Combine(directory,"podcast-tone-tr.png"));
             var podcast=Profiles.Factory().Single(p=>p.FactoryId=="podcast");
             File.WriteAllText(Path.Combine(directory,"podcast-preset.json"),Profiles.Serialize(new VoiceProfile{Name=podcast.Name,Description=podcast.Description,Settings=podcast.Settings.Clone()}));
             await RunPersonalSmoke(directory);
@@ -506,10 +502,10 @@ public partial class MainWindow : Window
             RunValidationSmoke(directory);
             MuteBox.IsChecked=true;BypassBox.IsChecked=true;ApplySettings();
             LanguageBox.SelectedIndex=1;Width=780;Height=650;await Task.Delay(150);Capture(Path.Combine(directory,"compact-en.png"));
-            NavigationList.SelectedIndex=3;AdvancedExpander.IsExpanded=true;AdvancedExpander.BringIntoView();await Task.Delay(100);Capture(Path.Combine(directory,"advanced-en.png"));
-            Width=640;Height=480;AdvancedExpander.IsExpanded=false;NavigationList.SelectedIndex=0;MainScroll.ScrollToTop();await Task.Delay(100);Capture(Path.Combine(directory,"small-en.png"));
-            NavigationList.SelectedIndex=1;SensitivityBox.IsChecked=true;SensitivityAutoBox.IsChecked=false;SensitivityPanel.BringIntoView();await Task.Delay(100);Capture(Path.Combine(directory,"sensitivity-small-en.png"));
-            NavigationList.SelectedIndex=3;MainScroll.ScrollToTop();await Task.Delay(80);Capture(Path.Combine(directory,"podcast-tone-small-en.png"));
+            Navigate(WorkspacePage.Processing,ProcessingSection.Tone);AdvancedExpander.IsExpanded=true;AdvancedExpander.BringIntoView();await Task.Delay(100);Capture(Path.Combine(directory,"advanced-en.png"));
+            Width=640;Height=480;AdvancedExpander.IsExpanded=false;Navigate(WorkspacePage.Overview);MainScroll.ScrollToTop();await Task.Delay(100);Capture(Path.Combine(directory,"small-en.png"));
+            Navigate(WorkspacePage.Processing,ProcessingSection.Background);SensitivityBox.IsChecked=true;SensitivityAutoBox.IsChecked=false;SensitivityPanel.BringIntoView();await Task.Delay(100);Capture(Path.Combine(directory,"sensitivity-small-en.png"));
+            Navigate(WorkspacePage.Processing,ProcessingSection.Tone);MainScroll.ScrollToTop();await Task.Delay(80);Capture(Path.Combine(directory,"podcast-tone-small-en.png"));
             foreach(string language in new[]{"tr","en"}){
                 var driver=new DriverWindow(language){ShowInTaskbar=false,WindowStartupLocation=WindowStartupLocation.Manual,Left=-4000,Top=-4000,Width=420,Height=480};driver.Show();await Task.Delay(250);
                 if(!File.Exists(Path.Combine(AppContext.BaseDirectory,"driver","SesMicrophone.cat"))&&driver.InstallationAvailable)throw new IOException("Unsigned development package must not offer installation");
@@ -517,6 +513,7 @@ public partial class MainWindow : Window
             }
             await RunExperienceSmoke(directory);
             await RunRoutingSmoke(directory);
+            RunNavigationSmoke();
             await RunDesignSmoke(directory);
             File.WriteAllText(Path.Combine(directory,"ui-result.json"),System.Text.Json.JsonSerializer.Serialize(new {success=true,presets=Profiles.Factory().Count,personalCalibration=true,personalPreview=true,applyAndUndo=true,deviceSource="synthetic",liveDeviceValidation=false,inputs=((IEnumerable<AudioDevice>)InputBox.ItemsSource).Count(),width=ActualWidth,height=ActualHeight}));
             Quit();
