@@ -255,6 +255,7 @@ public partial class MainWindow : Window
         PresetList.IsEnabled=!value&&!sampling&&!personalCalibrating;
         RecordButton.IsEnabled=!value&&!calibrating;CalibrateButton.IsEnabled=!value&&!sampling;
         PersonalCalibrateButton.IsEnabled=!value&&!sampling;CancelPersonalButton.IsEnabled=!value&&personalCalibrating&&sampling;
+        DetailedCalibrationBox.IsEnabled=!value&&!sampling;
         RestoreDeviceButton.IsEnabled=!value&&!sampling&&InputBox.SelectedItem is AudioDevice device&&state.Calibrations.TryGetValue(device.Id,out var saved)&&saved.TunedSettings is not null;
         UndoPersonalButton.IsEnabled=!value&&!sampling&&calibrationUndo is not null;
         ApplyPersonalButton.IsEnabled=ListenPersonalButton.IsEnabled=ListenPersonalRawButton.IsEnabled=!value&&!sampling&&calibrationSuggestion is {Success:true};
@@ -285,7 +286,7 @@ public partial class MainWindow : Window
         try {
             if(!await EnsureCapture())return;
             player?.Stop();rawSample=[];matched=null;ClearCalibrationSuggestion();ListenRawButton.IsEnabled=ListenProcessedButton.IsEnabled=ExportWaveButton.IsEnabled=false;
-            int duration=personalCalibrating?PersonalCalibration.Seconds:calibration?15:20;
+            int duration=personalCalibrating?PersonalCalibration.Duration(personalDetailed):calibration?15:20;
             engine.BeginSample(duration);sampling=true;calibrating=calibration;finishing=false;recordingClock.Restart();meterTimer.Start();
             RecordButton.Content=T("recordStop");SampleProgress.Maximum=duration;SampleProgress.Value=0;Status(calibration?"ambientNow":"record");
         }catch(Exception ex)when(ex is IOException or InvalidOperationException){Status("error");}finally{SetBusy(false);}
@@ -325,6 +326,12 @@ public partial class MainWindow : Window
     }
     private async void ListenRawClick(object sender,RoutedEventArgs e){if(busy||quitting)return;var pair=await RenderSample();if(pair is not null)Play(pair.Raw);}
     private async void ListenProcessedClick(object sender,RoutedEventArgs e){if(busy||quitting)return;var pair=await RenderSample();if(pair is not null)Play(pair.Processed);}
+    private async void PreviewProfileClick(object sender,RoutedEventArgs e)
+    {
+        if(busy||sampling||quitting)return;
+        if(rawSample.Length<480){Navigate(WorkspacePage.Calibration);RecordButton.BringIntoView();Status("noSample");return;}
+        var pair=await RenderSample();if(pair is not null&&!quitting)Play(ReferenceEquals(sender,ProfileRawButton)?pair.Raw:pair.Processed);
+    }
     private async void ExportWaveClick(object sender,RoutedEventArgs e)
     {
         if(busy||quitting)return;var pair=await RenderSample();if(quitting||pair is null)return;
@@ -405,8 +412,8 @@ public partial class MainWindow : Window
             }
             SampleProgress.Value=m.SampleFrames/48000d;
             if(personalCalibrating)PersonalTick(m);else if(calibrating)CalibrationMessage.Text=T(m.SampleFrames<240000?"ambientNow":"speechNow");
-            uint expected=personalCalibrating?960000u:calibrating?720000u:960000u;
-            if(m.SampleFrames>=expected||recordingClock.Elapsed.TotalSeconds>25)await FinishSample();
+            uint expected=personalCalibrating?(uint)(PersonalCalibration.Duration(personalDetailed)*AudioSamples.Rate):calibrating?720000u:960000u;
+            if(m.SampleFrames>=expected||recordingClock.Elapsed.TotalSeconds>expected/(double)AudioSamples.Rate+5)await FinishSample();
         }
     }
     private void WindowStateChanged(object sender,EventArgs e){if(WindowState==WindowState.Minimized&&!smoke){Hide();desktop?.Notice();}}
@@ -492,7 +499,16 @@ public partial class MainWindow : Window
             if(SensitivitySlider.IsEnabled||SensitivityAutoBox.IsEnabled)throw new InvalidOperationException("Disabled sensitivity controls active");
             Navigate(WorkspacePage.Profiles);
             if(PresetList.Items.Count!=Profiles.Factory().Count)throw new InvalidOperationException("Missing factory profiles");
-            for(int i=0;i<Profiles.Factory().Count;i++){PresetList.SelectedIndex=i;await Task.Delay(40);if(settings.CompressorRatio<1)throw new InvalidOperationException("Profile not applied");}
+            PreviewProfileClick(ProfileRawButton,new RoutedEventArgs(Button.ClickEvent));
+            if(NavigationList.SelectedIndex!=(int)WorkspacePage.Calibration||player is not null)throw new InvalidOperationException("Empty profile preview did not open calibration safely");
+            Navigate(WorkspacePage.Profiles);
+            var factory=Profiles.Factory();
+            for(int i=0;i<factory.Count;i++){
+                PresetList.SelectedIndex=i;await Task.Delay(40);var expected=factory[i].Settings;
+                if(settings.CompressorRatio!=expected.CompressorRatio||settings.HighpassHz!=expected.HighpassHz||
+                    settings.Bands.Zip(expected.Bands,(a,b)=>a.Type==b.Type&&a.Frequency==b.Frequency&&a.GainDb==b.GainDb&&a.Q==b.Q).Any(equal=>!equal)||player is not null)
+                    throw new InvalidOperationException("Profile tone not applied or playback started without a click");
+            }
             Navigate(WorkspacePage.Processing,ProcessingSection.Tone);MainScroll.ScrollToTop();await Task.Delay(80);Capture(Path.Combine(directory,"podcast-tone-tr.png"));
             var podcast=Profiles.Factory().Single(p=>p.FactoryId=="podcast");
             File.WriteAllText(Path.Combine(directory,"podcast-preset.json"),Profiles.Serialize(new VoiceProfile{Name=podcast.Name,Description=podcast.Description,Settings=podcast.Settings.Clone()}));

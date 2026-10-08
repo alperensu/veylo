@@ -21,7 +21,11 @@ Seviye, Ton ve EQ sekmeleri vardır. Gürültü/duyarlılık ve tuşla iletim il
 sekmededir; kompresörün ayrıntıları Seviye'de gelişmiş açıklık altında kalır.
 Hazır profillerin tek seçicisi Profiller'dedir; ton ayarlarında yinelenmez.
 Kalibrasyon ve karşılaştırma bir aradadır; eski ortam/seviye kalibrasyonu
-mikrofon ayarının gelişmiş seçeneğidir.
+mikrofon ayarının gelişmiş seçeneğidir. Hızlı kişisel ölçüm 2 saniye ortam ve
+8 saniye doğal konuşmadan oluşur; seçili EQ/ton korunur. Ayrıntılı 20 saniyelik
+ölçüm ayrıca seçilir. Profiller sayfasındaki ham/seçili profil karşılaştırması
+aynı RAM örneğini ses yüksekliği eşleyerek oynatır; profil değişimi otomatik
+oynatma başlatmaz. Kayıt yoksa kullanıcı kayıt bölümüne yönlendirilir.
 
 Sustur ve Orijinal ses kontrolleri her sayfada alt alanda kalır. Başlangıç,
 oyun modu ve genel kısayollar Uygulama Ayarları'ndadır. İletim ayarlarını

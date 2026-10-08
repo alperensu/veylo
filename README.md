@@ -22,7 +22,7 @@ genel ses kalitesi kabulünü bu iki uygulama belirlemez. Kullanıcı 8 Ekim 202
 kendi kurulumunda seslerin temizlendiğini ve sorun olmadığını bildirdi.
 Bu geri bildirim tüm mikrofonlar ve uygulamalar için uyumluluk garantisi değildir.
 
-**0.7.2-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
+**0.7.3-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
 işleme başlar; Başlat/Durdur kaldırıldı. Pencereyi kapatmak bildirim alanına
 gizler; Veylo'dan çık mikrofonu bırakır. Eski profiller/kalibrasyonlar korunur.
 
@@ -50,6 +50,17 @@ Kullanım [INSTALL.md](docs/INSTALL.md),
 sürücü/imzalama/laboratuvar [DRIVER.md](docs/DRIVER.md),
 kapsam ve ölçüm sınırları [VALIDATION.md](docs/VALIDATION.md),
 özellik bazında kabul durumu [ACCEPTANCE.md](docs/ACCEPTANCE.md).
+
+## Hızlı kalibrasyon ve profiller
+
+Varsayılan kişisel ölçüm 10 saniye: 2 saniye ortam, 8 saniye doğal konuşma.
+Seçili EQ/ton karakteri ve güçlü temizleme korunur. İsteğe bağlı ayrıntılı ölçüm
+20 saniyedir. Net Konuşma, Sıcak Ses, Yayın ve Podcast tonları daha belirgin
+ayrışır. Profiller sayfasında aynı RAM kaydını ham/seçili profil olarak, ses
+yüksekliği eşlenmiş dinleyebilirsin. Kayıtlı kullanıcı ayarları güncellemede
+korunur; yeni fabrika tonunu almak için başka profili, sonra istediğini seç.
+Bu değişiklikler sinyal testleriyle doğrulandı; gerçek mikrofonla dinleme kabulü
+ayrıca yapılmalıdır.
 
 ## Arayüz ve oyun modu
 

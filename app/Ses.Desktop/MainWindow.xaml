@@ -513,6 +513,11 @@
                       </DataTemplate>
                     </ListBox.ItemTemplate>
                   </ListBox>
+                  <TextBlock Text="{DynamicResource profileCompareHint}" Style="{StaticResource BodyMuted}" TextWrapping="Wrap" Margin="0,16,0,10"/>
+                  <WrapPanel>
+                    <Button x:Name="ProfileRawButton" Content="{DynamicResource profilePreviewRaw}" Click="PreviewProfileClick" Margin="0,0,8,8"/>
+                    <Button Content="{DynamicResource profilePreview}" Click="PreviewProfileClick" Margin="0,0,0,8"/>
+                  </WrapPanel>
                 </StackPanel>
               </Border>
               <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
@@ -538,7 +543,8 @@
                 <StackPanel>
                   <TextBlock Text="{DynamicResource personalTitle}" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,8" TextWrapping="Wrap"/>
                   <TextBlock Text="{DynamicResource personalIntro}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14" TextWrapping="Wrap"/>
-                  <TextBlock Text="{DynamicResource personalSteps}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14" TextWrapping="Wrap"/>
+                  <TextBlock x:Name="PersonalStepsText" Text="{DynamicResource personalSteps}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14" TextWrapping="Wrap"/>
+                  <CheckBox x:Name="DetailedCalibrationBox" Content="{DynamicResource personalDetailedOption}" IsChecked="False" Checked="CalibrationModeChanged" Unchecked="CalibrationModeChanged" Margin="0,0,0,14" AutomationProperties.Name="{DynamicResource personalDetailedOption}"/>
                   <WrapPanel>
                     <Button x:Name="PersonalCalibrateButton" Content="{DynamicResource personalStart}" Style="{StaticResource PrimaryButton}" Click="PersonalCalibrateClick" Margin="0,0,8,8"/>
                     <Button x:Name="CancelPersonalButton" Content="{DynamicResource cancel}" Click="CancelPersonalCalibrationClick" IsEnabled="False" Margin="0,0,8,8"/>
@@ -547,7 +553,7 @@
                   <StackPanel x:Name="PersonalPhasePanel" Visibility="Visible">
                     <TextBlock x:Name="PersonalInstruction" Text="{DynamicResource personalReady}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Margin="0,12,0,8"/>
                     <TextBlock x:Name="PersonalPhrase" Text="{DynamicResource personalPosition}" Style="{StaticResource BodyMuted}" TextWrapping="Wrap"/>
-                    <ProgressBar x:Name="PersonalProgress" Minimum="0" Maximum="20" Value="0" Margin="0,12,0,10" AutomationProperties.Name="{DynamicResource personalProgress}"/>
+                    <ProgressBar x:Name="PersonalProgress" Minimum="0" Maximum="10" Value="0" Margin="0,12,0,10" AutomationProperties.Name="{DynamicResource personalProgress}"/>
                   </StackPanel>
                   <StackPanel x:Name="PersonalResultPanel" Visibility="Collapsed" Margin="0,12,0,0">
                     <TextBlock x:Name="PersonalMeasurementText" Style="{StaticResource BodyMuted}" Margin="0,0,0,12"/>
