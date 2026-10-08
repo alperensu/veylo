@@ -77,7 +77,7 @@ public partial class MainWindow
             if(busy||engine.Metrics().Running!=0||state.OutputMode!=mode||SelectedRoute.Mode!=mode||Profiles.Serialize(CurrentProfile())!=before)throw new InvalidOperationException("Offline output selection failed, opened a device or changed voice settings");
         }
         string selectedId=SelectedRoute.Id;
-        LanguageBox.SelectedIndex=0;Width=1120;Height=820;NavigationList.SelectedIndex=0;
+        LanguageBox.SelectedIndex=0;Width=1120;Height=820;Navigate(WorkspacePage.Overview);
         if(SelectedRoute.Id!=selectedId)throw new InvalidOperationException("Translation changed output selection");
         await Task.Delay(150);Capture(System.IO.Path.Combine(directory,"cable-routing-tr.png"));
         System.IO.File.WriteAllText(System.IO.Path.Combine(directory,"routing-result.json"),System.Text.Json.JsonSerializer.Serialize(new{success=true,selectedMode=SelectedRoute.Mode,available=SelectedRoute.Available,requestedOutputKind=OutputRouting.EffectiveKind(SelectedRoute),outputKind=engine.Metrics().OutputKind,nativeStreamOpened=false,liveTransportValidated=false,selectionEvents=true,settingsPreserved=true,translationPreserved=true}));

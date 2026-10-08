@@ -22,7 +22,7 @@ genel ses kalitesi kabulünü bu iki uygulama belirlemez. Kullanıcı 8 Ekim 202
 kendi kurulumunda seslerin temizlendiğini ve sorun olmadığını bildirdi.
 Bu geri bildirim tüm mikrofonlar ve uygulamalar için uyumluluk garantisi değildir.
 
-**0.7.0-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
+**0.7.1-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
 işleme başlar; Başlat/Durdur kaldırıldı. Pencereyi kapatmak bildirim alanına
 gizler; Veylo'dan çık mikrofonu bırakır. Eski profiller/kalibrasyonlar korunur.
 
@@ -47,8 +47,10 @@ kapsam ve ölçüm sınırları [VALIDATION.md](docs/VALIDATION.md),
 ## Arayüz ve oyun modu
 
 Yeni açık çalışma alanı, koyu yan menü, bakır vurgu ve daha okunaklı kontroller.
-Ana ekranda mikrofon/çıkış, seviye ölçerler, kişisel kalibrasyon ve hazır profiller
-bir arada bulunur. Sustur ve Orijinal ses her sayfada erişilebilir. Kısa, isteğe
+Menü beş bölümden oluşur; Gürültü ve İletim, Seviye, Ton ve EQ aynı Ses İşleme
+bölümündedir. Profillerin tek seçicisi Profiller'de, kalibrasyon ve karşılaştırma
+aynı bölümdedir. Ana ekran bağlantı/seviyeleri gösterir; etkin profil göstergesi
+Profiller'i açar. Sustur ve Orijinal ses her sayfada erişilebilir. Kısa, isteğe
 bağlı geçişler ve gerçek RMS seviye geçmişi. Ayarlar → Oyun modu varsayılan açık:
 bilinen oyunlar arka planda, diğerleri tam ekran üzerinden algılanır. Oyun
 algılanınca animasyonlar/vurgu dekoru/canlı ses görseli kapanır; ölçerler5Hz,
