@@ -49,14 +49,13 @@ public partial class MainWindow
     }
     private void ApplyVisualPolicy(){
         if(quitting||GameModeDetail is null)return;
-        bool glass=state.EffectsEnabled&&!SystemParameters.HighContrast&&!gamePolicy.Active&&IsVisible;
-        bool effects=glass&&(SystemParameters.ClientAreaAnimation||(smoke&&forceSmokeEffects));
+        ThemePalette.Apply(SystemParameters.HighContrast);
+        bool decoration=state.EffectsEnabled&&!SystemParameters.HighContrast&&!gamePolicy.Active&&IsVisible;
+        bool effects=decoration&&(SystemParameters.ClientAreaAnimation||(smoke&&forceSmokeEffects));
         if(Motion.GetEnabled(this)!=effects)Scope.Clear();
         Motion.SetEnabled(this,effects);
-        if(lastEffects!=glass){
-            Resources["SurfaceBrush"]=new SolidColorBrush((Color)ColorConverter.ConvertFromString(glass?"#A6213038":"#202C33"));
-            Resources["GlassChromeBrush"]=new SolidColorBrush((Color)ColorConverter.ConvertFromString(glass?"#8A1C2B32":"#1B272F"));
-            AmbientBackdrop.Visibility=glass?Visibility.Visible:Visibility.Collapsed;Scope.Clear();lastEffects=glass;
+        if(lastEffects!=decoration){
+            AmbientBackdrop.Visibility=decoration?Visibility.Visible:Visibility.Collapsed;Scope.Clear();lastEffects=decoration;
         }
         var interval=TimeSpan.FromMilliseconds(gamePolicy.Active?200:100);if(meterTimer.Interval!=interval)meterTimer.Interval=interval;
         GameBadgeText.Text=T(gamePolicy.Active?"gameActive":state.GameModeEnabled?"gameArmed":"gameOff");

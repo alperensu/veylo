@@ -252,6 +252,7 @@ public partial class MainWindow : Window
     private void SetBusy(bool value)
     {
         busy=value;if(quitting)return;StrongNoiseButton.IsEnabled=!value&&!sampling&&!calibrating&&!personalCalibrating&&!finishing;InputBox.IsEnabled=!value&&!sampling;OutputBox.IsEnabled=!value&&!sampling;
+        OverviewPresets.IsEnabled=!value&&!sampling&&!personalCalibrating;
         RecordButton.IsEnabled=!value&&!calibrating;CalibrateButton.IsEnabled=!value&&!sampling;
         PersonalCalibrateButton.IsEnabled=!value&&!sampling;CancelPersonalButton.IsEnabled=!value&&personalCalibrating&&sampling;
         RestoreDeviceButton.IsEnabled=!value&&!sampling&&InputBox.SelectedItem is AudioDevice device&&state.Calibrations.TryGetValue(device.Id,out var saved)&&saved.TunedSettings is not null;
@@ -423,20 +424,35 @@ public partial class MainWindow : Window
     }
     private void QuickPresetClick(object sender,RoutedEventArgs e)
     {
+        if(!ready||busy||sampling||quitting)return;
         if(sender is Button button&&int.TryParse(button.Tag as string,out int index))PresetList.SelectedIndex=index;
     }
     private void ResizeNavigation()
     {
-        if(NavigationColumn is null)return;bool compact=ActualWidth>0&&ActualWidth<740;
-        NavigationColumn.Width=new GridLength(compact?78:210);
-        NavigationShell.Padding=compact?new Thickness(6,18,6,10):new Thickness(10,20,10,12);
-        foreach(var label in new[]{NavLabel0,NavLabel1,NavLabel2,NavLabel3,NavLabel4,NavLabel5,NavLabel6}){label.TextWrapping=TextWrapping.Wrap;label.Width=124;label.FontSize=13;}
+        if(NavigationColumn is null)return;
+        bool compact=ActualWidth>0&&ActualWidth<940;
+        NavigationColumn.Width=new GridLength(compact?88:216);
+        NavigationShell.Padding=compact?new Thickness(8,24,8,16):new Thickness(16,24,16,18);
         foreach(var label in new[]{NavLabel0,NavLabel1,NavLabel2,NavLabel3,NavLabel4,NavLabel5,NavLabel6})label.Visibility=compact?Visibility.Collapsed:Visibility.Visible;
-        NavCaption.Visibility=compact?Visibility.Collapsed:Visibility.Visible;
-        if(OverviewGrid is not null){bool narrow=ActualWidth-(compact?78:210)-72<680;OverviewGap.Width=new GridLength(narrow?0:18);OverviewRight.Width=narrow?new GridLength(0):new GridLength(1,GridUnitType.Star);
-            Grid.SetColumn(LevelPanel,narrow?0:2);Grid.SetRow(LevelPanel,0);Grid.SetColumnSpan(VoiceHeroPanel,narrow?3:1);Grid.SetColumnSpan(LevelPanel,narrow?3:1);
-            Grid.SetRow(VoiceHeroPanel,narrow?2:0);VoiceHeroPanel.Visibility=ActualHeight<600?Visibility.Collapsed:Visibility.Visible;
-        }
+        foreach(var element in new FrameworkElement[]{NavCaption,SidebarBrand,SidebarFooter,GameBadgeText})element.Visibility=compact?Visibility.Collapsed:Visibility.Visible;
+        ContentShell.Margin=new Thickness(compact?20:28,compact?18:24,compact?20:28,16);
+        PageTitle.FontSize=compact?26:30;
+        double available=ActualWidth-(compact?88:216)-(compact?40:56)-10;
+        bool narrow=available<740;
+        OverviewGap.Width=new GridLength(narrow?0:18);
+        OverviewRight.Width=narrow?new GridLength(0):new GridLength(1,GridUnitType.Star);
+        Grid.SetColumn(LevelPanel,0);Grid.SetRow(LevelPanel,2);
+        Grid.SetColumn(VoiceHeroPanel,narrow?0:2);Grid.SetRow(VoiceHeroPanel,narrow?3:2);
+        Grid.SetColumnSpan(VoiceHeroPanel,narrow?3:1);Grid.SetColumnSpan(LevelPanel,narrow?3:1);
+        bool stackDevices=available<580;
+        DeviceGap.Width=new GridLength(stackDevices?0:18);
+        DeviceFields.ColumnDefinitions[2].Width=stackDevices?new GridLength(0):new GridLength(1,GridUnitType.Star);
+        Grid.SetColumnSpan(InputBox.Parent as FrameworkElement??InputBox,stackDevices?3:1);
+        Grid.SetColumn(OutputField,stackDevices?0:2);Grid.SetRow(OutputField,stackDevices?1:0);Grid.SetColumnSpan(OutputField,stackDevices?3:1);
+        OutputField.Margin=new Thickness(0,stackDevices?14:0,0,0);
+        bool stackSession=available<650;
+        Grid.SetRow(SessionControls,stackSession?1:0);Grid.SetColumn(SessionControls,stackSession?0:1);Grid.SetColumnSpan(SessionControls,stackSession?2:1);
+        Grid.SetColumnSpan(SessionStatusPanel,stackSession?2:1);SessionControls.Margin=new Thickness(0,stackSession?10:0,0,0);
     }
     private void WindowSizeChanged(object sender,SizeChangedEventArgs e)=>ResizeNavigation();
     private void WindowClosing(object? sender,CancelEventArgs e){if(!quitting){e.Cancel=true;Hide();desktop?.Notice();}}
@@ -446,11 +462,11 @@ public partial class MainWindow : Window
         Close();Application.Current.Shutdown();
     }
     private void Capture(string path)=>CaptureWindow(this,path);
-    private static void CaptureWindow(Window window,string path)
+    private static void CaptureWindow(Window window,string path,int dpi=96)
     {
         window.UpdateLayout();var content=(FrameworkElement)window.Content;int width=(int)(content.ActualWidth+content.Margin.Left+content.Margin.Right),height=(int)(content.ActualHeight+content.Margin.Top+content.Margin.Bottom);
         var visual=new DrawingVisual();using(var drawing=visual.RenderOpen()){drawing.DrawRectangle(window.Background,null,new Rect(0,0,width,height));drawing.DrawRectangle(new VisualBrush(content){ViewboxUnits=BrushMappingMode.Absolute,Viewbox=new Rect(0,0,content.ActualWidth,content.ActualHeight)},null,new Rect(content.Margin.Left,content.Margin.Top,content.ActualWidth,content.ActualHeight));}
-        var image=new RenderTargetBitmap(width,height,96,96,PixelFormats.Pbgra32);image.Render(visual);
+        var image=new RenderTargetBitmap((int)Math.Ceiling(width*dpi/96d),(int)Math.Ceiling(height*dpi/96d),dpi,dpi,PixelFormats.Pbgra32);image.Render(visual);
         var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(image));using var stream=File.Create(path);encoder.Save(stream);
     }
     private async Task RunSmoke()
@@ -501,6 +517,7 @@ public partial class MainWindow : Window
             }
             await RunExperienceSmoke(directory);
             await RunRoutingSmoke(directory);
+            await RunDesignSmoke(directory);
             File.WriteAllText(Path.Combine(directory,"ui-result.json"),System.Text.Json.JsonSerializer.Serialize(new {success=true,presets=Profiles.Factory().Count,personalCalibration=true,personalPreview=true,applyAndUndo=true,deviceSource="synthetic",liveDeviceValidation=false,inputs=((IEnumerable<AudioDevice>)InputBox.ItemsSource).Count(),width=ActualWidth,height=ActualHeight}));
             Quit();
         }catch(Exception ex){File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"smoke-error.txt"),ex.ToString());quitting=true;engine.Dispose();Application.Current.Shutdown(1);}

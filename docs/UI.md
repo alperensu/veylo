@@ -1,50 +1,79 @@
-# Veylo cam arayüz ve oyun modu
+# Veylo arayüzü ve oyun modu
 
-Görsel yön: koyu gece yüzeyleri, mint vurgu, hafif saydam plakalar ve ince cam
-kenarları. Apple'ın [Liquid Glass yaklaşımı](https://www.apple.com/newsroom/2025/06/apple-introduces-a-delightful-and-elegant-new-software-design/)
-işlevsel referanstır; Apple asset/font/kodu kullanılmadı. Segoe UI Variable/
-Segoe UI ve mevcut vektör simgeler korunur. Bu görünüm Apple'ın gerçek zamanlı
-kırılma/arka plan blur motoru değildir; pahalı shader veya masaüstü blur'u yoktur.
+0.7.0-dev, arayüzün yeniden düzenlendiği geliştirme sürümüdür. Açık çalışma
+alanı, koyu yan menü ve bakır vurgu; cam/blur/shader yerine okunaklı tipografi,
+belirgin odak ve tutarlı kontroller kullanılır. Görsel varlıklar mevcut özgün
+vektörlerdir; Segoe UI Variable/Segoe UI sistem fontları kullanılır.
 
-Theme.xaml ortak renk, cam kenarı, anahtar, slider, select ve yüzey stilini yönetir.
-Animasyonlar180ms hover/press/anahtar,220–300ms sayfa reveal; sonsuz decorative
-storyboard yok. VoiceScope yalnızca gerçek çıkış RMS geçmişini gösterir; FFT,
-ses kaydı veya yapay konuşma görseli üretmez. Gizli pencerede motion durur.
+## Günlük kullanım
 
-Motion.Enabled kalıtılan WPF özelliğidir. Oyun modu/manuel efekt kapatma ve
-Windows azaltılmış hareket değişimleri devam eden animation clock'larını söker.
-Sürücü penceresi de ana pencerenin motion politikasına bağlanır. Windows hareket
-tercihi cam tasarımını kaldırmaz; yüksek kontrast cam/animasyonu kapatır.
-[Windows erişilebilirlik ayarları](https://support.microsoft.com/en-us/accessibility/windows/make-it-easier-to-focus-on-tasks)
-uygulama tarafından değiştirilmez.
+Ana ekranın sırası: mikrofon ve çıkış bağlantısı, hazır ses profilleri,
+gerçek giriş/çıkış seviyeleri ve kişisel kalibrasyon. Çıkış bulunamadığında aktarımın
+kapalı olduğu açıkça yazılır. Hazır profiller tüm profil ayarlarını uygular;
+ses karakteri düğmeleri yalnız EQ değiştirmez. Gürültü azaltma sayfasında
+otomatik/elle kontrol öne çıkar; ayrıntılı açıklamalar “Nasıl çalışır?” altında
+bulunur. Dengeleme ve dinamik işlemler ayrı gruplardır.
 
-GameDetector foreground pencere boyutu ve süreç adlarını5s'de bir worker'da okur.
-GameModePolicy bilinen oyunları veya kullanıcı listesini arka planda da eşleştirir.
-Diğer uygulamalar tam ekran geometrisiyle değerlendirilir; tarayıcılar/başlatıcılar
-hariçtir. Bu bir tahmindir: bilinmeyen tam ekran medya uygulaması yanlış pozitif,
-listedeki olmayan borderless-windowed oyun yanlış negatif olabilir. Kullanıcı
-özel süreç adı veya otomatik kapatma seçimiyle kontrol eder. Hiçbir süreç
-kapatılmaz, oyunun belleğine erişilmez, Windows oyun/öncelik ayarı değiştirilmez.
+Yedi bölüm doğrudan yan menüden seçilir. Sustur ve Orijinal ses kontrolleri
+her sayfada alt alanda kalır. Sürücü araçları Ayarlar'dadır; VB-CABLE için
+kendi sürücümüzü kurmak gerekmez. Başlangıç, kısayollar, profil içe/dışa
+aktarma, kayıt/dinleme, kalibrasyon uygulama ve geri alma davranışları korunur.
+Pencereyi kapatmak bildirim alanına gizler; çıkış bildirim alanından yapılır.
 
-Oyun algılanınca cam yüzeyler düzleşir, ambient arka plan kapanır, hover/press/
-anahtar/sayfa motion ve RMS görseli durur; ölçerler10Hz'den5Hz'e iner. RNNoise,
-AGC, kalibrasyon, preset, mute/bypass/limiter ve native callback değişmez.
-Algılanan süreç yoksa15s bekleme ile görsel tercih geri döner. Bilinen oyun
-Alt+Tab'da açık kaldığı sürece sade görünüm sürer. FPS kazancı garanti edilmez.
+1160×840 başlangıç boyutu çalışma alanına sığdırılır. 940 pikselin altında
+yan menü simgelere dönüşür; erişilebilir isimler ve ipuçları kalır. Dar
+pencerede cihaz seçiciler, ana ekran kartları ve alt kontroller alt alta
+yerleşir. 640×480 minimum boyutta sayfa içeriği dikey kaydırılabilir.
 
-Uygulama1120×820 başlangıç düzenini çalışma alanına sığdırır. Dar pencerede
-78px simge navigasyonu; kısa pencerede ses dekoru kaldırılıp ölçerler öne alınır.
-Scroll ve klavye erişimi korunur; custom pencere düğmelerinde erişilebilir isimler,
-maximize/restore ve bildirim alanına gizleme bulunur. Fiziksel çoklu DPI kabulü
-henüz yapılmadı; doğrulama kapsamı VALIDATION.md içindedir.
+## Görsel politika ve erişilebilirlik
 
-## Çevrimdışı arayüz doğrulaması
+Theme.xaml ortak renkleri, yüzeyleri ve kontrol stillerini yönetir.
+ThemePalette, yüksek kontrast açıkken bütün tema fırçalarını Windows sistem
+renklerine geçirir ve kapandığında normal paleti geri getirir. Klavye odağı
+buton, seçici, slider, anahtar ve menüde görünürdür. Ana renk/zemin çiftleri
+metin kontrastı için kontrol edilmiştir. Bu, fiziksel Narrator kabulü değildir.
 
-`--smoke` gerçek mikrofon yerine açıkça adlandırılmış sentetik cihaz ve sentetik
-ses örnekleri kullanır. Kalibrasyon uygulama/geri alma, yönlendirme seçimi,
-animasyon iptali, gizlenme ve dar TR/EN düzenleri bu yolla sınanır. Mikrofon,
-VB-CABLE veya kernel aktarımı açılmaz. Oyun modu sırasında native DSP'nin
-çevrimdışı örnekleri işlemeyi sürdürmesi gerçek zamanlı akış kabulü değildir;
-JSON raporları bunu `realtimeAudioValidated=false` ve
-`liveTransportValidated=false` ile belirtir. Gerçek cihaz testleri açıkça seçilen
-`--validate-live` moduyla ayrıdır; bu mod sentetik cihaz kullanmaz.
+Motion.Enabled kalıtılan WPF özelliğidir. Hover 140 ms, sayfa geçişi 180 ms;
+sonsuz dekoratif storyboard yoktur. Oyun modu, manuel animasyon kapatma,
+Windows azaltılmış hareket ve gizlenen pencere çalışan animasyonları iptal
+eder. Sistem ayarları uygulama tarafından değiştirilmez. VoiceScope yalnız
+gerçek ölçülmüş çıkış RMS geçmişini çizer; ses kaydı/FFT veya uydurma dalga
+üretmez. İlk ölçümden önce dalga çizilmez.
+
+GameDetector ön plandaki pencere boyutu ve süreç adlarını 5 saniyede bir
+worker'da okur. Bilinen oyunlar veya kullanıcı listesi arka planda da
+eşleştirilir. Diğer uygulamalar tam ekran geometrisiyle değerlendirilir;
+tarayıcılar/başlatıcılar hariçtir. Yanlış pozitif/negatif mümkündür; özel süreç
+listesi ve otomatik mod seçimi kullanıcıdadır. Hiçbir süreç kapatılmaz,
+oyunun belleğine erişilmez, Windows oyun/öncelik ayarı değiştirilmez.
+
+Oyun algılanınca vurgu dekoru, hover/press/anahtar/sayfa hareketi ve RMS
+görseli durur; ölçerler 10 Hz'den 5 Hz'e iner. RNNoise, AGC, kalibrasyon,
+preset, mute/bypass/limiter ve native callback değişmez. Algılanan süreç
+yoksa 15 saniye bekleme ile görsel tercih geri döner. Bilinen oyun Alt+Tab'da
+açık kaldığı sürece sade görünüm sürer. FPS kazancı garanti edilmez.
+
+## Doğrulama sınırları
+
+`--smoke`, gerçek mikrofon yerine açıkça adlandırılmış sentetik cihaz ve
+sentetik ses örnekleri kullanır. VB-CABLE, fiziksel mikrofon ve kernel aktarımı
+açılmaz; normal kullanıcı ayarları yazılmaz. Kalibrasyon uygulama/geri alma,
+profil geçişleri, yönlendirme seçimi, animasyon iptali ve gizlenme sınanır.
+
+Tasarım kontrolü iki dilde yedi sayfayı 1160×840, 780×650 ve 640×480 boyutlarında
+render eder: toplam 42 düzen. Yatay taşma, kırpılan menü simgeleri, cihaz
+seçici genişlikleri, kalıcı kontroller ve menü erişilebilir isimleri denetlenir.
+96/144/192 DPI bitmapleri raster ölçekleme kontrolüdür; fiziksel monitör DPI
+değişimi veya ekran okuyucuyla kullanıcı testi değildir. Sistem paleti
+eşlemesi uygulama kaynaklarında sınanır; Windows yüksek kontrast ayarı
+değiştirilmez. `design-result.json` bu sınırları açıkça kaydeder.
+
+Oyun modunda çevrimdışı DSP'nin işlemeyi sürdürmesi gerçek zamanlı akış kabulü
+değildir; raporlar `realtimeAudioValidated=false` ve
+`liveTransportValidated=false` içerir. Gerçek cihaz testleri ayrıca açıkça
+seçilen `--validate-live` modudur. Genel kabul sınırları VALIDATION.md'dedir.
+
+Kompozisyon ve gezinme için incelenen birincil kaynaklar:
+[Windows gezinme ilkeleri](https://learn.microsoft.com/en-us/windows/apps/design/basics/navigation-basics)
+ve [Audio Hijack ürün sayfası](https://rogueamoeba.com/audiohijack/).
+Bu kaynakların görsel/kod varlıkları ürüne kopyalanmadı.
