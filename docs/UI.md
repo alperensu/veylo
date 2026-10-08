@@ -37,3 +37,14 @@ Uygulama1120×820 başlangıç düzenini çalışma alanına sığdırır. Dar p
 Scroll ve klavye erişimi korunur; custom pencere düğmelerinde erişilebilir isimler,
 maximize/restore ve bildirim alanına gizleme bulunur. Fiziksel çoklu DPI kabulü
 henüz yapılmadı; doğrulama kapsamı VALIDATION.md içindedir.
+
+## Çevrimdışı arayüz doğrulaması
+
+`--smoke` gerçek mikrofon yerine açıkça adlandırılmış sentetik cihaz ve sentetik
+ses örnekleri kullanır. Kalibrasyon uygulama/geri alma, yönlendirme seçimi,
+animasyon iptali, gizlenme ve dar TR/EN düzenleri bu yolla sınanır. Mikrofon,
+VB-CABLE veya kernel aktarımı açılmaz. Oyun modu sırasında native DSP'nin
+çevrimdışı örnekleri işlemeyi sürdürmesi gerçek zamanlı akış kabulü değildir;
+JSON raporları bunu `realtimeAudioValidated=false` ve
+`liveTransportValidated=false` ile belirtir. Gerçek cihaz testleri açıkça seçilen
+`--validate-live` moduyla ayrıdır; bu mod sentetik cihaz kullanmaz.

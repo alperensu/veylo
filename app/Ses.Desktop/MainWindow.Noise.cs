@@ -29,11 +29,12 @@ public partial class MainWindow
         if(settings.NoiseMix!=.4f)throw new InvalidOperationException("Strong cleaning changed active recording");
         sampling=previous;StrongNoiseClick(this,new RoutedEventArgs());
         MuteBox.IsChecked=false;ApplySettings();
-        await BeginSample(false);if(!sampling||StrongNoiseButton.IsEnabled)throw new InvalidOperationException("Recording must disable strong cleaning");
-        await Task.Delay(350);await FinishSample();
+        // Exercise recording controls and completion without starting native capture.
+        sampling=true;SetBusy(false);if(StrongNoiseButton.IsEnabled)throw new InvalidOperationException("Recording controls must disable strong cleaning");
+        await FinishSample();
         if(sampling||finishing||!StrongNoiseButton.IsEnabled)throw new InvalidOperationException("Finished recording did not restore strong cleaning");
         await EngineOperation(engine.Stop);
-        File.WriteAllText(Path.Combine(directory,"strong-noise-result.json"),"{\"success\":true,\"fullWet\":true,\"softExpander\":true,\"mutePreserved\":true,\"recordingProtected\":true}");
+        File.WriteAllText(Path.Combine(directory,"strong-noise-result.json"),"{\"success\":true,\"fullWet\":true,\"softExpander\":true,\"mutePreserved\":true,\"recordingControlsValidated\":true,\"liveRecordingValidated\":false}");
     }
     private void RunValidationSmoke(string directory)
     {

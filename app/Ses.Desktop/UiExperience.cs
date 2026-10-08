@@ -90,27 +90,32 @@ public partial class MainWindow
         NavigationList.SelectedIndex=4;await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-profiles-tr.png"));
         var settingsBefore=Profiles.Serialize(CurrentProfile());
         var observed=await Task.Run(GameDetector.Read);if(Array.Exists(observed,p=>string.IsNullOrWhiteSpace(p.ProcessName)))throw new InvalidOperationException("Detector returned invalid process metadata"); // Another Veylo instance is legitimate; self exclusion is by PID.
-        await StartSession();if(engine.Metrics().Connected!=1)throw new System.IO.IOException("Game UI test needs an available microphone");
+        // Visual policy is exercised against actual offline DSP, never a person's microphone.
+        var synthetic=new float[4800];for(int i=0;i<synthetic.Length;i++)synthetic[i]=.03f*(float)Math.Sin(2*Math.PI*170*i/48000);
+        void ProcessFixture(){var output=engine.ProcessConfigured(synthetic);if(Array.Exists(output,x=>!float.IsFinite(x)||Math.Abs(x)>.891252f))throw new InvalidOperationException("Offline visual-policy audio became unsafe");}
+        ProcessFixture();if(engine.Metrics().Running!=0)throw new InvalidOperationException("Offline game UI test opened an audio stream");
         GameBadge.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice,0){RoutedEvent=UIElement.MouseEnterEvent});
         if(GameBadge.RenderTransform is not ScaleTransform scale||!scale.HasAnimatedProperties)throw new InvalidOperationException("Hover animation did not start");
         var before=engine.Metrics();gamePolicy.Update(true,new[]{new GameObservation("VALORANT-Win64-Shipping")},state.GameProcessNames,uiClock.Elapsed.TotalSeconds);ApplyVisualPolicy();NavigationList.SelectedIndex=0;
         await Task.Delay(350);
-        if(Motion.GetEnabled(GameBadge)||scale.HasAnimatedProperties||AmbientBackdrop.Visibility!=Visibility.Collapsed||meterTimer.Interval.TotalMilliseconds!=200||engine.Metrics().Running!=1||Profiles.Serialize(CurrentProfile())!=settingsBefore)throw new InvalidOperationException("Game mode changed audio settings or failed to stop effects");
+        ProcessFixture();
+        if(Motion.GetEnabled(GameBadge)||scale.HasAnimatedProperties||AmbientBackdrop.Visibility!=Visibility.Collapsed||meterTimer.Interval.TotalMilliseconds!=200||engine.Metrics().Running!=0||Profiles.Serialize(CurrentProfile())!=settingsBefore)throw new InvalidOperationException("Game mode changed audio settings or failed to stop effects");
         Capture(System.IO.Path.Combine(directory,"game-active-tr.png"));
         NavigationList.SelectedIndex=6;await Task.Delay(150);Capture(System.IO.Path.Combine(directory,"game-settings-tr.png"));
         GameProcessesBox.Text="../bad.exe";SaveGameProcesses(this,new RoutedEventArgs());if(state.GameProcessNames.Count!=0)throw new InvalidOperationException("Invalid game process accepted");
         GameProcessesBox.Text="MyGame.exe";SaveGameProcesses(this,new RoutedEventArgs());if(state.GameProcessNames.Count!=1)throw new InvalidOperationException("Game process list did not save");
         GameModeBox.IsChecked=false;if(gamePolicy.Active||!Motion.GetEnabled(this))throw new InvalidOperationException("Manual game-mode disable did not restore effects");
         EffectsBox.IsChecked=false;if(Motion.GetEnabled(this))throw new InvalidOperationException("Manual effect disable failed");EffectsBox.IsChecked=true;
-        Hide();if(Motion.GetEnabled(this)||engine.Metrics().Running!=1)throw new InvalidOperationException("Hidden UI must stop motion but retain audio");Show();
+        Hide();ProcessFixture();if(Motion.GetEnabled(this)||engine.Metrics().Running!=0)throw new InvalidOperationException("Hidden offline UI must stop motion without opening audio");Show();
         MaximizeClick(this,new RoutedEventArgs());if(WindowState!=WindowState.Maximized)throw new InvalidOperationException("Maximize failed");MaximizeClick(this,new RoutedEventArgs());
         Width=640;Height=480;LanguageBox.SelectedIndex=1;NavigationList.SelectedIndex=6;await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-settings-small-en.png"));
         NavigationList.SelectedIndex=1;await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-noise-small-en.png"));
         NavigationList.SelectedIndex=0;await Task.Delay(350);Capture(System.IO.Path.Combine(directory,"glass-small-en.png"));
         if(MainScroll.ScrollableWidth>1)throw new InvalidOperationException("Small layout has horizontal overflow");
-        if(engine.Metrics().Connected!=1||engine.Metrics().ProcessedFrames<=before.ProcessedFrames)throw new InvalidOperationException("Microphone frames did not continue through visual policy changes");
+        ProcessFixture();
+        if(engine.Metrics().Running!=0||engine.Metrics().ProcessedFrames<=before.ProcessedFrames)throw new InvalidOperationException("Offline frames did not advance through visual policy changes");
         await EngineOperation(engine.Stop);
-        System.IO.File.WriteAllText(System.IO.Path.Combine(directory,"experience-result.json"),System.Text.Json.JsonSerializer.Serialize(new{success=true,gameEffectsStopped=true,audioContinued=true,settingsPreserved=true,hiddenMotionStopped=true,manualControls=true,gameListValidation=true,hoverClockCancelled=true,processMetadataReadable=true,observedProcesses=observed.Length,systemAnimations=SystemParameters.ClientAreaAnimation,visualTestOverride=true,framesAdvanced=engine.Metrics().ProcessedFrames-before.ProcessedFrames}));
+        System.IO.File.WriteAllText(System.IO.Path.Combine(directory,"experience-result.json"),System.Text.Json.JsonSerializer.Serialize(new{success=true,gameEffectsStopped=true,offlineProcessingContinued=true,realtimeAudioValidated=false,settingsPreserved=true,hiddenMotionStopped=true,manualControls=true,gameListValidation=true,hoverClockCancelled=true,processMetadataReadable=true,observedProcesses=observed.Length,systemAnimations=SystemParameters.ClientAreaAnimation,visualTestOverride=true,framesAdvanced=engine.Metrics().ProcessedFrames-before.ProcessedFrames}));
         forceSmokeEffects=false;ApplyVisualPolicy();
     }
 }

@@ -28,6 +28,7 @@ public partial class MainWindow
     {
         var input=captureDevices.FirstOrDefault(d=>d.Id==inputId);
         if(!OutputRouting.CanUseInput(input,route))throw new AudioDeviceException(input is null?-7:-6,"Wait for the saved physical microphone or select an available microphone.");
+        if(OfflineSmoke)return;
         engine.Start(inputId,OutputRouting.EffectiveKind(route)==2?route.Id:null,route.Mode=="driver");
     }
 
@@ -73,13 +74,13 @@ public partial class MainWindow
             OutputBox.SelectedItem=OutputRouting.Choose(routes,mode,state.OutputId);
             for(int i=0;i<100&&busy;i++)await Task.Delay(20);
             await StartSession();
-            if(busy||engine.Metrics().Running!=1||engine.Metrics().OutputKind!=OutputRouting.EffectiveKind(SelectedRoute)||Profiles.Serialize(CurrentProfile())!=before)throw new InvalidOperationException("Output selection failed or changed voice settings");
+            if(busy||engine.Metrics().Running!=0||state.OutputMode!=mode||SelectedRoute.Mode!=mode||Profiles.Serialize(CurrentProfile())!=before)throw new InvalidOperationException("Offline output selection failed, opened a device or changed voice settings");
         }
         string selectedId=SelectedRoute.Id;
         LanguageBox.SelectedIndex=0;Width=1120;Height=820;NavigationList.SelectedIndex=0;
         if(SelectedRoute.Id!=selectedId)throw new InvalidOperationException("Translation changed output selection");
         await Task.Delay(150);Capture(System.IO.Path.Combine(directory,"cable-routing-tr.png"));
-        System.IO.File.WriteAllText(System.IO.Path.Combine(directory,"routing-result.json"),System.Text.Json.JsonSerializer.Serialize(new{success=true,selectedMode=SelectedRoute.Mode,available=SelectedRoute.Available,outputKind=engine.Metrics().OutputKind,selectionEvents=true,settingsPreserved=true,translationPreserved=true}));
+        System.IO.File.WriteAllText(System.IO.Path.Combine(directory,"routing-result.json"),System.Text.Json.JsonSerializer.Serialize(new{success=true,selectedMode=SelectedRoute.Mode,available=SelectedRoute.Available,requestedOutputKind=OutputRouting.EffectiveKind(SelectedRoute),outputKind=engine.Metrics().OutputKind,nativeStreamOpened=false,liveTransportValidated=false,selectionEvents=true,settingsPreserved=true,translationPreserved=true}));
         await EngineOperation(engine.Stop);
     }
 }

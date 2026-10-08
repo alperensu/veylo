@@ -23,6 +23,10 @@ try{
     $app=Join-Path $root 'app/Ses.Desktop/bin/Release/net10.0-windows/Veylo.exe'
     $output=Join-Path $root 'artifacts/ui'
     $process=Start-Process -FilePath $app -ArgumentList @('--smoke','--out',('"'+$output+'"')) -PassThru -Wait -WindowStyle Hidden
-    if($process.ExitCode -ne 0){throw 'UI smoke failed'}
+    if($process.ExitCode -ne 0){
+        $errorFile=Join-Path (Split-Path $app -Parent) 'smoke-error.txt'
+        if(Test-Path -LiteralPath $errorFile){Copy-Item -LiteralPath $errorFile -Destination (Join-Path $output 'smoke-error.txt') -Force;throw ('UI smoke failed: '+(Get-Content -LiteralPath $errorFile -Raw))}
+        throw 'UI smoke failed without a diagnostic file'
+    }
     if($Live){$process=Start-Process -FilePath $app -ArgumentList @('--validate-live','--minimized','--out',('"'+$output+'"')) -PassThru -Wait -WindowStyle Hidden;if($process.ExitCode -ne 0){throw 'Live microphone test failed'}}
 }finally{Pop-Location}

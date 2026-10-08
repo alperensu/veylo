@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private readonly bool smoke;
     private readonly string[] args;
     private readonly LiveValidationOptions? liveValidation;
+    private bool OfflineSmoke => smoke&&liveValidation is null;
     private readonly DispatcherTimer meterTimer=new(){Interval=TimeSpan.FromMilliseconds(100)};
     private readonly DispatcherTimer applyTimer=new(){Interval=TimeSpan.FromMilliseconds(180)};
     private readonly DispatcherTimer sessionTimer=new(){Interval=TimeSpan.FromSeconds(2)};
@@ -181,7 +182,8 @@ public partial class MainWindow : Window
     private async Task RefreshDevices()
     {
         try {
-            var all=await Task.Run(engine.Devices);suppress=true;
+            // Offline UI fixtures never enumerate, open or persist a user's microphone.
+            var all=OfflineSmoke?new AudioDevice[]{new("veylo-smoke-input","Synthetic microphone (UI test)",true,true)}:await Task.Run(engine.Devices);suppress=true;
             string selected=(InputBox.SelectedItem as AudioDevice)?.Id??state.InputId;
             captureDevices=all.Where(d=>d.Input).ToArray();
             var physical=all.Where(d=>d.Input&&!d.IsSesVirtual).ToArray();
@@ -499,7 +501,7 @@ public partial class MainWindow : Window
             }
             await RunExperienceSmoke(directory);
             await RunRoutingSmoke(directory);
-            File.WriteAllText(Path.Combine(directory,"ui-result.json"),System.Text.Json.JsonSerializer.Serialize(new {success=true,presets=Profiles.Factory().Count,personalCalibration=true,personalPreview=true,applyAndUndo=true,inputs=((IEnumerable<AudioDevice>)InputBox.ItemsSource).Count(),width=ActualWidth,height=ActualHeight}));
+            File.WriteAllText(Path.Combine(directory,"ui-result.json"),System.Text.Json.JsonSerializer.Serialize(new {success=true,presets=Profiles.Factory().Count,personalCalibration=true,personalPreview=true,applyAndUndo=true,deviceSource="synthetic",liveDeviceValidation=false,inputs=((IEnumerable<AudioDevice>)InputBox.ItemsSource).Count(),width=ActualWidth,height=ActualHeight}));
             Quit();
         }catch(Exception ex){File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"smoke-error.txt"),ex.ToString());quitting=true;engine.Dispose();Application.Current.Shutdown(1);}
     }

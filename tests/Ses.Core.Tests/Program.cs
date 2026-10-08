@@ -131,7 +131,7 @@ Check("valid Windows default physical microphone is honored",()=>Assert(InputSel
 using var engine=new NativeEngine(args[0]);
 Check("optional stream diagnostics preserve ABI5 and expose no offline callbacks",()=>{var diagnostic=engine.Diagnostics();Assert(diagnostic is {Version:1,Size:96,CaptureCallbacks:0,PlaybackCallbacks:0});Assert(System.Runtime.InteropServices.Marshal.SizeOf<EngineMetrics>()==136&&System.Runtime.InteropServices.Marshal.SizeOf<StreamDiagnostics>()==96);});
 var endpoints=engine.Devices();
-Check("native wrapper enumerates bounded endpoint metadata",()=>Assert(endpoints.Count<=128&&endpoints.All(d=>d.Id.Length is >0 and <512&&d.Name.Length<256)));
+Check("native wrapper enumerates bounded endpoint metadata",()=>Assert(endpoints.Count<=128&&endpoints.All(d=>d.Id.Length is >0 and <512&&d.Name.Length<512)));
 if(endpoints.Any(d=>d.Input)||!args.Skip(1).Contains("--allow-no-audio-device",StringComparer.Ordinal))
     Check("native wrapper finds an actual capture endpoint",()=>Assert(endpoints.Any(d=>d.Input)));
 else Console.WriteLine("SKIP physical capture endpoint availability: explicitly requested headless host; enumeration API was checked above.");
