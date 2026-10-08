@@ -37,5 +37,9 @@ try{
     @{reviewedInformational=$findings.Count;reason='Two upstream dead initial stores overwritten before use; no memory or security diagnostic';decoderCve='CVE-2026-32837 not affected: vulnerable decoder compiled out'} | ConvertTo-Json | Set-Content (Join-Path $reports 'reviewed-findings.json')
     & '.tools/dotnet/dotnet.exe' build app/Ses.Desktop -c Release -p:RunAnalyzers=true -p:TreatWarningsAsErrors=true
     if($LASTEXITCODE -ne 0){throw 'Managed analyzers failed'}
+    & '.tools/dotnet/dotnet.exe' build app/Ses.DriverSetup -c Release -p:RunAnalyzers=true -p:TreatWarningsAsErrors=true
+    if($LASTEXITCODE -ne 0){throw 'Driver helper analyzers failed'}
+    & '.tools/dotnet/dotnet.exe' list app/Ses.DriverSetup package --vulnerable --include-transitive --format json | Set-Content (Join-Path $reports 'driver-helper-nuget.json')
+    if($LASTEXITCODE -ne 0){throw 'Driver helper dependency scan failed'}
     Write-Output 'Security checks passed (scope and limits: SECURITY.md)'
 }finally{Pop-Location}

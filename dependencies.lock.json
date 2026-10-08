@@ -8,7 +8,7 @@
   "rnnoise": {
     "version": "v0.2",
     "commit": "904a876dce1f9ab8860c0a5000ed151f9f6eef58",
-    "patch": "x86cpu.c: verify OSXSAVE/XCR0 before AVX2/FMA",
+    "patch": "x86cpu.c: verify OSXSAVE/XCR0 before AVX2/FMA; denoise.c: transient energy gain-decay backport bb18d2f00bf4d4f279b0779439afa207b6ea0153",
     "url": "https://github.com/xiph/rnnoise",
     "modelUrl": "https://media.xiph.org/rnnoise/models/rnnoise_data-0b50c45.tar.gz",
     "modelArchiveSha256": "4ac81c5c0884ec4bd5907026aaae16209b7b76cd9d7f71af582094a2f98f4b43",
@@ -137,7 +137,7 @@
     },
     {
       "path": "third_party/rnnoise/src/denoise.c",
-      "sha256": "a7759a51af88381d135ed90f6e73919a6f9540845e437749758f6f0dc608e4c4"
+      "sha256": "06c945dfcae95210f51d399d8e7a5052884e1fc734eb2236066ccf079aa10a2c"
     },
     {
       "path": "third_party/rnnoise/src/denoise.h",

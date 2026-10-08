@@ -1,0 +1,10 @@
+{
+  "kit": "EWDK 26100.6584",
+  "visual_studio": "2022 Build Tools 17.14.5",
+  "compiler": "MSVC 14.44.35207",
+  "sdk": "10.0.26100.0",
+  "url": "https://download.microsoft.com/download/be985897-caaa-4497-9ea4-17fa7065cd8a/EWDK_ge_release_svc_prod1_26100_250904-1728.iso",
+  "bytes": 20002537472,
+  "sha256": "9f48251dd24ad31aac206d8256e95bda5f90a9783982c45a8aafeb9054562379",
+  "license": "https://learn.microsoft.com/en-us/legal/windows/hardware/enterprise-wdk-license-2022"
+}

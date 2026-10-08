@@ -1,0 +1,34 @@
+name: Hata bildirimi
+description: Ses, cihaz, arayüz veya kurulum sorunu bildir.
+title: '[Hata] '
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Ses kaydı, cihaz kimliği, özel konuşma veya kişisel bilgi paylaşma. Gerekirse yalnızca anonimleştirilmiş ölçümleri ekle.
+  - type: input
+    id: version
+    attributes:
+      label: Veylo sürümü
+      placeholder: 0.6.12-dev
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Ortam
+      description: Windows sürümü, mikrofon modeli, seçili preset ve yönlendirme türü (VB-CABLE / yerel / geliştirme sürücüsü).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Tekrarlama adımları
+      description: Beklenen ve gerçekleşen davranışı da yaz.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Ek tanı bilgisi
+      description: Giriş/çıkış seviyeleri, tampon hatası veya anonim hata mesajı. Ham ses kaydı ekleme.

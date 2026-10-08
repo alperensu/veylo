@@ -1,0 +1,19 @@
+name: Özellik önerisi
+description: Genel amaçlı mikrofon ve ses iyileştirme için bir ihtiyaç öner.
+title: '[Özellik] '
+labels: [enhancement]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Kullanım ihtiyacı
+      description: Hangi iş için hangi sorunla karşılaşıyorsun?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Beklenen davranış
+      description: Özelliğin nasıl çalışmasını istiyorsun?
+    validations:
+      required: true

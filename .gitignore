@@ -9,3 +9,9 @@ artifacts/
 *.user
 *.wav
 *.part
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.key

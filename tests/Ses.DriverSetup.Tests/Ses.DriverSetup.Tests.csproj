@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+ <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings><TreatWarningsAsErrors>true</TreatWarningsAsErrors><AssemblyName>Ses.DriverSetup.Tests</AssemblyName><PlatformTarget>x64</PlatformTarget></PropertyGroup>
+ <ItemGroup><ProjectReference Include="../../app/Ses.DriverSetup/Ses.DriverSetup.csproj" /></ItemGroup>
+</Project>

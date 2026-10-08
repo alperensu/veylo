@@ -1,0 +1,28 @@
+#include <windows.h>
+#include <cstdio>
+#include <cstring>
+#include "../../driver/shared/ses_driver_protocol.h"
+// Run ONLY on an isolated Windows driver lab, never the daily gaming machine.
+int main(int argc,char** argv){
+    if(argc!=2||std::strcmp(argv[1],"--isolated-lab")){std::puts("Requires --isolated-lab on a dedicated Windows VM/test machine.");return 2;}
+    HANDLE first=CreateFileW(SES_DRIVER_PATH,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,0,nullptr);
+    if(first==INVALID_HANDLE_VALUE){std::printf("Driver unavailable (%lu)\n",GetLastError());return 3;}
+    unsigned failures=0,checks=0;DWORD bytes=0;SesDriverHello hello{1,sizeof(hello),48000,1,32,480};SesDriverStatus status{};SesDriverPacket packet{1,sizeof(packet),480,0,0,{}};
+    auto check=[&](bool ok,const char* name){++checks;if(!ok){++failures;std::printf("FAIL %s (%lu)\n",name,GetLastError());}};
+    check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"unauthenticated producer denied");
+    for(DWORD size=0;size<sizeof(hello);++size)check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&hello,size,&status,sizeof(status),&bytes,nullptr),"short hello rejected");
+    auto bad=hello;bad.version=2;check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&bad,sizeof(bad),&status,sizeof(status),&bytes,nullptr),"version mismatch");
+    bad=hello;bad.channels=2;check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&bad,sizeof(bad),&status,sizeof(status),&bytes,nullptr),"invalid channels");
+    check(DeviceIoControl(first,SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status),&bytes,nullptr)&&status.version==1&&bytes==sizeof(status),"valid connect");
+    HANDLE second=CreateFileW(SES_DRIVER_PATH,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,0,nullptr);
+    if(second!=INVALID_HANDLE_VALUE){check(!DeviceIoControl(second,SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status),&bytes,nullptr),"second owner denied");CloseHandle(second);}else check(false,"second handle opens for ownership test");
+    for(DWORD size=0;size<sizeof(packet);size+=31)check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,size,nullptr,0,&bytes,nullptr),"short packet rejected");
+    packet.frames=0;check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"zero frame packet rejected");packet.frames=480;
+    check(DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"valid PCM32 packet");
+    check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"replayed packet rejected");
+    check(!DeviceIoControl(first,SES_DRIVER_IOCTL(0x900),nullptr,0,nullptr,0,&bytes,nullptr),"unknown ioctl denied");
+    CloseHandle(first);
+    first=CreateFileW(SES_DRIVER_PATH,GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,0,nullptr);
+    if(first!=INVALID_HANDLE_VALUE){check(DeviceIoControl(first,SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status),&bytes,nullptr)&&status.queued_frames==0,"cleanup releases owner and discards voice");CloseHandle(first);}else check(false,"producer reconnect");
+    std::printf("%u lab IOCTL checks, %u failures. Audio silence, sleep, HVCI and Driver Verifier require the separate lab procedure.\n",checks,failures);return failures?1:0;
+}

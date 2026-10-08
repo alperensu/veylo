@@ -1,92 +1,544 @@
-<Window x:Class="Ses.Desktop.MainWindow" x:Name="Root" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="SES" Width="1080" Height="840" MinWidth="640" MinHeight="420" Background="{StaticResource BackgroundBrush}" Foreground="{StaticResource TextBrush}" FontFamily="Segoe UI" FontSize="14" WindowStartupLocation="CenterScreen" Loaded="WindowLoaded" Closing="WindowClosing" StateChanged="WindowStateChanged" SizeChanged="WindowSizeChanged">
- <Grid Margin="28,20,28,14">
-  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-  <Grid Margin="0,0,0,22"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-    <Border Width="38" Height="38" CornerRadius="10" Background="{StaticResource AccentBrush}" Margin="0,0,12,0"><Viewbox Margin="9"><Path Fill="#1A240D" Data="M 0,12 L 3,12 L 3,25 L 0,25 Z M 5,5 L 8,5 L 8,32 L 5,32 Z M 10,0 L 13,0 L 13,37 L 10,37 Z M 15,8 L 18,8 L 18,29 L 15,29 Z M 20,13 L 23,13 L 23,24 L 20,24 Z"/></Viewbox></Border>
-    <StackPanel><TextBlock Text="SES" FontSize="22" FontWeight="Bold"/><TextBlock Text="{DynamicResource tagline}" Style="{StaticResource Caption}"/></StackPanel>
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:ui="clr-namespace:Ses.Desktop" xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework" x:Class="Ses.Desktop.MainWindow" x:Name="Root" Title="Veylo" Width="1120" Height="820" MinWidth="640" MinHeight="480" Background="{DynamicResource BackgroundBrush}" Foreground="{DynamicResource TextBrush}" FontFamily="Segoe UI Variable, Segoe UI" FontSize="14" WindowStyle="None" WindowStartupLocation="CenterScreen" Loaded="WindowLoaded" Closing="WindowClosing" StateChanged="WindowStateChanged" SizeChanged="WindowSizeChanged">
+ <shell:WindowChrome.WindowChrome><shell:WindowChrome CaptionHeight="0" GlassFrameThickness="0" CornerRadius="22" ResizeBorderThickness="6" UseAeroCaptionButtons="False"/></shell:WindowChrome.WindowChrome>
+ <Grid>
+  <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition/></Grid.RowDefinitions>
+  <Border x:Name="AmbientBackdrop" Grid.RowSpan="2" IsHitTestVisible="False">
+   <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="1,1"><GradientStop Color="#20383F" Offset="0"/><GradientStop Color="#0C1922" Offset=".45"/><GradientStop Color="#172E34" Offset="1"/></LinearGradientBrush></Border.Background>
+  </Border>
+  <Grid Margin="18,4,10,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+   <Border Background="Transparent" MouseLeftButtonDown="CaptionDrag"><TextBlock Text="VEYLO  /  VOICE STUDIO" Style="{StaticResource Caption}" FontSize="10" VerticalAlignment="Center"/></Border>
+   <StackPanel Grid.Column="1" Orientation="Horizontal">
+    <Button Click="MinimizeClick" Style="{StaticResource WindowButton}" AutomationProperties.Name="{DynamicResource windowMinimize}" ToolTip="{DynamicResource windowMinimize}"><Path Data="M0 4 H10" Stroke="{DynamicResource MutedBrush}" StrokeThickness="1.2" Width="10" Height="10"/></Button>
+    <Button Click="MaximizeClick" Style="{StaticResource WindowButton}" AutomationProperties.Name="{DynamicResource windowMaximize}" ToolTip="{DynamicResource windowMaximize}"><Path Data="M0 0 H9 V9 H0 Z" Stroke="{DynamicResource MutedBrush}" StrokeThickness="1.2" Width="10" Height="10"/></Button>
+    <Button Click="HideClick" Style="{StaticResource WindowButton}" AutomationProperties.Name="{DynamicResource windowHide}" ToolTip="{DynamicResource windowHide}"><Path Data="M0 0 L9 9 M9 0 L0 9" Stroke="{DynamicResource MutedBrush}" StrokeThickness="1.2" Width="10" Height="10"/></Button>
    </StackPanel>
-   <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><Button Content="{DynamicResource driverLink}" Click="DriverClick" Margin="0,0,12,0"/><ComboBox x:Name="LanguageBox" Width="76" SelectionChanged="LanguageChanged" AutomationProperties.Name="{DynamicResource language}"><ComboBoxItem Content="TR"/><ComboBoxItem Content="EN"/></ComboBox></StackPanel>
   </Grid>
-  <ScrollViewer x:Name="MainScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
-   <StackPanel>
-    <TextBlock Text="{DynamicResource title}" FontSize="30" FontWeight="SemiBold" Margin="0,0,0,6"/>
-    <TextBlock Text="{DynamicResource intro}" Style="{StaticResource BodyMuted}" Margin="0,0,0,22"/>
-    <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
-     <StackPanel>
-      <DockPanel Margin="0,0,0,14"><TextBlock Text="{DynamicResource devices}" Style="{StaticResource Caption}"/><Button Content="{DynamicResource refresh}" Click="RefreshClick" DockPanel.Dock="Right" HorizontalAlignment="Right" MinHeight="28" Padding="10,4"/></DockPanel>
-      <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-       <StackPanel><TextBlock Text="{DynamicResource input}" Margin="0,0,0,7"/><ComboBox x:Name="InputBox" SelectionChanged="DeviceChanged" AutomationProperties.Name="{DynamicResource input}"><ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"/></DataTemplate></ComboBox.ItemTemplate></ComboBox></StackPanel>
-       <StackPanel Grid.Column="2"><TextBlock Text="{DynamicResource output}" Margin="0,0,0,7"/><ComboBox x:Name="OutputBox" SelectionChanged="DeviceChanged" AutomationProperties.Name="{DynamicResource output}"><ComboBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}"/></DataTemplate></ComboBox.ItemTemplate></ComboBox></StackPanel>
-      </Grid>
-      <TextBlock x:Name="RouteHint" Style="{StaticResource BodyMuted}" Margin="0,10,0,16"/>
-      <DockPanel LastChildFill="False"><Button x:Name="StartButton" Content="{DynamicResource start}" Style="{StaticResource PrimaryButton}" Click="StartClick" MinWidth="178" Margin="0,0,18,0"/><CheckBox x:Name="MuteBox" Content="{DynamicResource mute}" Checked="SettingsToggled" Unchecked="SettingsToggled" Margin="0,0,18,0"/><CheckBox x:Name="BypassBox" Content="{DynamicResource bypass}" ToolTip="{DynamicResource bypassTip}" Checked="SettingsToggled" Unchecked="SettingsToggled"/></DockPanel>
-     </StackPanel>
+ <Grid Grid.Row="1" Margin="24,12,24,18">
+  <Grid.RowDefinitions>
+   <RowDefinition Height="Auto" />
+   <RowDefinition Height="*" />
+   <RowDefinition Height="Auto" />
+  </Grid.RowDefinitions>
+  <Grid Margin="0,0,0,22">
+   <Grid.ColumnDefinitions>
+    <ColumnDefinition Width="*" />
+    <ColumnDefinition Width="Auto" />
+   </Grid.ColumnDefinitions>
+   <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+    <Border Width="44" Height="44" CornerRadius="14" Background="{StaticResource AccentBrush}" Margin="0,0,12,0">
+     <Viewbox Margin="9">
+      <Path Fill="#1A240D" Data="M 0,12 L 3,12 L 3,25 L 0,25 Z M 5,5 L 8,5 L 8,32 L 5,32 Z M 10,0 L 13,0 L 13,37 L 10,37 Z M 15,8 L 18,8 L 18,29 L 15,29 Z M 20,13 L 23,13 L 23,24 L 20,24 Z" />
+     </Viewbox>
     </Border>
-    <Grid Margin="0,0,0,18"><Grid.ColumnDefinitions><ColumnDefinition x:Name="PresetColumn" Width="230"/><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-     <StackPanel><TextBlock Text="{DynamicResource profiles}" Style="{StaticResource Caption}" Margin="0,2,0,8"/><TextBlock Text="{DynamicResource profileHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14"/>
-      <ListBox x:Name="PresetList" SelectionChanged="PresetChanged" AutomationProperties.Name="{DynamicResource profiles}"><ListBox.ItemTemplate><DataTemplate><StackPanel><TextBlock Text="{Binding Name}" FontWeight="SemiBold" Margin="0,0,0,4"/><TextBlock Text="{Binding Description}" Style="{StaticResource BodyMuted}" FontSize="12"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
-      <TextBox x:Name="ProfileNameBox" MaxLength="64" Margin="0,4,0,8" AutomationProperties.Name="{DynamicResource profileName}"/>
-      <Button Content="{DynamicResource save}" Click="SaveProfileClick" Margin="0,0,0,8"/><Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="8"/><ColumnDefinition/></Grid.ColumnDefinitions><Button Content="{DynamicResource import}" Click="ImportClick" Padding="6,8"/><Button Grid.Column="2" Content="{DynamicResource export}" Click="ExportClick" Padding="6,8"/></Grid>
-     </StackPanel>
-     <StackPanel Grid.Column="2">
-      <Border Style="{StaticResource Panel}" Margin="0,0,0,14"><StackPanel><TextBlock Text="{DynamicResource levels}" Style="{StaticResource Caption}" Margin="0,0,0,14"/>
-       <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="115"/><ColumnDefinition/><ColumnDefinition Width="85"/></Grid.ColumnDefinitions><TextBlock Text="{DynamicResource raw}" FontSize="12"/><ProgressBar x:Name="InputMeter" Grid.Column="1" Minimum="-60" Maximum="0" Value="-60" VerticalAlignment="Center"/><TextBlock x:Name="InputLevel" Grid.Column="2" Text="— dBFS" HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"/></Grid>
-       <Grid Margin="0,0,0,14"><Grid.ColumnDefinitions><ColumnDefinition Width="115"/><ColumnDefinition/><ColumnDefinition Width="85"/></Grid.ColumnDefinitions><TextBlock Text="{DynamicResource processed}" FontSize="12"/><ProgressBar x:Name="OutputMeter" Grid.Column="1" Minimum="-60" Maximum="0" Value="-60" VerticalAlignment="Center"/><TextBlock x:Name="OutputLevel" Grid.Column="2" Text="— dBFS" HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12"/></Grid>
-       <WrapPanel><TextBlock Text="{DynamicResource gain}" Style="{StaticResource Caption}" Margin="0,0,8,0"/><TextBlock x:Name="GainLevel" Text="0.0 dB" FontSize="12" Margin="0,0,18,0"/><TextBlock Text="{DynamicResource compression}" Style="{StaticResource Caption}" Margin="0,0,8,0"/><TextBlock x:Name="CompressionLevel" Text="0.0 dB" FontSize="12"/></WrapPanel>
-      </StackPanel></Border>
-      <Border Style="{StaticResource Panel}"><StackPanel>
-       <DockPanel Margin="0,0,0,12"><TextBlock Text="{DynamicResource controls}" Style="{StaticResource Caption}"/><TextBlock x:Name="ModifiedLabel" Text="" Foreground="{StaticResource AccentBrush}" FontSize="11" DockPanel.Dock="Right" HorizontalAlignment="Right"/></DockPanel>
-       <CheckBox x:Name="NoiseBox" Content="{DynamicResource noise}" Checked="SettingsToggled" Unchecked="SettingsToggled"/>
-       <DockPanel Margin="0,4,0,0"><TextBlock Text="{DynamicResource strength}" Style="{StaticResource BodyMuted}"/><TextBlock x:Name="NoiseValue" DockPanel.Dock="Right" HorizontalAlignment="Right"/></DockPanel>
-       <Slider x:Name="NoiseSlider" Minimum="0" Maximum="1" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource strength}"/>
-       <CheckBox x:Name="BalanceBox" Content="{DynamicResource balance}" Checked="SettingsToggled" Unchecked="SettingsToggled" Margin="0,0,0,12"/>
-       <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="18"/><ColumnDefinition/></Grid.ColumnDefinitions>
-        <StackPanel><DockPanel><TextBlock Text="{DynamicResource warmth}"/><TextBlock x:Name="WarmthValue" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}"/></DockPanel><Slider x:Name="WarmthSlider" Minimum="-12" Maximum="12" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource warmth}"/></StackPanel>
-        <StackPanel Grid.Column="2"><DockPanel><TextBlock Text="{DynamicResource clarity}"/><TextBlock x:Name="ClarityValue" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}"/></DockPanel><Slider x:Name="ClaritySlider" Minimum="-12" Maximum="12" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource clarity}"/></StackPanel>
-       </Grid>
-       <TextBlock Text="{DynamicResource naturalHint}" Style="{StaticResource BodyMuted}" FontSize="11"/>
-      </StackPanel></Border>
-     </StackPanel>
-    </Grid>
-    <Border Style="{StaticResource Panel}" Margin="0,0,0,18"><Expander x:Name="AdvancedExpander" Header="{DynamicResource advanced}"><StackPanel Margin="0,14,0,0">
-     <TextBlock Text="{DynamicResource eq}" FontWeight="SemiBold" Margin="0,0,0,12"/>
-     <ItemsControl x:Name="BandsControl"><ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,0,0,12"><Grid.ColumnDefinitions><ColumnDefinition Width="118"/><ColumnDefinition Width="86"/><ColumnDefinition Width="26"/><ColumnDefinition Width="*"/><ColumnDefinition Width="68"/></Grid.ColumnDefinitions>
-      <ComboBox SelectedIndex="{Binding Type,Mode=TwoWay}" ItemsSource="{Binding ElementName=Root,Path=EqTypes}" SelectionChanged="BandTypeChanged" AutomationProperties.Name="EQ type" MinHeight="32"/>
-      <TextBox Grid.Column="1" Margin="8,0,0,0" Text="{Binding Frequency,Mode=TwoWay,UpdateSourceTrigger=LostFocus,ValidatesOnExceptions=True}" LostFocus="BandFrequencyChanged" ToolTip="20–20000 Hz" AutomationProperties.Name="EQ frequency Hz"/>
-      <TextBlock Grid.Column="2" Text="Hz" VerticalAlignment="Center" FontSize="11" Margin="4,0,0,0"/>
-      <Grid Grid.Column="3"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="56"/></Grid.ColumnDefinitions><Slider Minimum="-12" Maximum="12" Value="{Binding GainDb,Mode=TwoWay,UpdateSourceTrigger=PropertyChanged}" ValueChanged="BandGainChanged" Margin="12,2" AutomationProperties.Name="EQ gain dB"/><TextBlock Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" FontSize="11" Text="{Binding GainDb,StringFormat={}{0:+0.0;-0.0;0.0} dB}"/></Grid>
-      <TextBox Grid.Column="4" Margin="8,0,0,0" Text="{Binding Q,Mode=TwoWay,UpdateSourceTrigger=LostFocus,ValidatesOnExceptions=True}" LostFocus="BandFrequencyChanged" ToolTip="Q · 0.2–10" AutomationProperties.Name="EQ Q"/>
-     </Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
-     <CheckBox x:Name="DeesserBox" Content="{DynamicResource deesser}" Checked="SettingsToggled" Unchecked="SettingsToggled" Margin="0,4,0,12"/>
-     <WrapPanel><StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource highpass}" FontSize="12"/><TextBlock x:Name="HighpassValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="HighpassSlider" Minimum="20" Maximum="300" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource highpass}" ToolTip="Hz"/></StackPanel>
-<StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource target}" FontSize="12"/><TextBlock x:Name="TargetValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="TargetSlider" Minimum="-36" Maximum="-10" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource target}" ToolTip="dBFS"/></StackPanel>
-<StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource minGain}" FontSize="12"/><TextBlock x:Name="MinGainValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="MinGainSlider" Minimum="-12" Maximum="0" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource minGain}" ToolTip="dB"/></StackPanel>
-<StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource maxGain}" FontSize="12"/><TextBlock x:Name="MaxGainValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="MaxGainSlider" Minimum="0" Maximum="12" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource maxGain}" ToolTip="dB"/></StackPanel>
-<StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource threshold}" FontSize="12"/><TextBlock x:Name="ThresholdValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="ThresholdSlider" Minimum="-48" Maximum="-3" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource threshold}" ToolTip="dBFS"/></StackPanel>
-<StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource ratio}" FontSize="12"/><TextBlock x:Name="RatioValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="RatioSlider" Minimum="1" Maximum="8" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource ratio}" ToolTip=":1"/></StackPanel>
-<StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource attack}" FontSize="12"/><TextBlock x:Name="AttackValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="AttackSlider" Minimum="1" Maximum="100" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource attack}" ToolTip="ms"/></StackPanel>
-<StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource release}" FontSize="12"/><TextBlock x:Name="ReleaseValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="ReleaseSlider" Minimum="20" Maximum="1000" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource release}" ToolTip="ms"/></StackPanel>
-<StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource knee}" FontSize="12"/><TextBlock x:Name="KneeValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="KneeSlider" Minimum="0" Maximum="12" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource knee}" ToolTip="dB"/></StackPanel>
-<StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource deessMax}" FontSize="12"/><TextBlock x:Name="DeessMaxValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="DeessMaxSlider" Minimum="0" Maximum="3" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource deessMax}" ToolTip="dB"/></StackPanel>
-<StackPanel Margin="0,0,18,4" Width="255"><DockPanel><TextBlock Text="{DynamicResource outputGain}" FontSize="12"/><TextBlock x:Name="OutputGainValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/></DockPanel><Slider x:Name="OutputGainSlider" Minimum="-24" Maximum="12" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource outputGain}" ToolTip="dB"/></StackPanel></WrapPanel>
-    </StackPanel></Expander></Border>
-    <Border Style="{StaticResource Panel}" Margin="0,0,0,18"><StackPanel>
-     <TextBlock Text="{DynamicResource test}" Style="{StaticResource Caption}" Margin="0,0,0,8"/>
-     <TextBlock Text="{DynamicResource testHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14"/>
-     <WrapPanel><Button x:Name="RecordButton" Content="{DynamicResource record}" Click="RecordClick" Margin="0,0,8,8"/><Button x:Name="ListenRawButton" Content="{DynamicResource listenRaw}" Click="ListenRawClick" IsEnabled="False" Margin="0,0,8,8"/><Button x:Name="ListenProcessedButton" Content="{DynamicResource listenProcessed}" Click="ListenProcessedClick" IsEnabled="False" Margin="0,0,8,8"/><Button x:Name="ExportWaveButton" Content="{DynamicResource exportWave}" Click="ExportWaveClick" IsEnabled="False" Margin="0,0,0,8"/></WrapPanel>
-     <ProgressBar x:Name="SampleProgress" Minimum="0" Maximum="20" Value="0" Margin="0,6,0,10"/>
-     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions><Button x:Name="CalibrateButton" Content="{DynamicResource calibrate}" Click="CalibrateClick" Margin="0,0,14,0"/><StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock x:Name="CalibrationMessage" Text="{DynamicResource ambientPrompt}" Style="{StaticResource BodyMuted}"/><TextBlock Text="{DynamicResource headphones}" Style="{StaticResource Caption}" Margin="0,5,0,0"/></StackPanel></Grid>
-    </StackPanel></Border>
-    <Expander Header="{DynamicResource preferences}" Margin="0,0,0,12"><StackPanel Margin="0,12,0,0">
-     <CheckBox x:Name="StartupBox" Content="{DynamicResource startup}" Checked="StartupChanged" Unchecked="StartupChanged"/>
-     <WrapPanel Margin="0,10,0,0"><TextBlock Text="{DynamicResource muteKey}" VerticalAlignment="Center"/><ComboBox x:Name="MuteKeyBox" Width="65" Margin="6,0,16,0" AutomationProperties.Name="{DynamicResource muteKey}"/><TextBlock Text="{DynamicResource bypassKey}" VerticalAlignment="Center"/><ComboBox x:Name="BypassKeyBox" Width="65" Margin="6,0,16,0" AutomationProperties.Name="{DynamicResource bypassKey}"/><Button Content="{DynamicResource applyKeys}" Click="ApplyKeysClick"/></WrapPanel>
-    </StackPanel></Expander>
-    <TextBlock x:Name="DiagnosticsText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,0,0,8"/>
+    <StackPanel>
+     <TextBlock Text="Veylo" FontSize="24" FontWeight="SemiBold" />
+     <TextBlock Text="{DynamicResource tagline}" Style="{StaticResource Caption}" />
+    </StackPanel>
    </StackPanel>
-  </ScrollViewer>
-  <Border Grid.Row="2" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,0" Margin="0,12,0,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock x:Name="StatusText" Text="{DynamicResource ready}" TextWrapping="Wrap" FontSize="12" AutomationProperties.LiveSetting="Polite"/><TextBlock Grid.Column="1" Text="{DynamicResource privacy}" Style="{StaticResource Caption}" Margin="16,0,0,0"/></Grid></Border>
+   <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+    <Button x:Name="GameBadge" Click="GameBadgeClick" Margin="0,0,8,0" Padding="12,8" ToolTip="{DynamicResource gameBadgeHint}" AutomationProperties.Name="{DynamicResource gameMode}"><StackPanel Orientation="Horizontal"><Path Data="M5 4 H15 Q18 4 19 9 L20 15 Q20 18 17 17 L14 14 H6 L3 17 Q0 18 0 15 L1 9 Q2 4 5 4 M4 8 V12 M2 10 H6 M14 9 H15 M17 11 H18" Width="18" Height="16" Stretch="Uniform" Stroke="{DynamicResource AccentBrush}" StrokeThickness="1.5"/><TextBlock x:Name="GameBadgeText" Text="{DynamicResource gameArmed}" Margin="8,0,0,0" FontSize="12" VerticalAlignment="Center"/></StackPanel></Button>
+    <Button Content="{DynamicResource driverLink}" Click="DriverClick" Margin="0,0,8,0" Padding="12,8"/>
+    <ComboBox x:Name="LanguageBox" Width="76" SelectionChanged="LanguageChanged" AutomationProperties.Name="{DynamicResource language}">
+     <ComboBoxItem Content="TR" />
+     <ComboBoxItem Content="EN" />
+    </ComboBox>
+   </StackPanel>
+  </Grid>
+  <Grid Grid.Row="1">
+   <Grid.ColumnDefinitions>
+    <ColumnDefinition x:Name="NavigationColumn" Width="190" />
+    <ColumnDefinition Width="24" />
+    <ColumnDefinition Width="*" />
+   </Grid.ColumnDefinitions>
+   <Border x:Name="NavigationShell" Background="{DynamicResource GlassChromeBrush}" BorderBrush="{StaticResource GlassEdge}" BorderThickness="1" CornerRadius="20" Padding="10,20,10,12">
+    <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+     <TextBlock x:Name="NavCaption" Text="{DynamicResource workspaceNav}" Style="{StaticResource Caption}" Margin="12,0,0,16" />
+     <ListBox x:Name="NavigationList" Grid.Row="1" ScrollViewer.VerticalScrollBarVisibility="Auto" SelectionChanged="NavigationChanged" AutomationProperties.Name="{DynamicResource navigation}" ItemContainerStyle="{StaticResource NavigationItem}">
+      <ListBoxItem ToolTip="{DynamicResource overviewNav}" AutomationProperties.Name="{DynamicResource overviewNav}">
+       <StackPanel Orientation="Horizontal">
+        <Path Data="M3,3 H17 V17 H3 Z M3,8 H17 M8,8 V17" Width="20" Height="20" Stretch="Uniform" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.4" VerticalAlignment="Center" />
+        <TextBlock x:Name="NavLabel0" Text="{DynamicResource overviewNav}" Margin="12,0,0,0" VerticalAlignment="Center" />
+       </StackPanel>
+      </ListBoxItem>
+      <ListBoxItem ToolTip="{DynamicResource noiseNav}" AutomationProperties.Name="{DynamicResource noiseNav}">
+       <StackPanel Orientation="Horizontal">
+        <Path Data="M2,10 H5 L8,3 L11,17 L14,7 L17,10 H20" Width="20" Height="20" Stretch="Uniform" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.4" VerticalAlignment="Center" />
+        <TextBlock x:Name="NavLabel1" Text="{DynamicResource noiseNav}" Margin="12,0,0,0" VerticalAlignment="Center" />
+       </StackPanel>
+      </ListBoxItem>
+      <ListBoxItem ToolTip="{DynamicResource balanceNav}" AutomationProperties.Name="{DynamicResource balanceNav}">
+       <StackPanel Orientation="Horizontal">
+        <Path Data="M3,5 H17 M3,10 H17 M3,15 H17 M7,3 V7 M13,8 V12 M9,13 V17" Width="20" Height="20" Stretch="Uniform" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.4" VerticalAlignment="Center" />
+        <TextBlock x:Name="NavLabel2" Text="{DynamicResource balanceNav}" Margin="12,0,0,0" VerticalAlignment="Center" />
+       </StackPanel>
+      </ListBoxItem>
+      <ListBoxItem ToolTip="{DynamicResource qualityNav}" AutomationProperties.Name="{DynamicResource qualityNav}">
+       <StackPanel Orientation="Horizontal">
+        <Path Data="M3,4 H17 M3,10 H17 M3,16 H17 M6,2 V6 M13,8 V12 M9,14 V18" Width="20" Height="20" Stretch="Uniform" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.4" VerticalAlignment="Center" />
+        <TextBlock x:Name="NavLabel3" Text="{DynamicResource qualityNav}" Margin="12,0,0,0" VerticalAlignment="Center" />
+       </StackPanel>
+      </ListBoxItem>
+      <ListBoxItem ToolTip="{DynamicResource profilesNav}" AutomationProperties.Name="{DynamicResource profilesNav}">
+       <StackPanel Orientation="Horizontal">
+        <Path Data="M4,2 H14 L18,6 V18 H4 Z M14,2 V6 H18 M7,10 H15 M7,14 H13" Width="20" Height="20" Stretch="Uniform" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.4" VerticalAlignment="Center" />
+        <TextBlock x:Name="NavLabel4" Text="{DynamicResource profilesNav}" Margin="12,0,0,0" VerticalAlignment="Center" />
+       </StackPanel>
+      </ListBoxItem>
+      <ListBoxItem ToolTip="{DynamicResource testNav}" AutomationProperties.Name="{DynamicResource testNav}">
+       <StackPanel Orientation="Horizontal">
+        <Path Data="M4,3 L18,10 L4,17 Z" Width="20" Height="20" Stretch="Uniform" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.4" VerticalAlignment="Center" />
+        <TextBlock x:Name="NavLabel5" Text="{DynamicResource testNav}" Margin="12,0,0,0" VerticalAlignment="Center" />
+       </StackPanel>
+      </ListBoxItem>
+      <ListBoxItem ToolTip="{DynamicResource preferencesNav}" AutomationProperties.Name="{DynamicResource preferencesNav}">
+       <StackPanel Orientation="Horizontal">
+        <Path Data="M10,3 V17 M3,10 H17 M5,5 L15,15 M5,15 L15,5" Width="20" Height="20" Stretch="Uniform" Stroke="{StaticResource MutedBrush}" StrokeThickness="1.4" VerticalAlignment="Center" />
+        <TextBlock x:Name="NavLabel6" Text="{DynamicResource preferencesNav}" Margin="12,0,0,0" VerticalAlignment="Center" />
+       </StackPanel>
+      </ListBoxItem>
+     </ListBox>
+    </Grid>
+   </Border>
+   <ScrollViewer x:Name="MainScroll" Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,6,0">
+    <StackPanel>
+     <TextBlock x:Name="PageTitle" FontSize="32" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,6" />
+     <WrapPanel Margin="0,0,0,10"><TextBlock x:Name="ActiveProfileText" Foreground="{StaticResource AccentBrush}" FontSize="11"/><TextBlock x:Name="ModifiedLabel" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="10,0,0,0"/></WrapPanel>
+     <TextBlock x:Name="PageDescription" Style="{StaticResource BodyMuted}" Margin="0,0,0,24" />
+     <Grid x:Name="OverviewPage" Visibility="Collapsed"><Grid x:Name="OverviewGrid">
+      <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition x:Name="OverviewGap" Width="18"/><ColumnDefinition x:Name="OverviewRight"/></Grid.ColumnDefinitions>
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <Border x:Name="VoiceHeroPanel" Grid.Row="0" Grid.Column="0" Style="{StaticResource Panel}" Margin="0,0,0,16">
+       <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <WrapPanel><TextBlock Text="{DynamicResource voiceStudio}" Style="{StaticResource Caption}"/><TextBlock x:Name="ScopeStatus" Text="{DynamicResource scopeWaiting}" Margin="12,0,0,0" FontSize="11" Foreground="{DynamicResource AccentBrush}"/></WrapPanel>
+        <ui:VoiceScope x:Name="Scope" Grid.Row="1" Height="55" Margin="0,12,0,10" AutomationProperties.Name="{DynamicResource scopeAccessible}"/>
+        <Grid Grid.Row="2"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="{DynamicResource voiceHeroHint}" Style="{StaticResource BodyMuted}" FontSize="12"/><Button Grid.Column="1" Content="{DynamicResource tuneVoice}" Click="TuneVoiceClick" Padding="12,8" Margin="12,0,0,0"/></Grid>
+       </Grid>
+      </Border>
+      <Border x:Name="LevelPanel" Grid.Row="0" Grid.Column="2" Style="{StaticResource Panel}" Margin="0,0,0,14">
+       <StackPanel>
+        <TextBlock Text="{DynamicResource levels}" Style="{StaticResource Caption}" Margin="0,0,0,14" />
+        <Grid Margin="0,0,0,10">
+         <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="72" />
+          <ColumnDefinition />
+          <ColumnDefinition Width="76" />
+         </Grid.ColumnDefinitions>
+         <TextBlock Text="{DynamicResource raw}" FontSize="12" />
+         <ProgressBar x:Name="InputMeter" Grid.Column="1" Minimum="-60" Maximum="0" Value="-60" VerticalAlignment="Center" AutomationProperties.Name="{DynamicResource inputMeterName}" />
+         <TextBlock x:Name="InputLevel" Grid.Column="2" Text="— dBFS" HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" />
+        </Grid>
+        <Grid Margin="0,0,0,14">
+         <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="72" />
+          <ColumnDefinition />
+          <ColumnDefinition Width="76" />
+         </Grid.ColumnDefinitions>
+         <TextBlock Text="{DynamicResource processed}" FontSize="12" />
+         <ProgressBar x:Name="OutputMeter" Grid.Column="1" Minimum="-60" Maximum="0" Value="-60" VerticalAlignment="Center" AutomationProperties.Name="{DynamicResource outputMeterName}" />
+         <TextBlock x:Name="OutputLevel" Grid.Column="2" Text="— dBFS" HorizontalAlignment="Right" FontFamily="Consolas" FontSize="12" />
+        </Grid>
+        <WrapPanel>
+         <TextBlock Text="{DynamicResource gain}" Style="{StaticResource Caption}" Margin="0,0,8,0" />
+         <TextBlock x:Name="GainLevel" Text="0.0 dB" FontSize="12" Margin="0,0,18,0" />
+         <TextBlock Text="{DynamicResource compression}" Style="{StaticResource Caption}" Margin="0,0,8,0" />
+         <TextBlock x:Name="CompressionLevel" Text="0.0 dB" FontSize="12" />
+        </WrapPanel>
+       </StackPanel>
+      </Border>
+      <Border Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource Panel}" Margin="0,0,0,18">
+       <StackPanel>
+        <DockPanel Margin="0,0,0,14">
+         <TextBlock Text="{DynamicResource devices}" Style="{StaticResource Caption}" />
+         <Button Content="{DynamicResource refresh}" Click="RefreshClick" DockPanel.Dock="Right" HorizontalAlignment="Right" MinHeight="28" Padding="10,4" />
+        </DockPanel>
+        <Grid>
+         <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="18" />
+          <ColumnDefinition Width="*" />
+         </Grid.ColumnDefinitions>
+         <StackPanel>
+          <TextBlock Text="{DynamicResource input}" Margin="0,0,0,7" />
+          <ComboBox x:Name="InputBox" SelectionChanged="DeviceChanged" AutomationProperties.Name="{DynamicResource input}">
+           <ComboBox.ItemTemplate>
+            <DataTemplate>
+             <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+            </DataTemplate>
+           </ComboBox.ItemTemplate>
+          </ComboBox>
+         </StackPanel>
+         <StackPanel Grid.Column="2">
+          <TextBlock Text="{DynamicResource output}" Margin="0,0,0,7" />
+          <ComboBox x:Name="OutputBox" SelectionChanged="OutputChanged" AutomationProperties.Name="{DynamicResource output}">
+           <ComboBox.ItemTemplate>
+            <DataTemplate>
+             <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Name}" />
+            </DataTemplate>
+           </ComboBox.ItemTemplate>
+          </ComboBox>
+         </StackPanel>
+        </Grid>
+        <TextBlock x:Name="RouteHint" Style="{StaticResource BodyMuted}" Margin="0,10,0,16" />
+       </StackPanel>
+      </Border>
+      <TextBlock Grid.Row="3" Grid.ColumnSpan="3" Text="{DynamicResource overviewHint}" Style="{StaticResource BodyMuted}" Margin="0,12,0,0" />
+
+     </Grid></Grid>
+     <StackPanel x:Name="NoisePage" Visibility="Collapsed">
+      <TextBlock Text="{DynamicResource noiseIntro}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+      <Button x:Name="StrongNoiseButton" Content="{DynamicResource strongNoise}" Click="StrongNoiseClick" HorizontalAlignment="Left" Margin="0,0,0,8" AutomationProperties.Name="{DynamicResource strongNoise}"/>
+      <TextBlock Text="{DynamicResource strongNoiseHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18"/>
+      <CheckBox x:Name="NoiseBox" Content="{DynamicResource noise}" Checked="SettingsToggled" Unchecked="SettingsToggled" />
+      <CheckBox x:Name="AutoNoiseBox" Content="{DynamicResource autoNoise}" Checked="SettingsToggled" Unchecked="SettingsToggled" Margin="0,8,0,4" />
+      <TextBlock Text="{DynamicResource autoNoiseHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+      <DockPanel Margin="0,4,0,0">
+       <TextBlock x:Name="NoiseStrengthLabel" Text="{DynamicResource strength}" Style="{StaticResource BodyMuted}" />
+       <TextBlock x:Name="NoiseValue" DockPanel.Dock="Right" HorizontalAlignment="Right" />
+      </DockPanel>
+      <Slider x:Name="NoiseSlider" Minimum="0" Maximum="1" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource strength}" />
+      <TextBlock Text="{DynamicResource noiseMixHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+      <Border Style="{StaticResource Panel}">
+       <StackPanel>
+        <TextBlock Text="{DynamicResource noiseLive}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+        <TextBlock x:Name="AutoNoiseReadout" FontSize="20" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap" />
+        <TextBlock Text="{DynamicResource noiseLiveHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+       </StackPanel>
+      </Border>
+      <Border x:Name="SensitivityPanel" Style="{StaticResource Panel}" Margin="0,18,0,0">
+       <StackPanel>
+        <TextBlock Text="{DynamicResource sensitivityTitle}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,0,0,8"/>
+        <TextBlock Text="{DynamicResource sensitivityIntro}" Style="{StaticResource BodyMuted}" Margin="0,0,0,12"/>
+        <CheckBox x:Name="SensitivityBox" Content="{DynamicResource sensitivityEnable}" Checked="SettingsToggled" Unchecked="SettingsToggled" Margin="0,0,0,12"/>
+        <CheckBox x:Name="SensitivityAutoBox" Content="{DynamicResource sensitivityAuto}" Checked="SettingsToggled" Unchecked="SettingsToggled" Margin="0,0,0,12"/>
+        <DockPanel><TextBlock Text="{DynamicResource sensitivityManual}" Style="{StaticResource BodyMuted}"/><TextBlock x:Name="SensitivityValue" DockPanel.Dock="Right" HorizontalAlignment="Right"/></DockPanel>
+        <Slider x:Name="SensitivitySlider" Minimum="-90" Maximum="-10" TickFrequency="1" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource sensitivityManual}" ToolTip="dBFS"/>
+        <TextBlock Text="{DynamicResource sensitivityHint}" Style="{StaticResource BodyMuted}" Margin="0,4,0,12"/>
+        <ProgressBar x:Name="SensitivityMeter" Minimum="-90" Maximum="-10" Value="-90" Height="8" AutomationProperties.Name="{DynamicResource sensitivityInput}" Margin="0,0,0,8"/>
+        <TextBlock x:Name="SensitivityReadout" Text="{DynamicResource sensitivityWaiting}" TextWrapping="Wrap" Foreground="{StaticResource AccentBrush}" AutomationProperties.LiveSetting="Polite"/>
+        <TextBlock Text="{DynamicResource sensitivityMode}" Style="{StaticResource BodyMuted}" Margin="0,12,0,4"/>
+        <ComboBox x:Name="SensitivityModeBox" SelectionChanged="SensitivityModeChanged" AutomationProperties.Name="{DynamicResource sensitivityMode}"><ComboBoxItem Content="{DynamicResource sensitivityGate}"/><ComboBoxItem Content="{DynamicResource sensitivityExpander}"/></ComboBox>
+        <TextBlock Text="{DynamicResource expanderHint}" Style="{StaticResource BodyMuted}" Margin="0,6,0,10"/>
+        <Expander x:Name="SensitivityAdvanced" Header="{DynamicResource sensitivityAdvanced}"><StackPanel Margin="0,8,0,0">
+        <TextBlock x:Name="SensitivityTimingValue" TextWrapping="Wrap" Foreground="{StaticResource AccentBrush}"/>
+<TextBlock Text="{DynamicResource sensitivityAttack}" Style="{StaticResource BodyMuted}" Margin="0,8,0,0"/><Slider x:Name="SensitivityAttackSlider" Minimum="0.1" Maximum="100" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource sensitivityAttack}"/>
+<TextBlock Text="{DynamicResource sensitivityHold}" Style="{StaticResource BodyMuted}" Margin="0,8,0,0"/><Slider x:Name="SensitivityHoldSlider" Minimum="0" Maximum="2000" TickFrequency="10" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource sensitivityHold}"/>
+<TextBlock Text="{DynamicResource sensitivityRelease}" Style="{StaticResource BodyMuted}" Margin="0,8,0,0"/><Slider x:Name="SensitivityReleaseSlider" Minimum="5" Maximum="2000" TickFrequency="5" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource sensitivityRelease}"/>
+<TextBlock Text="{DynamicResource sensitivityHysteresis}" Style="{StaticResource BodyMuted}" Margin="0,8,0,0"/><Slider x:Name="SensitivityHysteresisSlider" Minimum="0" Maximum="24" TickFrequency="0.5" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource sensitivityHysteresis}"/>
+<TextBlock x:Name="SensitivityExpansionValue" TextWrapping="Wrap" Foreground="{StaticResource AccentBrush}" Margin="0,12,0,0"/><TextBlock Text="{DynamicResource sensitivityRatio}" Style="{StaticResource BodyMuted}" Margin="0,8,0,0"/><Slider x:Name="SensitivityRatioSlider" Minimum="1" Maximum="8" TickFrequency="0.1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource sensitivityRatio}"/>
+<TextBlock Text="{DynamicResource sensitivityReduction}" Style="{StaticResource BodyMuted}" Margin="0,8,0,0"/><Slider x:Name="SensitivityReductionSlider" Minimum="0" Maximum="60" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource sensitivityReduction}"/>
+</StackPanel></Expander>
+
+       </StackPanel>
+      </Border>
+     </StackPanel>
+     <StackPanel x:Name="BalancePage" Visibility="Collapsed">
+      <TextBlock Text="{DynamicResource balanceIntro}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+      <CheckBox x:Name="BalanceBox" Content="{DynamicResource balance}" Checked="SettingsToggled" Unchecked="SettingsToggled" Margin="0,0,0,12" />
+      <WrapPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource target}" FontSize="12" />
+         <TextBlock x:Name="TargetValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="TargetSlider" Minimum="-36" Maximum="-10" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource target}" ToolTip="dBFS" />
+       </StackPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource minGain}" FontSize="12" />
+         <TextBlock x:Name="MinGainValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="MinGainSlider" Minimum="-12" Maximum="0" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource minGain}" ToolTip="dB" />
+       </StackPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource maxGain}" FontSize="12" />
+         <TextBlock x:Name="MaxGainValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="MaxGainSlider" Minimum="0" Maximum="12" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource maxGain}" ToolTip="dB" />
+       </StackPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource threshold}" FontSize="12" />
+         <TextBlock x:Name="ThresholdValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="ThresholdSlider" Minimum="-48" Maximum="-3" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource threshold}" ToolTip="dBFS" />
+       </StackPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource ratio}" FontSize="12" />
+         <TextBlock x:Name="RatioValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="RatioSlider" Minimum="1" Maximum="8" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource ratio}" ToolTip=":1" />
+       </StackPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource attack}" FontSize="12" />
+         <TextBlock x:Name="AttackValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="AttackSlider" Minimum="1" Maximum="100" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource attack}" ToolTip="ms" />
+       </StackPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource release}" FontSize="12" />
+         <TextBlock x:Name="ReleaseValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="ReleaseSlider" Minimum="20" Maximum="1000" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource release}" ToolTip="ms" />
+       </StackPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource knee}" FontSize="12" />
+         <TextBlock x:Name="KneeValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="KneeSlider" Minimum="0" Maximum="12" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource knee}" ToolTip="dB" />
+       </StackPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource outputGain}" FontSize="12" />
+         <TextBlock x:Name="OutputGainValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="OutputGainSlider" Minimum="-24" Maximum="12" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource outputGain}" ToolTip="dB" />
+       </StackPanel>
+      </WrapPanel>
+      <TextBlock Text="{DynamicResource limiterHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+     </StackPanel>
+     <StackPanel x:Name="QualityPage" Visibility="Collapsed">
+      <Button Content="{DynamicResource personalTitle}" Click="OpenPersonalCalibrationClick" HorizontalAlignment="Left" Margin="0,0,0,16"/>
+      <TextBlock Text="{DynamicResource qualityIntro}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+      <TextBlock Text="{DynamicResource qualityQuick}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+      <WrapPanel Margin="0,0,0,18">
+       <Button Content="{DynamicResource preset_natural}" Tag="0" Click="QuickPresetClick" Margin="0,0,8,8" />
+       <Button Content="{DynamicResource preset_clear}" Tag="1" Click="QuickPresetClick" Margin="0,0,8,8" />
+       <Button Content="{DynamicResource preset_warm}" Tag="2" Click="QuickPresetClick" Margin="0,0,8,8" />
+       <Button Content="{DynamicResource preset_broadcast}" Tag="3" Click="QuickPresetClick" Margin="0,0,8,8" />
+       <Button Content="{DynamicResource preset_podcast}" Tag="4" Click="QuickPresetClick" Margin="0,0,8,8" />
+      </WrapPanel>
+      <TextBlock Text="{DynamicResource qualityPresetHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+      <TextBlock Text="{DynamicResource toneTitle}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8" />
+      <TextBlock Text="{DynamicResource toneHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+      <Grid>
+       <Grid.ColumnDefinitions>
+        <ColumnDefinition />
+        <ColumnDefinition Width="18" />
+        <ColumnDefinition />
+       </Grid.ColumnDefinitions>
+       <StackPanel>
+        <DockPanel>
+         <TextBlock Text="{DynamicResource warmth}" />
+         <TextBlock x:Name="WarmthValue" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" />
+        </DockPanel>
+        <Slider x:Name="WarmthSlider" Minimum="-12" Maximum="12" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource warmth}" />
+       </StackPanel>
+       <StackPanel Grid.Column="2">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource clarity}" />
+         <TextBlock x:Name="ClarityValue" DockPanel.Dock="Right" HorizontalAlignment="Right" Foreground="{StaticResource MutedBrush}" />
+        </DockPanel>
+        <Slider x:Name="ClaritySlider" Minimum="-12" Maximum="12" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource clarity}" />
+       </StackPanel>
+      </Grid>
+      <TextBlock Text="{DynamicResource clarityHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+      <CheckBox x:Name="DeesserBox" Content="{DynamicResource deesser}" Checked="SettingsToggled" Unchecked="SettingsToggled" Margin="0,4,0,12" />
+      <TextBlock Text="{DynamicResource deesserHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,18" />
+      <WrapPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource highpass}" FontSize="12" />
+         <TextBlock x:Name="HighpassValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="HighpassSlider" Minimum="20" Maximum="300" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource highpass}" ToolTip="Hz" />
+       </StackPanel>
+       <StackPanel Margin="0,0,18,4" Width="255">
+        <DockPanel>
+         <TextBlock Text="{DynamicResource deessMax}" FontSize="12" />
+         <TextBlock x:Name="DeessMaxValue" DockPanel.Dock="Right" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" />
+        </DockPanel>
+        <Slider x:Name="DeessMaxSlider" Minimum="0" Maximum="3" ValueChanged="SettingsChanged" AutomationProperties.Name="{DynamicResource deessMax}" ToolTip="dB" />
+       </StackPanel>
+      </WrapPanel>
+      <Border Style="{StaticResource Panel}" Margin="0,18,0,0">
+       <Expander x:Name="AdvancedExpander" Header="{DynamicResource advanced}">
+        <StackPanel Margin="0,14,0,0">
+         <TextBlock Text="{DynamicResource eq}" FontWeight="SemiBold" Margin="0,0,0,12" />
+         <ItemsControl x:Name="BandsControl">
+          <ItemsControl.ItemTemplate>
+           <DataTemplate>
+            <Grid Margin="0,0,0,12">
+             <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="118" />
+              <ColumnDefinition Width="86" />
+              <ColumnDefinition Width="26" />
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="68" />
+             </Grid.ColumnDefinitions>
+             <ComboBox SelectedIndex="{Binding Type,Mode=TwoWay}" ItemsSource="{Binding ElementName=Root,Path=EqTypes}" SelectionChanged="BandTypeChanged" AutomationProperties.Name="{DynamicResource eqTypeName}" MinHeight="32" />
+             <TextBox Grid.Column="1" Margin="8,0,0,0" Text="{Binding Frequency,Mode=TwoWay,UpdateSourceTrigger=LostFocus,ValidatesOnExceptions=True}" LostFocus="BandFrequencyChanged" ToolTip="20–20000 Hz" AutomationProperties.Name="{DynamicResource eqFrequencyName}" />
+             <TextBlock Grid.Column="2" Text="Hz" VerticalAlignment="Center" FontSize="11" Margin="4,0,0,0" />
+             <Grid Grid.Column="3">
+              <Grid.ColumnDefinitions>
+               <ColumnDefinition />
+               <ColumnDefinition Width="56" />
+              </Grid.ColumnDefinitions>
+              <Slider Minimum="-12" Maximum="12" Value="{Binding GainDb,Mode=TwoWay,UpdateSourceTrigger=PropertyChanged}" ValueChanged="BandGainChanged" Margin="12,2" AutomationProperties.Name="{DynamicResource eqGainName}" />
+              <TextBlock Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Right" FontSize="11" Text="{Binding GainDb,StringFormat={}{0:+0.0;-0.0;0.0} dB}" />
+             </Grid>
+             <TextBox Grid.Column="4" Margin="8,0,0,0" Text="{Binding Q,Mode=TwoWay,UpdateSourceTrigger=LostFocus,ValidatesOnExceptions=True}" LostFocus="BandFrequencyChanged" ToolTip="Q · 0.2–10" AutomationProperties.Name="{DynamicResource eqQName}" />
+            </Grid>
+           </DataTemplate>
+          </ItemsControl.ItemTemplate>
+         </ItemsControl>
+        </StackPanel>
+       </Expander>
+      </Border>
+     </StackPanel>
+     <StackPanel x:Name="ProfilesPage" Visibility="Collapsed">
+      <StackPanel MaxWidth="680">
+       <TextBlock Text="{DynamicResource profiles}" Style="{StaticResource Caption}" Margin="0,2,0,8" />
+       <TextBlock Text="{DynamicResource profileHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14" />
+       <ListBox x:Name="PresetList" SelectionChanged="PresetChanged" AutomationProperties.Name="{DynamicResource profiles}">
+        <ListBox.ItemTemplate>
+         <DataTemplate>
+          <StackPanel>
+           <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Margin="0,0,0,4" />
+           <TextBlock Text="{Binding Description}" Style="{StaticResource BodyMuted}" FontSize="12" />
+          </StackPanel>
+         </DataTemplate>
+        </ListBox.ItemTemplate>
+       </ListBox>
+       <TextBox x:Name="ProfileNameBox" MaxLength="64" Margin="0,4,0,8" AutomationProperties.Name="{DynamicResource profileName}" />
+       <Button Content="{DynamicResource save}" Click="SaveProfileClick" Margin="0,0,0,8" />
+       <Grid>
+        <Grid.ColumnDefinitions>
+         <ColumnDefinition />
+         <ColumnDefinition Width="8" />
+         <ColumnDefinition />
+        </Grid.ColumnDefinitions>
+        <Button Content="{DynamicResource import}" Click="ImportClick" Padding="6,8" />
+        <Button Grid.Column="2" Content="{DynamicResource export}" Click="ExportClick" Padding="6,8" />
+       </Grid>
+      </StackPanel>
+     </StackPanel>
+     <StackPanel x:Name="TestPage" Visibility="Collapsed">
+      <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
+       <StackPanel>
+        <TextBlock Text="{DynamicResource personalTitle}" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,8"/>
+        <TextBlock Text="{DynamicResource personalIntro}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14"/>
+        <TextBlock Text="{DynamicResource personalSteps}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14"/>
+        <WrapPanel>
+         <Button x:Name="PersonalCalibrateButton" Content="{DynamicResource personalStart}" Style="{StaticResource PrimaryButton}" Click="PersonalCalibrateClick" Margin="0,0,8,8"/>
+         <Button x:Name="CancelPersonalButton" Content="{DynamicResource cancel}" Click="CancelPersonalCalibrationClick" IsEnabled="False" Margin="0,0,8,8"/>
+         <Button x:Name="RestoreDeviceButton" Content="{DynamicResource personalRestoreDevice}" Click="RestoreDeviceSettingsClick" IsEnabled="False" Margin="0,0,0,8"/>
+        </WrapPanel>
+        <StackPanel x:Name="PersonalPhasePanel" Visibility="Visible">
+         <TextBlock x:Name="PersonalInstruction" Text="{DynamicResource personalReady}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" Margin="0,12,0,8"/>
+         <TextBlock x:Name="PersonalPhrase" Text="{DynamicResource personalPosition}" Style="{StaticResource BodyMuted}"/>
+         <ProgressBar x:Name="PersonalProgress" Minimum="0" Maximum="20" Value="0" Margin="0,12,0,10" AutomationProperties.Name="{DynamicResource personalProgress}"/>
+        </StackPanel>
+        <StackPanel x:Name="PersonalResultPanel" Visibility="Collapsed" Margin="0,12,0,0">
+         <TextBlock x:Name="PersonalMeasurementText" Style="{StaticResource BodyMuted}" Margin="0,0,0,12"/>
+         <TextBlock x:Name="PersonalWarnings" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+         <Grid Margin="0,4,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions><TextBlock Text="{DynamicResource personalSetting}" Style="{StaticResource Caption}"/><TextBlock Grid.Column="1" Text="{DynamicResource personalBefore}" Style="{StaticResource Caption}"/><TextBlock Grid.Column="2" Text="{DynamicResource personalAfter}" Style="{StaticResource Caption}"/></Grid>
+         <ItemsControl x:Name="PersonalChanges"><ItemsControl.ItemTemplate><DataTemplate>
+          <Grid Margin="0,0,0,10"><Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+           <TextBlock Text="{Binding Name}" TextWrapping="Wrap" Margin="0,0,12,0"/>
+           <TextBlock Grid.Column="1" Text="{Binding Before}" TextWrapping="Wrap" Foreground="{StaticResource MutedBrush}" Margin="0,0,8,0"/>
+           <TextBlock Grid.Column="2" Text="{Binding After}" TextWrapping="Wrap" Foreground="{StaticResource AccentBrush}"/>
+          </Grid>
+         </DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
+         <TextBlock Text="{DynamicResource personalLimit}" Style="{StaticResource BodyMuted}" Margin="0,8,0,14"/>
+         <WrapPanel>
+          <Button x:Name="ListenPersonalRawButton" Content="{DynamicResource listenRaw}" Click="ListenPersonalClick" IsEnabled="False" Margin="0,0,8,8"/>
+          <Button x:Name="ListenPersonalButton" Content="{DynamicResource personalListen}" Click="ListenPersonalClick" IsEnabled="False" Margin="0,0,8,8"/>
+          <Button x:Name="ApplyPersonalButton" Content="{DynamicResource personalApply}" Click="ApplyPersonalClick" Style="{StaticResource PrimaryButton}" IsEnabled="False" Margin="0,0,0,8"/>
+         </WrapPanel>
+        </StackPanel>
+        <Button x:Name="UndoPersonalButton" Content="{DynamicResource personalUndo}" Click="UndoPersonalClick" IsEnabled="False" HorizontalAlignment="Left" Margin="0,10,0,0"/>
+       </StackPanel>
+      </Border>
+      <Border Style="{StaticResource Panel}" Margin="0,0,0,18">
+       <StackPanel>
+        <TextBlock Text="{DynamicResource test}" Style="{StaticResource Caption}" Margin="0,0,0,8" />
+        <TextBlock Text="{DynamicResource testHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,14" />
+        <WrapPanel>
+         <Button x:Name="RecordButton" Content="{DynamicResource record}" Click="RecordClick" Margin="0,0,8,8" />
+         <Button x:Name="ListenRawButton" Content="{DynamicResource listenRaw}" Click="ListenRawClick" IsEnabled="False" Margin="0,0,8,8" />
+         <Button x:Name="ListenProcessedButton" Content="{DynamicResource listenProcessed}" Click="ListenProcessedClick" IsEnabled="False" Margin="0,0,8,8" />
+         <Button x:Name="ExportWaveButton" Content="{DynamicResource exportWave}" Click="ExportWaveClick" IsEnabled="False" Margin="0,0,0,8" />
+        </WrapPanel>
+        <ProgressBar x:Name="SampleProgress" Minimum="0" Maximum="20" Value="0" Margin="0,6,0,10" AutomationProperties.Name="{DynamicResource sampleProgressName}" />
+        <Grid>
+         <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto" />
+          <ColumnDefinition />
+         </Grid.ColumnDefinitions>
+         <Button x:Name="CalibrateButton" Content="{DynamicResource calibrate}" Click="CalibrateClick" Margin="0,0,14,0" />
+         <StackPanel Grid.Column="1" VerticalAlignment="Center">
+          <TextBlock x:Name="CalibrationMessage" Text="{DynamicResource ambientPrompt}" Style="{StaticResource BodyMuted}" />
+          <TextBlock Text="{DynamicResource headphones}" Style="{StaticResource Caption}" Margin="0,5,0,0" />
+         </StackPanel>
+        </Grid>
+       </StackPanel>
+      </Border>
+     </StackPanel>
+     <StackPanel x:Name="PreferencesPage" Visibility="Collapsed">
+      <Border x:Name="GameSettingsPanel" Style="{StaticResource Panel}" Margin="0,0,0,18">
+       <StackPanel>
+        <TextBlock Text="{DynamicResource gameMode}" FontSize="21" FontWeight="SemiBold" Margin="0,0,0,8"/>
+        <TextBlock Text="{DynamicResource gameIntro}" Style="{StaticResource BodyMuted}" Margin="0,0,0,16"/>
+        <CheckBox x:Name="GameModeBox" Content="{DynamicResource gameAuto}" Checked="GameModeChanged" Unchecked="GameModeChanged" Margin="0,0,0,8"/>
+        <CheckBox x:Name="EffectsBox" Content="{DynamicResource effectsEnable}" Checked="GameModeChanged" Unchecked="GameModeChanged" Margin="0,0,0,16"/>
+        <Border Background="#222FAC91" CornerRadius="12" Padding="14"><TextBlock x:Name="GameModeDetail" TextWrapping="Wrap" Foreground="{DynamicResource AccentBrush}" AutomationProperties.LiveSetting="Polite"/></Border>
+        <TextBlock Text="{DynamicResource gameProcesses}" Margin="0,20,0,8"/>
+        <TextBox x:Name="GameProcessesBox" MaxLength="1940" AutomationProperties.Name="{DynamicResource gameProcesses}"/>
+        <TextBlock Text="{DynamicResource gameProcessesHint}" Style="{StaticResource BodyMuted}" Margin="0,8,0,12"/>
+        <Button Content="{DynamicResource gameSaveList}" Click="SaveGameProcesses" HorizontalAlignment="Left"/>
+        <TextBlock Text="{DynamicResource gameDetectionHint}" Style="{StaticResource BodyMuted}" Margin="0,16,0,0"/>
+       </StackPanel>
+      </Border>
+      <Border x:Name="CommunicationPanel" Style="{StaticResource Panel}" Margin="0,0,0,18"><StackPanel>
+       <TextBlock Text="{DynamicResource communicationTitle}" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
+       <TextBlock Text="{DynamicResource communicationHint}" Style="{StaticResource BodyMuted}" Margin="0,0,0,12"/>
+       <TextBlock Text="{DynamicResource talkMode}" Style="{StaticResource BodyMuted}" Margin="0,0,0,4"/>
+       <ComboBox x:Name="TalkModeBox" AutomationProperties.Name="{DynamicResource talkMode}"><ComboBoxItem Content="{DynamicResource talkOpen}"/><ComboBoxItem Content="{DynamicResource talkPush}"/><ComboBoxItem Content="{DynamicResource talkMute}"/></ComboBox>
+       <WrapPanel Margin="0,10,0,0"><TextBlock Text="{DynamicResource holdKey}" VerticalAlignment="Center"/><TextBlock Text="Ctrl+Alt+" VerticalAlignment="Center" Margin="6,0,0,0"/><ComboBox x:Name="HoldKeyBox" Width="65" Margin="6,0,0,0" AutomationProperties.Name="{DynamicResource holdKey}"/></WrapPanel>
+        <WrapPanel Margin="0,10,0,0">
+         <TextBlock Text="{DynamicResource muteKey}" VerticalAlignment="Center" />
+         <ComboBox x:Name="MuteKeyBox" Width="65" Margin="6,0,16,0" AutomationProperties.Name="{DynamicResource muteKey}" />
+         <TextBlock Text="{DynamicResource bypassKey}" VerticalAlignment="Center" />
+         <ComboBox x:Name="BypassKeyBox" Width="65" Margin="6,0,16,0" AutomationProperties.Name="{DynamicResource bypassKey}" />
+
+        </WrapPanel>
+       <CheckBox x:Name="PresetKeysBox" Content="{DynamicResource presetKeys}" Margin="0,14,0,4"/>
+       <TextBlock Text="{DynamicResource presetKeysHint}" Style="{StaticResource BodyMuted}"/>
+       <Button Content="{DynamicResource applyKeys}" Click="ApplyKeysClick" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+       </StackPanel></Border>
+      <Expander Header="{DynamicResource preferences}" Margin="0,0,0,12">
+       <StackPanel Margin="0,12,0,0">
+        <CheckBox x:Name="StartupBox" Content="{DynamicResource startup}" Checked="StartupChanged" Unchecked="StartupChanged" />
+
+       </StackPanel>
+      </Expander>
+      <TextBlock x:Name="DiagnosticsText" Style="{StaticResource Caption}" TextWrapping="Wrap" Margin="0,0,0,8" />
+     </StackPanel>
+    </StackPanel>
+   </ScrollViewer>
+  </Grid>
+  <Border Grid.Row="2" Background="{DynamicResource GlassChromeBrush}" CornerRadius="18" BorderBrush="{StaticResource GlassEdge}" BorderThickness="1" Padding="16,12" Margin="0,16,0,0">
+   <StackPanel>
+    <TextBlock x:Name="TalkStateText" TextWrapping="Wrap" Foreground="{StaticResource AccentBrush}" Margin="0,0,0,8" AutomationProperties.LiveSetting="Polite"/>
+    <WrapPanel>
+     <CheckBox x:Name="MuteBox" Content="{DynamicResource mute}" Checked="SettingsToggled" Unchecked="SettingsToggled" Margin="0,0,12,6" />
+     <CheckBox x:Name="BypassBox" Content="{DynamicResource bypass}" ToolTip="{DynamicResource bypassTip}" Checked="SettingsToggled" Unchecked="SettingsToggled" Margin="0,0,12,6" />
+    </WrapPanel>
+    <Grid>
+     <Grid.ColumnDefinitions>
+      <ColumnDefinition />
+      <ColumnDefinition Width="Auto" />
+     </Grid.ColumnDefinitions>
+     <TextBlock x:Name="StatusText" Text="{DynamicResource ready}" TextWrapping="Wrap" FontSize="12" AutomationProperties.LiveSetting="Polite" />
+     <TextBlock Grid.Column="1" Text="{DynamicResource privacy}" Style="{StaticResource Caption}" Margin="16,0,0,0" />
+    </Grid>
+   </StackPanel>
+  </Border>
+ </Grid>
  </Grid>
 </Window>
-

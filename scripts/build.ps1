@@ -14,5 +14,5 @@ try{
     if($LASTEXITCODE -ne 0){throw 'CMake configuration failed'}
     & $cmake --build $build --parallel ([Math]::Min(8,[Environment]::ProcessorCount))
     if($LASTEXITCODE -ne 0){throw 'Native build failed'}
-    if(!$Sanitize){& '.tools/dotnet/dotnet.exe' build app/Ses.Desktop -c Release;if($LASTEXITCODE -ne 0){throw 'Desktop build failed'}}
+    if(!$Sanitize){& '.tools/dotnet/dotnet.exe' build app/Ses.DriverSetup -c Release;if($LASTEXITCODE -ne 0){throw 'Driver helper build failed'};& '.tools/dotnet/dotnet.exe' build app/Ses.Desktop -c Release;if($LASTEXITCODE -ne 0){throw 'Desktop build failed'}}
 }finally{Pop-Location}

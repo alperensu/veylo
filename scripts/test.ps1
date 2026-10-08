@@ -11,9 +11,15 @@ try{
     $env:DOTNET_CLI_TELEMETRY_OPTOUT='1';$env:DOTNET_GENERATE_ASPNET_CERTIFICATE='false'
     & '.tools/dotnet/dotnet.exe' run --project tests/Ses.Core.Tests -c Release -- (Join-Path $root 'build/bin')
     if($LASTEXITCODE -ne 0){throw 'Managed tests failed'}
-    $app=Join-Path $root 'app/Ses.Desktop/bin/Release/net10.0-windows/SES.exe'
+    & '.tools/dotnet/dotnet.exe' run --project tests/Ses.Desktop.Tests -c Release
+    if($LASTEXITCODE -ne 0){throw 'Desktop persistence tests failed'}
+    & '.tools/dotnet/dotnet.exe' run --project tests/Ses.Desktop.Tests -c Release --no-build -- --verify-quit
+    if($LASTEXITCODE -ne 0){throw 'Desktop shutdown tests failed'}
+    & '.tools/dotnet/dotnet.exe' run --project tests/Ses.DriverSetup.Tests -c Release -- $root
+    if($LASTEXITCODE -ne 0){throw 'Driver catalog rejection tests failed'}
+    $app=Join-Path $root 'app/Ses.Desktop/bin/Release/net10.0-windows/Veylo.exe'
     $output=Join-Path $root 'artifacts/ui'
     $process=Start-Process -FilePath $app -ArgumentList @('--smoke','--out',('"'+$output+'"')) -PassThru -Wait -WindowStyle Hidden
     if($process.ExitCode -ne 0){throw 'UI smoke failed'}
-    if($Live){$process=Start-Process -FilePath $app -ArgumentList @('--validate-live','--out',('"'+$output+'"')) -PassThru -Wait -WindowStyle Hidden;if($process.ExitCode -ne 0){throw 'Live microphone test failed'}}
+    if($Live){$process=Start-Process -FilePath $app -ArgumentList @('--validate-live','--minimized','--out',('"'+$output+'"')) -PassThru -Wait -WindowStyle Hidden;if($process.ExitCode -ne 0){throw 'Live microphone test failed'}}
 }finally{Pop-Location}

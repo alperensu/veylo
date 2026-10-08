@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+ <ItemGroup Label="ProjectConfigurations"><ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration></ItemGroup>
+ <PropertyGroup Label="Globals"><ProjectGuid>{08C69414-83D9-4DCD-90D4-3F5B63A4E06B}</ProjectGuid><RootNamespace>SesMicrophone</RootNamespace><WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion><KMDF_VERSION_MAJOR>1</KMDF_VERSION_MAJOR><KMDF_VERSION_MINOR>15</KMDF_VERSION_MINOR></PropertyGroup>
+ <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+ <PropertyGroup Label="Configuration"><ConfigurationType>Driver</ConfigurationType><DriverType>KMDF</DriverType><DriverTargetPlatform>Desktop</DriverTargetPlatform><TargetVersion>Windows10</TargetVersion><PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset><UseDebugLibraries>false</UseDebugLibraries></PropertyGroup>
+ <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+ <PropertyGroup><TargetName>SesMicrophone</TargetName><OutDir>$(ProjectDir)..\build\driver\bin\</OutDir><IntDir>$(ProjectDir)..\build\driver\obj\</IntDir><SignMode>Off</SignMode><EnableInf2Cat>false</EnableInf2Cat><RunCodeAnalysis>true</RunCodeAnalysis><CodeAnalysisRuleSet>$(WDKContentRoot)CodeAnalysis\DriverRecommendedRules.ruleset</CodeAnalysisRuleSet></PropertyGroup>
+ <ItemDefinitionGroup>
+  <ClCompile><LanguageStandard>stdcpp17</LanguageStandard><WarningLevel>Level4</WarningLevel><TreatWarningAsError>true</TreatWarningAsError><ExceptionHandling>false</ExceptionHandling><RuntimeTypeInfo>false</RuntimeTypeInfo><AdditionalIncludeDirectories>$(ProjectDir)kernel;$(ProjectDir)shared;$(ProjectDir)..\build\driver\sysvad;$(ProjectDir)..\build\driver\sysvad\EndpointsCommon;$(ProjectDir)..\build\driver\sysvad\TabletAudioSample;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories><PreprocessorDefinitions>_USE_WAVERT_;_NEW_DELETE_OPERATORS_;PC_IMPLEMENTATION;UNICODE;_UNICODE;DEBUG_LEVEL=0;NTDDI_VERSION=0x0A000008;%(PreprocessorDefinitions)</PreprocessorDefinitions><DisableSpecificWarnings>4595;%(DisableSpecificWarnings)</DisableSpecificWarnings><EnablePREfast>true</EnablePREfast></ClCompile>
+  <Link><AdditionalDependencies>portcls.lib;stdunk.lib;libcntpr.lib;wdmsec.lib;%(AdditionalDependencies)</AdditionalDependencies></Link>
+ </ItemDefinitionGroup>
+ <ItemGroup>
+  <ClCompile Include="kernel\bridge.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\adapter.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\basetopo.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\common.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\hw.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\kshelper.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\savedata.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\TabletAudioSample\micintopo.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\EndpointsCommon\mintopo.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\EndpointsCommon\minwavert.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\EndpointsCommon\minwavertstream.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\EndpointsCommon\MiniportAudioEngineNode.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\EndpointsCommon\MiniportStreamAudioEngineNode.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\EndpointsCommon\AudioModuleHelper.cpp" />
+  <ClCompile Include="..\build\driver\sysvad\EndpointsCommon\NewDelete.cpp" />
+  <Inf Include="SesMicrophone.inf" />
+ </ItemGroup>
+ <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>
+

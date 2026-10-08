@@ -1,0 +1,88 @@
+name: Windows validation
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Build, test and package
+    runs-on: windows-2022
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+      DOTNET_ROOT: ${{ github.workspace }}/.tools/dotnet
+      DOTNET_ROOT_X64: ${{ github.workspace }}/.tools/dotnet
+    steps:
+      - name: Checkout source and history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install checksum-pinned build tools
+        run: ./scripts/bootstrap.ps1 -Security
+      - name: Scan committed history for secrets
+        run: |
+          & ./.tools/gitleaks/gitleaks.exe git . --config .gitleaks.toml --redact
+          if ($LASTEXITCODE -ne 0) { throw 'History secret scan failed' }
+      - name: Build desktop and native engine
+        run: ./scripts/build.ps1
+      - name: Native, managed and offscreen UI tests
+        run: ./scripts/test.ps1
+      - name: Dependency, secret and static analysis checks
+        run: ./scripts/security.ps1
+      - name: AddressSanitizer build and tests
+        run: |
+          ./scripts/build.ps1 -Sanitize
+          ./scripts/test.ps1 -Sanitize
+      - name: Package self-contained Windows application
+        run: ./scripts/package.ps1 -SkipBuild
+      - name: Verify published checksums
+        run: |
+          $checksums = @(Get-ChildItem dist/*.zip.sha256)
+          if ($checksums.Count -ne 2) { throw 'Expected application and source archives only' }
+          foreach ($checksum in $checksums) {
+            $archive = $checksum.FullName.Substring(0, $checksum.FullName.Length - 7)
+            $expected = (Get-Content -LiteralPath $checksum.FullName -Raw).Trim().Split(' ')[0]
+            if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) {
+              throw ('Package checksum mismatch: ' + $checksum.Name)
+            }
+          }
+      - name: Upload Windows and source packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: veylo-windows-${{ github.sha }}
+          path: |
+            dist/Veylo-*-win-x64.zip
+            dist/Veylo-*-source.zip
+            dist/Veylo-*.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: veylo-diagnostics-${{ github.sha }}
+          path: |
+            artifacts/ui/
+            artifacts/security/*.json
+            artifacts/security/clang.txt
+            build/Testing/Temporary/LastTest.log
+            build/asan/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
+          retention-days: 7

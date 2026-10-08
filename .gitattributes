@@ -1,5 +1,6 @@
 * text=auto eol=lf
 third_party/** -text
+driver/upstream/** -text
 *.ico -text
 *.png -text
 *.pth -text

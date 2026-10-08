@@ -479,7 +479,9 @@ float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
     for (i=0;i<NB_BANDS;i++) {
       float alpha = .6f;
       g[i] = MAX16(g[i], alpha*st->lastg[i]);
-      st->lastg[i] = g[i];
+      /* Backport xiph/rnnoise bb18d2f00bf4d4f279b0779439afa207b6ea0153:
+         compensate energy changes so old gains do not leak transient noise. */
+      st->lastg[i] = MIN16(1.f, g[i]*(st->delayed_Ex[i]+1e-3)/(Ex[i]+1e-3));
     }
     interp_band_gain(gf, g);
 #if 1

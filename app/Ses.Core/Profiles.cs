@@ -18,6 +18,17 @@ public sealed class EqBand : INotifyPropertyChanged
 public sealed class AudioSettings
 {
     public bool NoiseEnabled { get; set; } = true;
+    public bool NoiseAutoEnabled { get; set; }
+    public bool SensitivityEnabled { get; set; }
+    public bool SensitivityAutoEnabled { get; set; } = true;
+    public float SensitivityThresholdDb { get; set; } = -50;
+    public int SensitivityMode { get; set; }
+    public float SensitivityAttackMs { get; set; } = 2;
+    public float SensitivityHoldMs { get; set; } = 300;
+    public float SensitivityReleaseMs { get; set; } = 120;
+    public float SensitivityHysteresisDb { get; set; } = 6;
+    public float SensitivityRatio { get; set; } = 2;
+    public float SensitivityMaxReductionDb { get; set; } = 24;
     public bool AgcEnabled { get; set; } = true;
     public bool DeesserEnabled { get; set; }
     public float HighpassHz { get; set; } = 80;
@@ -47,6 +58,10 @@ public sealed class AudioSettings
         Range(HighpassHz,20,300);Range(NoiseMix,0,1);Range(TargetDb,-36,-10);Range(MinGainDb,-12,0);Range(MaxGainDb,0,12);
         Range(CompressorThresholdDb,-48,-3);Range(CompressorRatio,1,8);Range(AttackMs,1,100);Range(ReleaseMs,20,1000);
         Range(KneeDb,0,12);Range(DeesserMaxDb,0,3);Range(OutputDb,-24,12);Range(SpeechThreshold,0,1);
+        Range(SensitivityThresholdDb,-90,-10);
+        if(SensitivityMode is <0 or >1)throw new InvalidDataException("Invalid sensitivity mode.");
+        Range(SensitivityAttackMs,.1f,100);Range(SensitivityHoldMs,0,2000);Range(SensitivityReleaseMs,5,2000);
+        Range(SensitivityHysteresisDb,0,24);Range(SensitivityRatio,1,8);Range(SensitivityMaxReductionDb,0,60);
         if(Bands is null || Bands.Length!=4) throw new InvalidDataException("A profile must contain four EQ bands.");
         foreach(var b in Bands) { if(b is null||b.Type<0||b.Type>2)throw new InvalidDataException("Invalid EQ band."); Range(b.Frequency,20,20000);Range(b.GainDb,-12,12);Range(b.Q,.2f,10); }
     }
@@ -73,7 +88,19 @@ public static class Profiles
         var broadcast=new VoiceProfile { Name="Yayın",FactoryId="broadcast",Description="Daha sıkı dinamikler ve belirgin ses." };
         broadcast.Settings.Bands[0].Frequency=150;broadcast.Settings.Bands[0].GainDb=2;broadcast.Settings.Bands[2].GainDb=2;
         broadcast.Settings.CompressorRatio=3;broadcast.Settings.CompressorThresholdDb=-22;broadcast.Settings.DeesserEnabled=true;
-        return [natural,clear,warm,broadcast];
+        var podcast=new VoiceProfile { Name="Podcast — Tok ve Net",FactoryId="podcast",Description="Dolgun alt ton, temiz konuşma ve güçlü gürültü azaltma. Ortam seslerini tamamen silme garantisi yoktur." };
+        podcast.Settings=new AudioSettings {
+            HighpassHz=70,NoiseEnabled=true,NoiseAutoEnabled=false,NoiseMix=1,
+            SensitivityEnabled=true,SensitivityAutoEnabled=true,SensitivityThresholdDb=-50,
+            AgcEnabled=true,TargetDb=-18,MinGainDb=-12,MaxGainDb=9,SpeechThreshold=.45f,
+            CompressorThresholdDb=-22,CompressorRatio=3.5f,AttackMs=12,ReleaseMs=160,KneeDb=8,
+            DeesserEnabled=true,DeesserMaxDb=3,OutputDb=0,
+            Bands=[new(){Type=1,Frequency=145,GainDb=2.5f,Q=.707f},
+                new(){Type=0,Frequency=350,GainDb=-2.5f,Q=.9f},
+                new(){Type=0,Frequency=3000,GainDb=2,Q=1},
+                new(){Type=2,Frequency=8000,GainDb=1,Q=.707f}]
+        };
+        return [natural,clear,warm,broadcast,podcast];
     }
     private static void Validate(VoiceProfile p)
     {

@@ -1,4 +1,4 @@
-title = "SES source secret checks"
+title = "Veylo source secret checks"
 [extend]
 useDefault = true
 [[allowlists]]
