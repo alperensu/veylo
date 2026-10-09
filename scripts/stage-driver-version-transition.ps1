@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$VmDirectory,[Parameter(Mandatory)][string]$PreparedDirectory)
+param([Parameter(Mandatory)][string]$VmDirectory,[Parameter(Mandatory)][string]$PreparedDirectory,[switch]$ReplaceStaged)
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'driver-vm-common.ps1')
 $owned=Get-OwnedVm $VmDirectory -VerifyInputs
@@ -17,7 +17,8 @@ if(Test-Path -LiteralPath (Join-Path $owned.directory 'process.json')){
 $diskLock=[IO.File]::Open($owned.state.disk,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
 try{
     $destination=Assert-LabPath (Join-Path $owned.state.seed 'version-transition') $owned.state.seed -MayNotExist
-    if(Test-Path -LiteralPath $destination){throw 'Preserve existing version transition media; use a separate lab snapshot/seed for a new payload'}
+    $replacing=Test-Path -LiteralPath $destination
+    if($replacing -and !$ReplaceStaged){throw 'Preserve existing version transition media; explicit ReplaceStaged archives the verified old payload before replacement'}
     # Complete and validate the private copy outside the seed before its atomic move.
     $temporary=New-LabPrivateDirectory (Join-Path $labSigningRoot ('artifacts/driver-test-signing/version-transition-stage-'+[Guid]::NewGuid().ToString('N')))
     foreach($name in @('driver-vm-version-transition.ps1','version-transition-manifest.json')){
@@ -32,7 +33,20 @@ try{
     Assert-VmVersionTransitionPayload $temporary $owned.state.id | Out-Null
     # Both fully resolved paths were checked within their explicit workspace roots.
     if([IO.Path]::GetPathRoot($temporary) -ine [IO.Path]::GetPathRoot($destination)){throw 'Atomic staging requires the same volume'}
-    [IO.Directory]::Move($temporary,$destination)
+    $archive=$null
+    if($replacing){
+        Assert-VmVersionTransitionPayload $destination $owned.state.id | Out-Null
+        $history=New-LabPrivateDirectory (Join-Path $labSigningRoot ('artifacts/driver-test-signing/version-transition-history-'+[Guid]::NewGuid().ToString('N')))
+        $archive=Assert-LabPath (Join-Path $history 'payload') $history -MayNotExist
+        if([IO.Path]::GetPathRoot($archive) -ine [IO.Path]::GetPathRoot($destination)){throw 'Version archive requires the same volume'}
+        [IO.Directory]::Move($destination,$archive)
+    }
+    try{[IO.Directory]::Move($temporary,$destination)}catch{
+        # Never delete or overwrite a newly appeared destination. Restore the
+        # original only when that fixed destination is still absent.
+        if($archive -and !(Test-Path -LiteralPath $destination)){[IO.Directory]::Move($archive,$destination)}
+        throw
+    }
     Assert-VmVersionTransitionPayload $destination $owned.state.id | Out-Null
     Write-Output 'Passed: fixed historical/current version payload staged on stopped owned VM; no host driver or trust changes'
     Write-Output $destination

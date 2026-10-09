@@ -108,9 +108,13 @@ anahtarları Windows `\` ayıracını kullanır.
 
 VM kapalıyken `stage-driver-version-transition.ps1 -VmDirectory $vm
 -PreparedDirectory $payload` ile doğrulanmış özel payload'ı aktar. Araç disk kilidi
-ve süreç kimliğini kontrol eder; mevcut medya üzerine yazmaz. Guest'te
+ve süreç kimliğini kontrol eder. Mevcut medya varsa varsayılan olarak reddeder;
+`-ReplaceStaged` eski doğrulanmış payload'ı özel geçmiş dizinine taşıyarak yeni
+medyayı yerleştirir. Yayınlama başarısızsa ve hedef hâlâ yoksa eski payload geri
+getirilir; sonradan oluşan hedefin üzerine yazılmaz. Guest'te
 `C:\VeyloVersionTransition` dizinini önce `C:\VeyloLab` ACL'siyle koru, ardından
-salt okunur seed'in `version-transition` içeriğini buraya kopyala. Script'i yalnız
+salt okunur seed'in `version-transition` içeriğini buraya kopyala. `old` ve
+`current` alt dizinlerine de `C:\VeyloLab` ACL'sini uygula. Script'i yalnız
 yükseltilmiş guest PowerShell'inde tam VM UUID'siyle çalıştır:
 
 ```powershell
@@ -120,7 +124,10 @@ yükseltilmiş guest PowerShell'inde tam VM UUID'siyle çalıştır:
 Sıra: eski sürümü zorlayarak baseline hazırlama → güncel sürüme yükseltme →
 Windows `DiRollbackDriver` ile gerçek geri alma → güncel sürümü geri yükleme.
 Her aşamada aynı aygıtın kurulu sürümü, SYS hash'i ve PCM16/PCM32 capture kontrolü
-gerekir. Zorlanan eski baseline, native geri alma sonucu olarak sayılmaz. Eski
+gerekir. Tamamlanan işlemin ardından en fazla 30 saniyelik salt okunur bekleme,
+aynı instance, sürüm, SYS hash'i ve çalışan hizmet için iki ardışık eşleşme ister;
+geç gelen eşleşme başarı sayılmaz. Zorlanan eski baseline, native geri alma
+sonucu olarak sayılmaz. Eski
 paketin yalnız public test sertifikası bu guest'in iki güven deposuna eklenebilir;
 host sertifika depoları değişmez. Yeniden başlatma veya belirsiz devam eden işlem
 `NeedsReboot`/`Findings` olur; ardından otomatik başka sürücü işlemi başlatılmaz.

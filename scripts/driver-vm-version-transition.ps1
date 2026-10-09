@@ -8,8 +8,8 @@ param(
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2.0
 # The entire host rejection is read-only and precedes writes, native imports and processes.
-$system=Get-CimInstance -ClassName Win32_ComputerSystem
-$product=Get-CimInstance -ClassName Win32_ComputerSystemProduct
+$system=Get-CimInstance -ClassName Win32_ComputerSystem -OperationTimeoutSec 5
+$product=Get-CimInstance -ClassName Win32_ComputerSystemProduct -OperationTimeoutSec 5
 $hardwareId=[Guid]::Empty
 if($VmId -ne [Guid]'e49c7f67-9bb0-4984-acf8-acb088d8f799' -or $system.Manufacturer -cne 'QEMU' -or
    $system.Model -cne 'VeyloDriverLab' -or $env:COMPUTERNAME -cne 'VEYLO-LAB' -or
@@ -160,7 +160,7 @@ function Invoke-BoundedTool([string]$Executable,[string[]]$Arguments,[string]$Lo
 }
 
 function Get-SesDevices{
-    return @(Get-CimInstance -ClassName Win32_PnPEntity | Where-Object {
+    return @(Get-CimInstance -ClassName Win32_PnPEntity -OperationTimeoutSec 5 | Where-Object {
         @($_.HardwareID) -icontains 'ROOT\SES_MICROPHONE'
     })
 }
@@ -253,43 +253,102 @@ function Test-TransitionCapture($Process,$Evidence){
         $Evidence.unsupported -eq 0 -and $Evidence.verified_endpoints -eq 1 -and
         $Evidence.formats_passed -eq 2 -and $Evidence.self_tests -eq 0)
 }
+function Read-VersionObservation([string]$ExpectedInstance){
+    $device=Assert-OneSesDevice
+    if($ExpectedInstance -and $device.DeviceID -ine $ExpectedInstance){
+        throw ('Original exact device instance differs; expected '+$ExpectedInstance+'; observed '+$device.DeviceID+'; settling is forbidden.')
+    }
+    $rows=@(Get-CimInstance -ClassName Win32_PnPSignedDriver -OperationTimeoutSec 5 | Where-Object {$_.DeviceID -ieq $device.DeviceID})
+    if($rows.Count -gt 1){throw 'Multiple installed PnP driver rows for the exact instance; settling is forbidden.'}
+    $services=@(Get-CimInstance -ClassName Win32_SystemDriver -Filter "Name='SesMicrophone'" -OperationTimeoutSec 5)
+    if($services.Count -gt 1 -or ($services.Count -eq 1 -and $services[0].Name -ine 'SesMicrophone')){
+        throw 'Service identity is not the sole fixed SesMicrophone service; settling is forbidden.'
+    }
+    $observation=@{instance=[string]$device.DeviceID;hardwareId='ROOT\SES_MICROPHONE';service='SesMicrophone';
+        deviceStatus=$device.ConfigManagerErrorCode;pnpRowCount=$rows.Count;pnpVersion=$null;
+        serviceRowCount=$services.Count;serviceImage=$null;serviceImageSha256=$null;state='Missing';started=$false}
+    if($rows.Count -eq 1){$observation.pnpVersion=[string]$rows[0].DriverVersion}
+    if($services.Count -eq 1){
+        $observation.state=[string]$services[0].State;$observation.started=[bool]$services[0].Started
+        $image=[string]$services[0].PathName
+        if($image.StartsWith('\??\',[StringComparison]::Ordinal)){$image=$image.Substring(4)}
+        if($image.StartsWith('\SystemRoot\',[StringComparison]::OrdinalIgnoreCase)){$image='C:\Windows\'+$image.Substring(12)}
+        if($image -cnotmatch '(?i)^C:\\Windows\\System32\\(?:drivers\\SesMicrophone\.sys|DriverStore\\FileRepository\\sesmicrophone\.inf_[a-z0-9_]+\\SesMicrophone\.sys)$'){
+            throw 'Service image is outside the fixed installed driver locations.'
+        }
+        $full=Assert-CanonicalPath $image 'C:\Windows\System32'
+        $file=Get-Item -LiteralPath $full -Force
+        if($file.PSIsContainer -or $file.Length -lt 1 -or $file.Length -gt 16MB){throw 'Installed service image size/type differs.'}
+        $observation.serviceImage=$full
+        $observation.serviceImageSha256=(Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    return $observation
+}
 function Read-VersionIdentity([string]$Name,[string]$ExpectedInstance){
     $spec=Get-VersionSpec $Name
-    $device=Assert-OneSesDevice
-    if($device.ConfigManagerErrorCode -ne 0 -or ($ExpectedInstance -and $device.DeviceID -ine $ExpectedInstance)){
-        throw 'Device status or original exact instance differs.'
+    $observed=Read-VersionObservation $ExpectedInstance
+    if($observed.deviceStatus -ne 0 -or $observed.pnpRowCount -ne 1 -or $observed.pnpVersion -cne $spec.version -or
+        $observed.serviceRowCount -ne 1 -or !$observed.started -or $observed.state -cne 'Running' -or
+        $observed.serviceImageSha256 -cne $spec.sys){
+        $failure=[InvalidOperationException]::new(('Installed identity differs; expected '+$spec.version+'; observed '+($observed | ConvertTo-Json -Compress)))
+        $failure.Data['VeyloIdentityPending']=$true;$failure.Data['observation']=$observed
+        throw $failure
     }
-    $rows=@(Get-CimInstance -ClassName Win32_PnPSignedDriver | Where-Object {$_.DeviceID -ieq $device.DeviceID})
-    if($rows.Count -ne 1 -or $rows[0].DriverVersion -cne $spec.version){throw 'PnP installed driver version differs.'}
-    $services=@(Get-CimInstance -ClassName Win32_SystemDriver -Filter "Name='SesMicrophone'")
-    if($services.Count -ne 1 -or $services[0].Name -ine 'SesMicrophone' -or !$services[0].Started -or $services[0].State -cne 'Running'){
-        throw 'The sole SesMicrophone service is not running.'
+    return $observed
+}
+function Wait-VersionIdentity([string]$Name,[string]$ExpectedInstance,[ValidateRange(1,30)][int]$DeadlineSeconds=30){
+    if(!$ExpectedInstance -or ![regex]::IsMatch($ExpectedInstance,'\AROOT\\(?:MEDIA|SES_MICROPHONE)\\[0-9]{4}\z',
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [Text.RegularExpressions.RegexOptions]::CultureInvariant)){
+        throw 'Settling requires the original exact root audio instance.'
     }
-    $image=[string]$services[0].PathName
-    if($image.StartsWith('\??\',[StringComparison]::Ordinal)){$image=$image.Substring(4)}
-    if($image.StartsWith('\SystemRoot\',[StringComparison]::OrdinalIgnoreCase)){$image='C:\Windows\'+$image.Substring(12)}
-    if($image -cnotmatch '(?i)^C:\\Windows\\System32\\(?:drivers\\SesMicrophone\.sys|DriverStore\\FileRepository\\sesmicrophone\.inf_[a-z0-9_]+\\SesMicrophone\.sys)$'){
-        throw 'Service image is outside the fixed installed driver locations.'
+    $spec=Get-VersionSpec $Name
+    $watch=[Diagnostics.Stopwatch]::StartNew();$consecutive=0
+    $script:lastVersionSettle=@{status='Running';expectedVersion=$spec.version;expectedSysSha256=$spec.sys;
+        instance=$ExpectedInstance;deadlineSeconds=$DeadlineSeconds;attempts=0;elapsedSeconds=0;
+        consecutiveMatches=0;observation=$null;error=$null}
+    try{
+        while($watch.Elapsed.TotalSeconds -lt $DeadlineSeconds){
+            $script:lastVersionSettle.attempts++
+            try{
+                $identity=Read-VersionIdentity $Name $ExpectedInstance
+                $script:lastVersionSettle.observation=$identity;$script:lastVersionSettle.error=$null
+                $consecutive++
+            }catch{
+                $script:lastVersionSettle.error=$_.Exception.Message
+                if($_.Exception.Data.Contains('observation')){$script:lastVersionSettle.observation=$_.Exception.Data['observation']}
+                if(!$_.Exception.Data.Contains('VeyloIdentityPending') -or $_.Exception.Data['VeyloIdentityPending'] -ne $true){
+                    $script:lastVersionSettle.status='Findings';throw
+                }
+                $consecutive=0
+            }
+            $script:lastVersionSettle.elapsedSeconds=[math]::Round($watch.Elapsed.TotalSeconds,3)
+            $script:lastVersionSettle.consecutiveMatches=$consecutive
+            # A slow CIM call cannot produce a late success beyond this deadline.
+            if($watch.Elapsed.TotalSeconds -ge $DeadlineSeconds){break}
+            if($consecutive -ge 2){$script:lastVersionSettle.status='Passed';return $script:lastVersionSettle}
+            $remaining=[int][math]::Floor(($DeadlineSeconds-$watch.Elapsed.TotalSeconds)*1000)
+            if($remaining -gt 0){Start-Sleep -Milliseconds ([math]::Min(250,$remaining))}
+        }
+        $script:lastVersionSettle.status='Findings'
+        $script:lastVersionSettle.error='Settling deadline expired before two timely consecutive matches. '+[string]$script:lastVersionSettle.error
+        throw ('Installed version did not settle within its deadline: '+($script:lastVersionSettle | ConvertTo-Json -Depth 4 -Compress))
+    }finally{
+        $script:lastVersionSettle.elapsedSeconds=[math]::Round($watch.Elapsed.TotalSeconds,3);$watch.Stop()
     }
-    $full=Assert-CanonicalPath $image 'C:\Windows\System32'
-    $file=Get-Item -LiteralPath $full -Force
-    if($file.PSIsContainer -or $file.Length -lt 1 -or $file.Length -gt 16MB){throw 'Installed service image size/type differs.'}
-    $hash=(Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
-    if($hash -cne $spec.sys){throw 'Actual installed service image hash differs.'}
-    return @{instance=[string]$device.DeviceID;hardwareId='ROOT\SES_MICROPHONE';service='SesMicrophone';
-        pnpVersion=[string]$rows[0].DriverVersion;serviceImage=$full;serviceImageSha256=$hash;state='Running'}
 }
 function Invoke-VersionCapture([string]$Stage,[string]$Name,[string]$Instance){
+    $script:lastVersionSettle=$null
     if($Stage -cnotin @('old-baseline','upgrade','rollback','restore')){throw 'Unexpected capture stage.'}
     Assert-VersionPayloads
-    $before=Read-VersionIdentity $Name $Instance
+    $settle=Wait-VersionIdentity $Name $Instance
+    $before=$settle.observation
     $json=Get-OutputPath ($Stage+'-capture.json')
     if(Test-Path -LiteralPath $json){Remove-Item -LiteralPath $json}
     $process=Invoke-BoundedTool (Join-Path (Join-Path $acceptanceRoot $Name) 'ses_driver_capture_lab_tests.exe') @('--isolated-lab','--json-report',$json) ($Stage+'-capture.log') 180
     $evidence=Read-BoundedJson $json $acceptanceRoot 1MB
     if(!(Test-TransitionCapture $process $evidence)){throw ('Actual capture failed at '+$Stage)}
     $after=Read-VersionIdentity $Name $Instance
-    return @{status='Passed';identityBefore=$before;identityAfter=$after;process=$process;capture=$evidence}
+    return @{status='Passed';settle=$settle;identityBefore=$before;identityAfter=$after;process=$process;capture=$evidence}
 }
 function Get-CertificateStoreInventory([string]$StoreName){
     if($StoreName -cnotin @('Root','TrustedPublisher')){throw 'Unapproved guest certificate store.'}
@@ -333,6 +392,7 @@ function Add-OldPublicCertificate($Result){
     }finally{$cert.Dispose()}
 }
 function Invoke-FixedUpdate([string]$Name,[string]$LogName){
+    $script:lastVersionSettle=$null
     Assert-VersionPayloads
     Assert-Inventory $seed $seedNames $labRoot
     $null=Assert-OneSesDevice
@@ -452,7 +512,7 @@ $lock=[IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::Rea
 try{
     Assert-TrustedGuestAcl $lockPath
     $RunId=[Guid]::NewGuid()
-    $script:driverMutationStarted=$false;$script:mutationUncertain=$false;$restoreAttempted=$false
+    $script:driverMutationStarted=$false;$script:mutationUncertain=$false;$script:lastVersionSettle=$null;$restoreAttempted=$false
     $result=[ordered]@{schema=1;vmId=$VmId.ToString('D');runId=$RunId.ToString('D');testOnly=$true;
         productionReady=$false;status='Running';stage='preflight';utc=[DateTime]::UtcNow.ToString('o');
         rebootRequired=$false;baselineIsRollback=$false;apiRollbackVerified=$false;currentRestored=$false;
@@ -466,6 +526,7 @@ try{
         $currentCertificate.Dispose()
         Add-OldPublicCertificate $result
         foreach($stage in @('old-baseline','upgrade','rollback','restore')){
+            $script:lastVersionSettle=$null
             $result.stage=$stage;$result.utc=[DateTime]::UtcNow.ToString('o')
             Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
             if($stage -ceq 'rollback'){
@@ -510,6 +571,7 @@ try{
         }
     }catch{
         $result.status='Findings';$result.error=$_.Exception.Message
+        if($script:lastVersionSettle){$result.failedSettle=$script:lastVersionSettle}
         # A bounded child that was killed may have an in-flight kernel operation.
         # Do not run another driver mutation or claim restoration in that state.
         if($script:driverMutationStarted -and !$script:mutationUncertain -and !$result.rebootRequired -and !$restoreAttempted){
@@ -517,14 +579,21 @@ try{
             Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
             try{
                 $restoreProcess=Invoke-FixedUpdate 'current' 'restore.log'
+                $result.failureRestore=@{status='Running';process=$restoreProcess;completed=$false;capture=$null;settle=$null;error=$null}
                 $completed=Assert-UpdateCompleted $restoreProcess
-                if(!$completed){$result.rebootRequired=$true;$result.status='NeedsReboot'}
+                $result.failureRestore.completed=$completed
+                if(!$completed){$result.rebootRequired=$true;$result.status='NeedsReboot';$result.failureRestore.status='NeedsReboot'}
                 else{
                     $restoreCapture=Invoke-VersionCapture 'restore' 'current' ([string]$result.instance)
                     $result.currentRestored=$true
-                    $result.failureRestore=@{status='Passed';process=$restoreProcess;capture=$restoreCapture}
+                    $result.failureRestore.status='Passed';$result.failureRestore.capture=$restoreCapture
+                    $result.failureRestore.settle=$restoreCapture.settle
                 }
-            }catch{$result.failureRestore=@{status='Findings';error=$_.Exception.Message}}
+            }catch{
+                if(!$result.Contains('failureRestore')){$result.failureRestore=@{status='Findings';process=$null;completed=$false;capture=$null;settle=$null;error=$null}}
+                $result.failureRestore.status='Findings';$result.failureRestore.error=$_.Exception.Message
+                if($script:lastVersionSettle){$result.failureRestore.settle=$script:lastVersionSettle}
+            }
         }
         elseif($script:driverMutationStarted){$result.restoreSkipped='Reboot, uncertain in-flight mutation, or already attempted final restoration requires explicit guest inspection.'}
     }

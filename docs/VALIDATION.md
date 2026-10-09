@@ -129,17 +129,25 @@ pinned EWDK, then file-only test-signed its SYS/CAT. All 126 historical source
 files matched Git blobs; independent correctness review verified provenance,
 tooling hashes and the 12-file ZIP inventory. This is a genuine older kernel,
 not a changed version label. Private signing files were removed; no host trust
-store was changed. Different-version guest update/rollback remains untested.
+store was changed. Different-version guest update/rollback is not yet accepted.
 
 Passed: the guest-only historical transition runner and stopped-VM stager are
-implemented. Windows PowerShell 5.1 and PowerShell 7 each passed 34 inert checks;
+implemented. The initial runner passed 34 inert checks in each PowerShell runtime;
 the real 13-file prepared payload passed hash, private ACL and canonical inventory
 checks. Independent correctness/security reviews found a separator mismatch and
 a destination-exists staging preservation risk; both were fixed and re-reviewed.
 The runner requires old baseline, current upgrade, actual DiRollbackDriver and
 final current restoration, with installed version/SYS hash and PCM checks at
 each stage. Reboot or uncertain in-flight mutation cannot pass or start a recovery
-mutation. These are preparation results; real guest transitions remain untested.
+mutation. These are preparation results, not accepted real guest transitions.
+
+Passed: bounded identity settling and stage-specific failure evidence passed
+61 inert checks each under Windows PowerShell 5.1 and PowerShell 7. Independent
+correctness review found a P3 stale previous-stage observation; clearing the
+context before each operation fixed it, and independent correctness/security
+follow-ups reviewed the fix. Actual stopped-VM staging preserved the original
+manifest through default replacement refusal and an injected publication failure,
+then archived the verified old payload and published the new validated payload.
 
 Findings retained: the UEFI guest's first active-Verifier short run lost one
 480-frame PCM16 packet; its next extended run stopped at 38.265 seconds on a
@@ -149,8 +157,27 @@ thread lacked MMCSS registration even though its dedicated producer had it.
 Both short and extended consumers now register with MMCSS Pro Audio/HIGH or
 fail closed; detailed invalid-packet and consumer drain timing are reported.
 All previous continuity/freshness/queue/underrun limits remain unchanged. Six
-native and six ASan groups plus 44 offline checks passed; real isolated retest
-is still needed. The initial kernel capture result is not retroactively erased.
+native and six ASan groups plus 44 offline checks passed. The initial kernel
+capture result is not retroactively erased.
+
+Passed: the updated consumer tool completed an isolated BIOS guest run under
+active Code Integrity Verifier: 60.001 seconds, 33 checks, zero findings or
+unsupported formats. Producer and consumers registered with MMCSS; maximum
+consumer drain gap was 11,051 us, write gap 13,392 us, IOCTL 3,081 us and minimum
+steady queue 358 frames. Both clients recovered waveform and observed fresh
+silence at both lifecycle transitions, with zero position/timestamp errors,
+steady underruns or overruns. The intentional pause retained one total underrun.
+This is a short synthetic kernel run with two clients in one process; UEFI,
+one-hour, physical microphone and separate-application acceptance remain open.
+Full GitHub push and PR CI passed for exact commit 60fab4b.
+
+Findings retained: the first actual historical transition completed old-version
+DevCon update with exit 0 but the immediate installed-version read differed.
+The guarded current restoration returned exit 1 (reboot required); acceptance
+halted with NeedsReboot and no old capture, upgrade or native rollback pass.
+Both logs reported successful installation, and the subsequent read showed
+0.5.1.0/oem0.inf. This does not prove the old version ever bound. The stopped
+guest disk and serial report were preserved before the next reboot.
 
 Incomplete: the first resumed S4 attempt was interrupted by a later host shutdown
 (User32 1074 at 2026-10-09T13:36:29Z). The guest disk and serial evidence were
