@@ -77,10 +77,12 @@ function Read-VmJson([string]$Directory,[string]$Name) {
             $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
             break
         }catch{
-            # Windows ReplaceFile can briefly hide the name between metadata
-            # lookup and opening. Retry only absence, never invalid ACL/input.
+            # ReplaceFile can briefly hide or hold the name between metadata
+            # lookup and opening. Retry absence/sharing only, never invalid ACL.
             $absent=$_.CategoryInfo.Category -eq [Management.Automation.ErrorCategory]::ObjectNotFound -or $_.Exception -is [Management.Automation.ItemNotFoundException] -or $_.Exception.GetBaseException() -is [IO.FileNotFoundException] -or $_.Exception.Message -ceq 'Lab path is missing'
-            if(!$absent -or $deadline.ElapsedMilliseconds -ge 1000){throw}
+            $base=$_.Exception.GetBaseException()
+            $sharing=$base -is [IO.IOException] -and ($base.HResult -band 0xffff) -in @(32,33)
+            if((!$absent -and !$sharing) -or $deadline.ElapsedMilliseconds -ge 1000){throw}
             Start-Sleep -Milliseconds 10
         }
     }

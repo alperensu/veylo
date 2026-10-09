@@ -56,7 +56,11 @@ if(!(Test-Path -LiteralPath (Join-Path $local 'prepared.flag'))){
     if((Get-FileHash -LiteralPath $cer -Algorithm SHA256).Hash.ToLowerInvariant() -cne $manifest.certificateSha256){throw 'Certificate digest mismatch'}
     # Allowed only after QEMU hardware, UUID and owned seed checks above.
     Import-Certificate -FilePath $cer -CertStoreLocation Cert:/LocalMachine/Root | Out-Null
-    Import-Certificate -FilePath $cer -CertStoreLocation Cert:/LocalMachine/TrustedPublisher | Out-Null
+    # A clean evaluation image may not yet have a TrustedPublisher store.
+    # certutil -f creates that guest-local store; Import-Certificate otherwise
+    # reports AccessDenied even with a genuinely elevated guest token.
+    & (Join-Path $env:SystemRoot 'System32/certutil.exe') -f -addstore TrustedPublisher $cer | Out-Null
+    if($LASTEXITCODE -ne 0){throw 'Guest trusted-publisher certificate import failed'}
     & bcdedit.exe /set testsigning on | Out-Null
     if($LASTEXITCODE -ne 0){throw 'Guest test signing could not be enabled'}
     Set-Service AudioEndpointBuilder -StartupType Automatic;Set-Service Audiosrv -StartupType Automatic
