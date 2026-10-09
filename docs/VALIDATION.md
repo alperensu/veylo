@@ -1,3 +1,68 @@
+# 0.7.5-dev / isolated signing lab — 2026-10-09
+
+Passed: file-only SYS/CAT test signing, explicit public-certificate CMS checks,
+Windows SIP/strong catalog membership, fixed ZIP inventory, and 35 integrity /
+actual cryptographic tampering checks. Ephemeral PFX loading avoids persistent
+Windows keys; private signing files are deleted. No host certificate-store,
+test-signing, Secure Boot, Memory Integrity or driver installation changes.
+This self-signed lab certificate is deliberately rejected by the normal helper.
+
+Passed: six CTest groups and six AddressSanitizer groups, including 24 offline
+capture-analyzer checks; 110 managed checks, offline WPF/persistence/shutdown,
+18 driver helper checks, eight unsigned-manifest regressions and 35 offline VM
+control regressions plus four diskless QMP checks. The existing locked helper test output was avoided with a
+separate output directory. Secret/dependency/static checks and latest-all lab
+helper analyzers passed. No UI design changed in this checkpoint.
+
+Passed: SYS CodeView GUID and age match the full PDB; generated unsigned CAB
+contains exactly four VeyloMic members and extracted contents match the snapshot.
+This is an unsigned submission draft, not an uploaded or EV-signed submission.
+
+Passed: Windows 11 IoT Enterprise LTSC evaluation build 26100 installed on an
+owned QCOW2 with WHPX. The guest prepared its test certificate/policy and shut
+down; the offline `before-driver` snapshot was listed before installing the
+driver. DevCon installation returned zero; 104 running-kernel IOCTL checks
+reported zero failures. Shared WASAPI PCM16 and PCM32 passed 20 checks: 94,560
+deterministic signal frames, 10,560 fresh silence frames after producer close,
+252 written packets and 319 captured packets. That successful capture run used
+an interactive guest user with a non-elevated token; the initial IOCTL run used
+the SYSTEM startup task. Neither used the daily host microphone.
+
+Passed: Driver Verifier standard checks (active flags 0x001209bb, only
+SesMicrophone.sys) with another 104 IOCTL / zero failures and 20 WASAPI /
+zero findings. The verifier run captured 94,080 signal and 10,560 silence
+frames in both formats. This is a short functional run, not an HVCI or endurance
+certification. Verifier code-integrity checks were not enabled.
+
+Passed: DevCon removed one driver device and reinstalled it successfully in
+the guest. After a cold resume, another 104 IOCTL checks and 20 PCM16/PCM32
+capture checks passed (94,560 signal and 10,560 fresh silence frames).
+This follow-up does not establish continuous Verifier coverage across reboot,
+sleep/wake behavior or upgrade/rollback compatibility.
+
+The first capture run failed because Sleep(1) advanced the 10ms producer only
+once per default clock tick: both formats reported 51ms lateness at 141ms.
+A private high-resolution waitable timer corrected the harness, preserving
+the 50ms deadline and all waveform/timestamp/silence acceptance criteria.
+No kernel change was made to obtain this result. Guest UAC, initially absent
+TrustedPublisher store initialization, ISO cold resume, JSON timestamp type,
+and concurrent IPC file replacement races were also fixed and regression-tested.
+
+QEMU uses private redirected stdio control, no TCP listener, no guest network,
+no host device passthrough and only the owned read-only seed. Independent
+read-only correctness and security reviews passed, including follow-up passes
+on actual launch/contention and capture-harness fixes.
+
+Not run: HVCI, extended lifecycle,
+shared receiving applications, one-hour timing and Microsoft production signing.
+The lab's 90-day Windows evaluation was explicitly authorized by the user.
+The installed offline guest displays an expired-license watermark; activation
+and an active 90-day license were not demonstrated. This limits long-duration
+lab claims; no activation workaround or host licensing change was applied.
+The older Microsoft ISO checksum PDF differs from the current official download;
+two official HTTPS downloads and setup.exe publisher verification support the
+recorded local pin, not a claim of matching the published PDF checksum.
+The daily VB-CABLE route remains available; real user state hash was unchanged.
 # 0.7.4-dev / driver 0.5.1.0 readiness — 2026-10-08
 
 Passed: checksum-pinned EWDK 26100.6584 kernel build with WDK recommended

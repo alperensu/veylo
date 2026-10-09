@@ -41,5 +41,11 @@ try{
     if($LASTEXITCODE -ne 0){throw 'Driver helper analyzers failed'}
     & '.tools/dotnet/dotnet.exe' list app/Ses.DriverSetup package --vulnerable --include-transitive --format json | Set-Content (Join-Path $reports 'driver-helper-nuget.json')
     if($LASTEXITCODE -ne 0){throw 'Driver helper dependency scan failed'}
+    & '.tools/dotnet/dotnet.exe' build tools/Ses.DriverSigning -c Release -p:AnalysisLevel=latest-all -p:RunAnalyzers=true -p:TreatWarningsAsErrors=true
+    if($LASTEXITCODE -ne 0){throw 'Lab signing helper analyzers failed'}
+    & '.tools/dotnet/dotnet.exe' list tools/Ses.DriverSigning package --vulnerable --include-transitive --format json | Set-Content (Join-Path $reports 'lab-signing-nuget.json')
+    if($LASTEXITCODE -ne 0){throw 'Lab signing helper dependency lookup failed'}
+    $labPackages=Get-Content (Join-Path $reports 'lab-signing-nuget.json') -Raw | ConvertFrom-Json
+    foreach($project in $labPackages.projects){foreach($framework in $project.frameworks){if($framework.topLevelPackages.Count -or $framework.transitivePackages.Count){throw 'Review vulnerable lab signing packages'}}}
     Write-Output 'Security checks passed (scope and limits: SECURITY.md)'
 }finally{Pop-Location}
