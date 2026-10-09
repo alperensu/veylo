@@ -19,6 +19,8 @@ try{
     & '.tools/dotnet/dotnet.exe' run --project tests/Ses.Desktop.Tests -c Release --no-build -- --verify-quit
     if($LASTEXITCODE -ne 0){throw 'Desktop shutdown tests failed'}
     & "$PSScriptRoot/test-driver-package.ps1"
+    & "$PSScriptRoot/test-driver-signing.ps1"
+    & "$PSScriptRoot/test-driver-vm.ps1"
     & '.tools/dotnet/dotnet.exe' run --project tests/Ses.DriverSetup.Tests -c Release -- $root
     if($LASTEXITCODE -ne 0){throw 'Driver catalog rejection tests failed'}
     $app=Join-Path $root 'app/Ses.Desktop/bin/Release/net10.0-windows/Veylo.exe'

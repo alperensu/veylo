@@ -1,3 +1,38 @@
+# 0.7.5-dev / isolated signing lab — 2026-10-09
+
+Passed: file-only SYS/CAT test signing, explicit public-certificate CMS checks,
+Windows SIP/strong catalog membership, fixed ZIP inventory, and 35 integrity /
+actual cryptographic tampering checks. Ephemeral PFX loading avoids persistent
+Windows keys; private signing files are deleted. No host certificate-store,
+test-signing, Secure Boot, Memory Integrity or driver installation changes.
+This self-signed lab certificate is deliberately rejected by the normal helper.
+
+Passed: six CTest groups and six AddressSanitizer groups, including 24 offline
+capture-analyzer checks; 110 managed checks, offline WPF/persistence/shutdown,
+18 driver helper checks, eight unsigned-manifest regressions and 32 offline VM
+control regressions. The existing locked helper test output was avoided with a
+separate output directory. Secret/dependency/static checks and latest-all lab
+helper analyzers passed. No UI design changed in this checkpoint.
+
+Passed: SYS CodeView GUID and age match the full PDB; generated unsigned CAB
+contains exactly four VeyloMic members and extracted contents match the snapshot.
+This is an unsigned submission draft, not an uploaded or EV-signed submission.
+
+Windows evaluation guest installation is in progress on a new private QCOW2.
+QEMU uses private redirected stdio control, no TCP listener, no guest network,
+no host device passthrough and only the owned read-only seed. Initial source
+reviews independently found unsafe loopback QMP, removable-media, provenance,
+and startup checks; these were corrected and regression-tested. A subsequent
+PowerShell ISO timestamp coercion issue and read-only seed backend issue were
+found during launch and fixed. Post-fix independent review is pending.
+
+Not run: running-kernel IOCTL/WASAPI acceptance, HVCI/Driver Verifier, lifecycle,
+shared receiving applications, one-hour timing and Microsoft production signing.
+The lab's 90-day Windows evaluation was explicitly authorized by the user.
+The older Microsoft ISO checksum PDF differs from the current official download;
+two official HTTPS downloads and setup.exe publisher verification support the
+recorded local pin, not a claim of matching the published PDF checksum.
+The daily VB-CABLE route remains available; real user state hash was unchanged.
 # 0.7.4-dev / driver 0.5.1.0 readiness — 2026-10-08
 
 Passed: checksum-pinned EWDK 26100.6584 kernel build with WDK recommended

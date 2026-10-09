@@ -3,7 +3,7 @@
 Bu tablo ürünün tamamlandığı iddiası değildir. **Passed** yalnızca belirtilen
 kontrolün geçtiğini; **Partial** uygulama ve bazı testler bulunmasına rağmen
 kabulün eksik olduğunu; **Not run** ilgili gerçek koşulun denenmediğini belirtir.
-Güncel geliştirme paketi: **0.6.12-dev**. Ayrıntılı geçmiş: [VALIDATION.md](VALIDATION.md).
+Güncel geliştirme paketi: **0.7.5-dev**. Ayrıntılı geçmiş: [VALIDATION.md](VALIDATION.md).
 
 **Güncel kullanıcı geri bildirimi:** 8 Ekim 2026'da kullanıcı, seslerin şu an
 temizlendiğini ve sorun olmadığını bildirdi. Kendi mevcut kurulumu için gürültü

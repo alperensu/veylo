@@ -1,0 +1,20 @@
+{
+  "qemu": {
+    "version": "11.1.0-20260811",
+    "url": "https://qemu.weilnetz.de/w64/qemu-w64-setup-20260811.exe",
+    "sha512": "5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543",
+    "systemSha256": "47d57a6072e0bb3bd98f87926eb129eb1736dfe818c67b3b81ef7ce4edd0b3cd",
+    "imageSha256": "9d930582d0d574bb106d89982c547688e10b8f356192d302cc3d0ae4e8674534"
+  },
+  "windows": {
+    "edition": "Windows 11 IoT Enterprise LTSC 2024 Evaluation",
+    "url": "https://go.microsoft.com/fwlink/?clcid=0x409&country=us&culture=en-us&linkid=2270353",
+    "hashSource": "https://go.microsoft.com/fwlink/?linkid=2272287",
+    "sha256": "2cee70bd183df42b92a2e0da08cc2bb7a2a9ce3a3841955a012c0f77aeb3cb29",
+    "publishedPdfSha256": "8abf91c9cd408368dc73aab3425d5e3c02dae74900742072eb5c750fc637c195",
+    "publishedPdfHashMatched": false,
+    "pinEvidence": "Two independent downloads from the current Microsoft HTTPS redirect matched; extracted setup.exe Microsoft Windows Authenticode signature Valid. The older PDF checksum differs and is not claimed verified.",
+    "evaluationDays": 90
+  },
+  "devconSha256": "282ff232c35fcb82dad2fdae56c775523409494b175a5a83d7441b5fa65cb3f9"
+}

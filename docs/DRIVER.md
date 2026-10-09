@@ -1,4 +1,4 @@
-> Veylo 0.7.4-dev varsayılan olarak kurulu VB-CABLE kullanır. Bu rehber yalnızca
+> Veylo 0.7.5-dev varsayılan olarak kurulu VB-CABLE kullanır. Bu rehber yalnızca
 > çıkış listesinden seçilen Veylo Mikrofon geliştirme sürücüsü içindir.
 
 # Veylo Mikrofon — sürücü geliştirme ve kurulum
@@ -6,9 +6,12 @@
 ## Mevcut durum
 
 Veylo-driver-0.5.1.0-isolated-lab.zip imzasız geliştirme çıktısıdır; günlük bilgisayara
-yüklenmemelidir. SYS, INF ve imzasız katalog derlenir. Format doğrulaması, tampon rezervi ve PnP yaşam döngüsü kaynak/test düzeyinde güçlendirildi; gerçek kernel kabulü henüz yok. Uygulama ZIP'i üretim
+yüklenmemelidir. Ayrı `TEST-SIGNED-isolated-lab.zip` paketi dosya tabanlı
+test sertifikasıyla SYS ve CAT imzası taşır; bu Microsoft üretim imzası değildir.
+Format doğrulaması, tampon rezervi ve PnP yaşam döngüsü kaynak/test düzeyinde güçlendirildi; gerçek kernel kabulü henüz yok. Uygulama ZIP'i üretim
 sürücüsü içermez, VB-CABLE ile çalışmaya devam eder. Kur/güncelle üretim paketi yokken
-devre dışıdır. Laboratuvar, Microsoft imzası ve gerçek oyun testleri tamamlanmadı.
+devre dışıdır. [İzole VM adımları](DRIVER-LAB.md) ve
+[Microsoft imzalama hazırlığı](DRIVER-SIGNING.md) ayrı rehberlerdedir.
 
 ## Üretim imzalı paketle normal kullanım
 
