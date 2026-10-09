@@ -70,11 +70,23 @@ function Write-VmJson([string]$Directory,[string]$Name,$Value) {
 }
 function Read-VmJson([string]$Directory,[string]$Name) {
     if($Name -cnotin @('process.json','command.json','response.json')){throw 'Unapproved VM input filename'}
-    $path=Assert-VmPrivateAcl (Join-Path $Directory $Name) $Directory
+    $deadline=[Diagnostics.Stopwatch]::StartNew()
+    while($true){
+        try{
+            $path=Assert-VmPrivateAcl (Join-Path $Directory $Name) $Directory
+            $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            break
+        }catch{
+            # Windows ReplaceFile can briefly hide the name between metadata
+            # lookup and opening. Retry only absence, never invalid ACL/input.
+            $absent=$_.CategoryInfo.Category -eq [Management.Automation.ErrorCategory]::ObjectNotFound -or $_.Exception -is [Management.Automation.ItemNotFoundException] -or $_.Exception.GetBaseException() -is [IO.FileNotFoundException] -or $_.Exception.Message -ceq 'Lab path is missing'
+            if(!$absent -or $deadline.ElapsedMilliseconds -ge 1000){throw}
+            Start-Sleep -Milliseconds 10
+        }
+    }
     # Allow atomic replacement while a reader holds the previous file. The
     # PowerShell provider's default sharing can reject Move(overwrite), which
     # used to terminate a healthy VM during concurrent command/response polls.
-    $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
     try{
         if($stream.Length -gt 16KB){throw 'Oversized VM control message'}
         $reader=[IO.StreamReader]::new($stream,[Text.UTF8Encoding]::new($false,$true),$true,1024,$true)

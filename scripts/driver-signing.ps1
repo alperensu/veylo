@@ -11,7 +11,11 @@ function Assert-LabPath([string]$Path,[string]$Within=$labSigningRoot,[switch]$M
     $cursor=$full
     while($cursor){
         if(Test-Path -LiteralPath $cursor){
-            if((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Lab paths cannot contain reparse points'}
+            # FileInfo.Attributes can become -1 when a concurrently replaced
+            # file disappears, falsely looking like every attribute is set.
+            # GetAttributes throws FileNotFound instead, allowing IPC readers
+            # to retry absence without weakening the reparse-point rejection.
+            if([IO.File]::GetAttributes($cursor) -band [IO.FileAttributes]::ReparsePoint){throw 'Lab paths cannot contain reparse points'}
         }elseif(!$MayNotExist -and $cursor -eq $full){throw 'Lab path is missing'}
         $cursor=[IO.Path]::GetDirectoryName($cursor)
     }

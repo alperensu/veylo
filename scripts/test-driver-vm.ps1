@@ -62,6 +62,18 @@ try{
         Write-VmJson $vm 'process.json' @{startTimeUtc='replacement'}
         Check ((Read-VmJson $vm 'process.json').startTimeUtc -ceq 'replacement') 'atomic IPC replacement succeeds while previous generation is open'
     }finally{$held.Dispose()}
+    $writer=[PowerShell]::Create()
+    try{
+        $null=$writer.AddScript({param($common,$root,$directory)
+            $ErrorActionPreference='Stop';. $common;$labSigningRoot=$root
+            foreach($sequence in 1..100){Write-VmJson $directory 'process.json' @{sequence=$sequence}}
+        }).AddArgument((Join-Path $PSScriptRoot 'driver-vm-common.ps1')).AddArgument($fixture).AddArgument($vm)
+        $pending=$writer.BeginInvoke();$reads=0
+        while(!$pending.IsCompleted){Read-VmJson $vm 'process.json' | Out-Null;$reads++}
+        $writer.EndInvoke($pending) | Out-Null
+        if($writer.HadErrors){throw 'Concurrent IPC writer failed'}
+        Check ($reads -gt 0 -and (Read-VmJson $vm 'process.json').sequence -eq 100) 'concurrent IPC replacement and validated reads remain stable'
+    }finally{$writer.Stop();$writer.Dispose()}
     Check ((Get-VmCommand $request $identity.id $session $screen).execute -ceq 'query-status') 'fixed query-status accepted'
     $request.command='human-monitor-command';Reject {Get-VmCommand $request $identity.id $session $screen} 'arbitrary QMP command rejected'
     $request.command='screendump';$request | Add-Member -NotePropertyName filename -NotePropertyValue 'C:\outside.ppm'
