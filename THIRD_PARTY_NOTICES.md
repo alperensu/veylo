@@ -22,7 +22,11 @@ Veylo code: MIT. Third-party components retain their licenses.
   third_party/rnnoise/COPYING and AUTHORS in source. Source headers retain
   additional author notices. Default generated model from Xiph:
   https://media.xiph.org/rnnoise/models/rnnoise_data-0b50c45.tar.gz .
-  dependencies.lock.json pins source/model archives and vendored files.
+  dependencies.lock.json pins source/model archives and every retained file.
+  The vendored subset contains inference sources and the default generated C
+  model; unused training/export tools, the PyTorch checkpoint, alternate model
+  and Autotools files are omitted. Full training and model-export resources:
+  https://github.com/xiph/rnnoise/tree/904a876dce1f9ab8860c0a5000ed151f9f6eef58
   Local patches: x86cpu.c verifies OSXSAVE/XCR0 before AVX2/FMA selection.
   denoise.c backports the energy-aware transient gain-decay fix from
   Xiph.Org commit bb18d2f00bf4d4f279b0779439afa207b6ea0153. BSD notices retained.
