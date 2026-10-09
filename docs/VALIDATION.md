@@ -1,3 +1,80 @@
+# Driver acceptance tools / source checkpoint — 2026-10-09
+
+Passed: six native and six AddressSanitizer groups; 44 offline capture checks,
+149 safe VM-control/guest-decision checks, 110 managed checks, offline WPF
+persistence/shutdown/smoke, 18 driver-helper checks in a separate output directory,
+and existing package/signing checks. The combined headless command stopped on a
+pre-existing locked helper DLL; its remaining helper and UI checks passed using
+separate output directories. Secret/dependency/static checks and analyzers passed.
+No kernel, protocol, ABI or VB-CABLE routing change was made.
+
+Passed: the evaluation VM activated normally during an explicit temporary NAT
+window, then cold-booted with networking disabled. LicenseStatus=1 and an active
+90-day evaluation were recorded. No rearm, clock manipulation or host activation
+change occurred. The older expired-watermark result below is historical.
+
+Passed: active Driver Verifier flags 0x021209bb, including Code Integrity checks,
+only SesMicrophone.sys loaded. A completed 60.010-second run passed 30 checks:
+PCM16/PCM32 followed by two shared PCM32 clients in one process, each receiving
+2,880,000 frames. Maximum producer lateness 3 ms, write completion gap 13,123 us,
+IOCTL duration 3,166 us, minimum observed steady queue 384 frames; zero steady
+underruns, overruns, timestamp errors or position gaps. Both clients observed
+fresh silence on two lifecycle changes and waveform recovery after reconnect.
+One underrun during the intentional producer pause is explicitly retained.
+These are synthetic signals through the actual guest kernel; two receiving
+applications, physical microphone processing and latency are not established.
+
+Findings retained: the first requested hour stopped at six seconds with one
+steady underrun and 28 ms producer lateness. The test had produced and drained
+both consumers in one loop. A dedicated producer with private timer/MMCSS now
+separates that work; the subsequent 60-second result above passed. Neither run
+completes one-hour acceptance. No reserve increase or weakened gate hid the failure.
+The actual application bridge now uses a private high-resolution idle timer;
+portable stop/reopen checks passed, but this is not a full-route performance test.
+
+Passed: independent read-only correctness and security reviews and follow-up
+fixes for snapshot preservation, scheduler transitions, clock publication races
+and startup error evidence. The final registry ACL calls also received a fresh
+independent security review after an earlier review attempt hit its usage limit.
+Fixed allowlisted
+registry paths use Get-Acl -Path for Windows PowerShell 5.1 compatibility;
+filesystem paths retain -LiteralPath. Actual guest registry corroboration is
+recorded separately from active Verifier evidence, and neither proves HVCI.
+
+Findings fixed: the same-version reinstall preflight initially rejected the real
+DevCon instance ROOT\\MEDIA\\0000 because it confused an instance ID with the
+hardware ID ROOT\\SES_MICROPHONE. No removal occurred on that failed attempt.
+The guarded selection now accepts only the two known root instance forms, one
+exact hardware target and the exact service. Twenty-three inert identity cases
+also passed under Windows PowerShell 5.1; wildcard, foreign and duplicate device
+selections remain rejected. Culture-invariant matching preserves Windows ID
+case semantics under Turkish culture. Independent follow-up reviews passed.
+
+Findings: guest HVCI configuration persisted the five requested registry values
+and both BCD launch settings, with its first baseline preserved. The subsequent
+cold boot stopped in Windows Recovery with error 0xc0000189 and a system-capability
+message. This is not a driver bugcheck or proof of driver incompatibility. The
+failed disk state was retained as hvci-boot-failed-20261009; restoring the owned
+licensed-ci-verifier-20261009 snapshot returned the guest to normal Windows boot.
+The current QEMU/WHPX platform has not demonstrated active VSM/HVCI. Repeating
+registry settings is not a demonstrated remedy; host security was not changed.
+
+Not run/completed at this source checkpoint: one-hour acceptance, active HVCI
+capture, supported sleep/hibernate recovery, different-version upgrade/rollback,
+separate receiving applications, physical latency and Microsoft production
+signing. The guest exposes hibernate but no standby state; cold boot is not sleep.
+HVCI configuration preserves its first protected registry/BCD baseline and only
+reports reboot required until actual VBS/running-service evidence is collected.
+The pre-existing production bridge wait after CancelIoEx remains unbounded for
+a faulty kernel driver that never completes cancellation. Daily-use readiness
+remains false; the daily host security settings and saved user state are preserved.
+
+Evidence: artifacts/driver-acceptance/{capture-ci-60-dedicated-producer-serial.log,
+capture-hour-ci-first-failed-serial.log,activation-verifier-sleep-serial.log,
+vm-fixtures-identity-final.log,native-tests-final.log,asan-final-tests.log,
+security-final.log,core-after-timer.log,hvci-configured-and-registry-serial.log,
+hvci-boot-lock.png,recovered-desktop.png}. See [DRIVER-ACCEPTANCE.md](DRIVER-ACCEPTANCE.md).
+
 # 0.7.5-dev / isolated signing lab — 2026-10-09
 
 Passed: file-only SYS/CAT test signing, explicit public-certificate CMS checks,

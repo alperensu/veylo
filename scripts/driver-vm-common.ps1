@@ -12,6 +12,23 @@ function Assert-VmPrivateAcl([string]$Path,[string]$Within) {
     foreach($rule in $rules){if($rule.IdentityReference.Value -cnotin @($owner,'S-1-5-18') -or $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or $rule.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl){throw 'VM path is not owner/SYSTEM-only'}}
     return $full
 }
+function Assert-VmAcceptanceSeed([string]$Seed,[string]$VmId) {
+    $directory=Assert-LabPath (Join-Path $Seed 'acceptance') $Seed
+    Assert-LabPrivateAcl $directory
+    $names=@('driver-vm-acceptance.ps1','ses_driver_capture_lab_tests.exe','acceptance-manifest.json')
+    Assert-LabInventory $directory $names
+    foreach($name in $names){Assert-LabPrivateAcl (Join-Path $directory $name)}
+    $path=Join-Path $directory 'acceptance-manifest.json'
+    if((Get-Item -LiteralPath $path).Length -gt 16KB){throw 'Oversized acceptance manifest'}
+    $manifest=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if($manifest.schema -ne 1 -or $manifest.testOnly -isnot [bool] -or !$manifest.testOnly -or $manifest.vmId -cne $VmId){throw 'Acceptance seed identity mismatch'}
+    $entries=@($manifest.files.PSObject.Properties)
+    if($entries.Count -ne 2){throw 'Acceptance inventory mismatch'}
+    foreach($entry in $entries){
+        if($entry.Name -cnotin $names[0..1] -or $entry.Value -cnotmatch '^[0-9a-f]{64}$' -or (Get-FileHash -LiteralPath (Join-Path $directory $entry.Name) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.Value){throw 'Acceptance payload checksum mismatch'}
+    }
+    return $directory
+}
 function Get-OwnedVm([string]$Directory,[switch]$VerifyInputs) {
     $base=Join-Path $labSigningRoot '.tools/driver-lab';$vm=Assert-VmPrivateAcl $Directory $base
     if([IO.Path]::GetFileName($vm) -cnotmatch '^vm-[0-9a-f]{32}$'){throw 'Not an owned Veylo VM directory'}
@@ -35,8 +52,11 @@ function Get-OwnedVm([string]$Directory,[switch]$VerifyInputs) {
             if((Get-Item -LiteralPath $file).Length -gt 16MB -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.Value){throw 'Seed payload checksum mismatch'}
         }
         $inventory=@(Get-ChildItem -LiteralPath $seed -Force)
-        if($inventory.Count -ne $names.Count+2){throw 'Unexpected seed files'}
+        $hasAcceptance=Test-Path -LiteralPath (Join-Path $seed 'acceptance')
+        if($hasAcceptance){Assert-VmAcceptanceSeed $seed $state.id | Out-Null}
+        if($inventory.Count -ne $names.Count+2+[int]$hasAcceptance){throw 'Unexpected seed files'}
         foreach($file in $inventory){
+            if($file.Name -ceq 'acceptance' -and $hasAcceptance -and $file.PSIsContainer){continue}
             if($file.Name -cnotin ($names+@('veylo-lab-seed.json','autounattend.xml')) -or $file.PSIsContainer){throw 'Unexpected seed path'}
             Assert-LabPath $file.FullName $seed | Out-Null;Assert-LabPrivateAcl $file.FullName
         }
@@ -105,11 +125,16 @@ function Read-VmJson([string]$Directory,[string]$Name) {
     if($PSVersionTable.PSVersion -ge [Version]'7.5'){$jsonOptions.DateKind='String'}
     return $json | ConvertFrom-Json @jsonOptions
 }
-function Get-VmArguments([string]$Vm,$State,[switch]$BootInstalled) {
+function Get-VmArguments([string]$Vm,$State,[switch]$BootInstalled,[switch]$EvaluationActivationNetwork) {
     $diskBoot=$BootInstalled -or $State.installed
+    if($EvaluationActivationNetwork -and !$diskBoot){throw 'Evaluation activation networking requires an explicitly installed guest disk'}
     if(!$diskBoot -and (Test-Path -LiteralPath (Join-Path $Vm 'process.json'))){throw 'Initial ISO boot is allowed once; use -BootInstalled to resume the owned disk'}
     foreach($path in @($State.disk,$State.iso,$State.seed,$Vm)){if($path.Contains(',') -or $path.Contains('"')){throw 'Unsupported VM path delimiter'}}
-    $arguments=@('-machine','q35','-accel',$State.accelerator,'-cpu','max','-smp','2','-m','6144','-display','none','-nic','none','-monitor','none','-qmp','stdio','-no-reboot',
+    # Optional user-mode NAT has no inbound forwarding, bridge, shared folders
+    # or host devices. Use only for normal evaluation activation; omit to
+    # restore the default disconnected guest on the next cold boot.
+    $nic=if($EvaluationActivationNetwork){'user,model=e1000'}else{'none'}
+    $arguments=@('-machine','q35','-accel',$State.accelerator,'-cpu','max','-smp','2','-m','6144','-display','none','-nic',$nic,'-monitor','none','-qmp','stdio','-no-reboot',
         '-serial',('file:'+(Join-Path $Vm 'serial.log')),'-smbios',('type=1,manufacturer=QEMU,product=VeyloDriverLab,uuid='+$State.id),
         '-drive',('file='+$State.disk+',format=qcow2,if=ide,index=0'))
     if(!$diskBoot){$arguments+=@('-drive',('file='+$State.iso+',media=cdrom,if=ide,index=2,readonly=on'))}

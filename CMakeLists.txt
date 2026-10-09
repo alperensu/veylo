@@ -63,7 +63,7 @@ if(NOT MSVC)
 endif()
 # Deliberately not a CTest: active malformed kernel requests belong only in the lab.
 add_executable(ses_driver_capture_lab_tests native/tests/driver_capture_lab_tests.cpp)
-target_link_libraries(ses_driver_capture_lab_tests PRIVATE ole32 uuid cfgmgr32)
+target_link_libraries(ses_driver_capture_lab_tests PRIVATE ole32 uuid cfgmgr32 avrt)
 if(MSVC)
   target_compile_options(ses_driver_capture_lab_tests PRIVATE /W4 /permissive-)
 else()

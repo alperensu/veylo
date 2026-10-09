@@ -5,7 +5,11 @@ paketlemez; günlük uygulama mevcut VB-CABLE ile çalışır. Dosya düzeyinde 
 imzalı SYS/CAT ve içerik doğrulamaları tamamlandı. İzole Windows 11 build 26100
 guest'te kurulum, 104 IOCTL kontrolü ve PCM16/PCM32 gerçek WASAPI capture geçti.
 Driver Verifier standart kontrolleri açıkken aynı kısa testler geçti.
-HVCI, uzun süreli testler ve alıcı uygulama kabulü henüz **Not run** durumundadır;
+Genişletilmiş araçla Code Integrity dahil `0x021209bb` açıkken 60 saniyelik
+iki istemci capture ve yeniden bağlantı kontrolü de geçti. İstemciler aynı
+süreçtedir. [Genişletilmiş kabul rehberi](DRIVER-ACCEPTANCE.md) ayrı HVCI ve
+saatlik test kanıtlarının nasıl toplandığını açıklar.
+HVCI, saatlik test ve alıcı uygulama kabulü henüz tamamlanmış sayılmaz;
 günlük kullanıma hazır olunduğu anlamına gelmez. [Güncel kanıt ve sınırlar](https://github.com/alperensu/veylo/blob/main/docs/VALIDATION.md).
 
 ## Host üzerinde hazırlanabilen çıktılar
@@ -181,8 +185,9 @@ Host üzerinde güvenli `ses_driver_capture_lab_tests.exe --self-test` yalnız
 analizör/PCM/tampon kontrolleridir; gerçek endpoint veya kernel capture kanıtı
 değildir. Guest raporları `C:\VeyloLab\result.json`, `capture.json`, `install.log`,
 `ioctl.log`, `capture.log` altındadır; seri çıktı VM klasöründeki `serial.log`'a
-yazılır. Süreç başladı diye testi geçmiş sayma. Bu sürümde kısa izole kernel
-ve capture testleri geçti; HVCI, uzun süreli testler ve uygulama kabulü bekliyor.
+yazılır. Süreç başladı diye testi geçmiş sayma. Genişletilmiş sonuçlar
+`C:\VeyloAcceptance` altındadır; [güncel kanıt](VALIDATION.md) yalnız tamamlanmış
+koşuları kabul sonucu olarak gösterir.
 
 ## Tamamlanacak kabul matrisi
 

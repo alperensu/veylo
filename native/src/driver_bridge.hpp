@@ -7,12 +7,14 @@
 #include <cmath>
 #include "../../driver/shared/ses_driver_protocol.h"
 #include "transfer_queue.hpp"
+#include "worker_timer.hpp"
 namespace ses {
 // Only the worker calls the driver. The callback pushes into bounded SPSC storage.
 class DriverBridge {
     TransferQueue queue;
     std::atomic<bool> running{false};
     HANDLE stopEvent=nullptr,ioEvent=nullptr;
+    WorkerTimer cadence;
     std::thread worker;
     bool call(HANDLE device,DWORD code,void* input,DWORD in,void* output,DWORD out){
         OVERLAPPED ov{};ov.hEvent=ioEvent;ResetEvent(ioEvent);DWORD bytes=0;
@@ -46,20 +48,28 @@ class DriverBridge {
                 if(!call(device,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0)){status=6;CloseHandle(device);device=INVALID_HANDLE_VALUE;continue;}
                 ++sequence;sent+=480;
             }
-            WaitForSingleObject(stopEvent,2);
+            const DWORD idle=cadence.wait(stopEvent,2);
+            if(idle!=WAIT_OBJECT_0+1){
+                if(running){lastError=idle==WAIT_FAILED?GetLastError():ERROR_TIMEOUT;status=6;}
+                break;
+            }
         }
-        if(device!=INVALID_HANDLE_VALUE)CloseHandle(device);status=0;protocol=0;queued=0;
+        if(device!=INVALID_HANDLE_VALUE)CloseHandle(device);if(!running)status=0;protocol=0;queued=0;
     }
 public:
     std::atomic<uint32_t> status{0},protocol{0},lastError{0},queued{0},underruns{0},overruns{0},queueDrops{0};
     std::atomic<int32_t> drift{0};std::atomic<uint64_t> sent{0},silence{0};
     ~DriverBridge(){stop();}
     void start(){stop();queue.discard();sent=0;silence=0;underruns=0;overruns=0;queueDrops=0;
-        stopEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);ioEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);
-        if(!stopEvent||!ioEvent){stop();status=6;lastError=ERROR_NOT_ENOUGH_MEMORY;return;}
+        auto failStart=[this](DWORD error){stop();status=6;lastError=error;};
+        stopEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        if(!stopEvent){failStart(GetLastError());return;}
+        ioEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        if(!ioEvent){failStart(GetLastError());return;}
+        if(!cadence.open()){failStart(GetLastError());return;}
         running=true;try{worker=std::thread([this]{loop();});}catch(...){stop();status=6;lastError=ERROR_NOT_ENOUGH_MEMORY;}
     }
-    void stop(){running=false;if(stopEvent)SetEvent(stopEvent);if(worker.joinable())worker.join();if(stopEvent)CloseHandle(stopEvent);if(ioEvent)CloseHandle(ioEvent);stopEvent=ioEvent=nullptr;status=0;}
+    void stop(){running=false;if(stopEvent)SetEvent(stopEvent);if(worker.joinable())worker.join();cadence.close();if(stopEvent)CloseHandle(stopEvent);if(ioEvent)CloseHandle(ioEvent);stopEvent=ioEvent=nullptr;status=0;}
     void push(const float* pcm){if(status.load(std::memory_order_acquire)==2&&!queue.push(pcm,GetTickCount64()))++queueDrops;}
     float bufferMs()const{return 20.f+float(queued.load()+queue.frames())/48.f;}
 };

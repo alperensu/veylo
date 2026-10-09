@@ -1,12 +1,31 @@
 #include "../../driver/shared/audio_validation.h"
 #include "../../driver/shared/pcm_ring.h"
 #include "../src/transfer_queue.hpp"
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include "../src/worker_timer.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 static unsigned checks=0;
 static void check(bool ok,const char* name){++checks;if(!ok){std::fprintf(stderr,"FAIL %s\n",name);std::exit(1);}}
+static void workerTimer(){
+    ses::WorkerTimer timer;
+    HANDLE stop=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+    check(stop!=nullptr,"Create private worker stop event");
+    check(timer.wait(stop,2)==WAIT_FAILED,"Uninitialized cadence fails closed");
+    check(timer.open(),"Private high-resolution cadence timer opens");
+    check(timer.wait(stop,0)==WAIT_FAILED,"Zero cadence is rejected");
+    check(timer.wait(stop,2)==WAIT_OBJECT_0+1,"Private cadence wakes without stop");
+    SetEvent(stop);
+    check(timer.wait(stop,500)==WAIT_OBJECT_0,"Stop preempts a pending worker timer");
+    timer.close();
+    check(timer.wait(stop,2)==WAIT_FAILED,"Closed cadence fails rather than polling");
+    check(timer.open(),"Cadence can reopen after stop");
+    check(timer.wait(stop,2)==WAIT_OBJECT_0,"Reopened cadence retains stop precedence");
+    CloseHandle(stop);
+}
 static void clockAndFormat(){
     using namespace ses_driver;
     for(uint32_t bits:{16u,32u}){
@@ -96,5 +115,5 @@ static void workerCadence(unsigned quantum){
         check(delivered&&unexpected_silence==0&&ring.underruns==0&&dropped==0,"1/5/10ms capture cadence survives jitter after priming");
     }
 }
-int main(){clockAndFormat();reserveAndDrift(10000,true);reserveAndDrift(9990,false);reserveAndDrift(10010,false);workerCadence(48);workerCadence(240);workerCadence(480);workerCadence(960);
+int main(){workerTimer();clockAndFormat();reserveAndDrift(10000,true);reserveAndDrift(9990,false);reserveAndDrift(10010,false);workerCadence(48);workerCadence(240);workerCadence(480);workerCadence(960);
     std::printf("%u portable driver validation checks passed; no kernel or installation test was run\n",checks);}
