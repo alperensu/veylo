@@ -29,6 +29,50 @@ function Assert-VmAcceptanceSeed([string]$Seed,[string]$VmId) {
     }
     return $directory
 }
+function Get-VmFirmwarePaths([string]$Vm,$State,[switch]$VerifyInputs) {
+    $properties=@($State.PSObject.Properties.Name)
+    $firmware=if($properties -contains 'firmware'){$State.firmware}else{'BIOS'}
+    if($firmware -isnot [string] -or $firmware -cnotin @('BIOS','UEFI')){throw 'Invalid guest firmware enum'}
+    if($firmware -ceq 'BIOS'){
+        if($properties -contains 'firmwareCode' -or $properties -contains 'firmwareVars'){throw 'BIOS metadata cannot attach firmware paths'}
+        return @{firmware='BIOS'}
+    }
+    $base=Join-Path $labSigningRoot '.tools/driver-lab'
+    $ownedVm=Assert-VmPrivateAcl $Vm $base
+    $code=Join-Path $base 'qemu/share/edk2-x86_64-code.fd'
+    $vars=Join-Path $ownedVm 'uefi-vars.fd'
+    if($properties -notcontains 'firmwareCode' -or $properties -notcontains 'firmwareVars' -or
+       $State.firmwareCode -isnot [string] -or $State.firmwareVars -isnot [string] -or
+       $State.firmwareCode -cne $code -or $State.firmwareVars -cne $vars){throw 'UEFI metadata must use fixed code and owned NVRAM paths'}
+    $code=Assert-LabPath $code $base
+    $vars=Assert-VmPrivateAcl $vars $ownedVm
+    foreach($file in @($code,$vars)){
+        if($file.Contains(',') -or $file.Contains('"')){throw 'Unsupported firmware path delimiter'}
+        $info=Get-Item -LiteralPath $file
+        if($info.PSIsContainer -or $info.Length -lt 1 -or $info.Length -gt 16MB){throw 'Invalid guest firmware file size/type'}
+    }
+    # NVRAM is mutable during guest boots. Its template is pinned at creation;
+    # subsequent starts enforce fixed ownership/path and the exact flash size.
+    if((Get-Item -LiteralPath $vars).Length -ne 540672){throw 'Guest NVRAM flash size differs'}
+    if($VerifyInputs){
+        $lock=Get-Content -LiteralPath (Join-Path $labSigningRoot 'driver/lab.lock.json') -Raw | ConvertFrom-Json
+        if($lock.qemu.uefiCodeSha256 -cnotmatch '\A[0-9a-f]{64}\z' -or
+           (Get-FileHash -LiteralPath $code -Algorithm SHA256).Hash.ToLowerInvariant() -cne $lock.qemu.uefiCodeSha256){throw 'Pinned UEFI code checksum mismatch'}
+    }
+    return @{firmware='UEFI';code=$code;vars=$vars}
+}
+function Get-VmInstallLayout([ValidateSet('BIOS','UEFI')][string]$Firmware='BIOS') {
+    if($Firmware -eq 'UEFI'){
+        # Microsoft's current Windows 11 GPT guidance requires ESP >=200 MB for
+        # 512/512e and >=300 MB for 4Kn. Use 300 MB for this new guest disk only.
+        return @{partitionId=3;
+            create='<CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>300</Size></CreatePartition><CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition><CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>';
+            modify='<ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition><ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>VEYLO-LAB</Label><Letter>C</Letter></ModifyPartition>'}
+    }
+    return @{partitionId=1;
+        create='<CreatePartition wcm:action="add"><Order>1</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>';
+        modify='<ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>NTFS</Format><Label>VEYLO-LAB</Label><Letter>C</Letter><Active>true</Active></ModifyPartition>'}
+}
 function Get-OwnedVm([string]$Directory,[switch]$VerifyInputs) {
     $base=Join-Path $labSigningRoot '.tools/driver-lab';$vm=Assert-VmPrivateAcl $Directory $base
     if([IO.Path]::GetFileName($vm) -cnotmatch '^vm-[0-9a-f]{32}$'){throw 'Not an owned Veylo VM directory'}
@@ -36,10 +80,17 @@ function Get-OwnedVm([string]$Directory,[switch]$VerifyInputs) {
     if((Get-Item -LiteralPath $metadata).Length -gt 16KB){throw 'Oversized VM metadata'}
     $state=Get-Content -LiteralPath $metadata -Raw | ConvertFrom-Json;$id=[Guid]::Empty
     if($state.schema -ne 1 -or $state.ownedBy -cne 'Veylo isolated driver lab' -or ![Guid]::TryParseExact([string]$state.id,'D',[ref]$id) -or $id.ToString('D') -cne $state.id -or $state.accelerator -cnotin @('whpx','tcg') -or $state.hostSecurityChanged -isnot [bool] -or $state.hostSecurityChanged -or $state.installed -isnot [bool]){throw 'Invalid VM identity'}
+    Get-VmFirmwarePaths $vm $state -VerifyInputs:$VerifyInputs | Out-Null
+    # Ownership and canonical paths are mandatory even for control-only reads;
+    # VerifyInputs adds immutable payload hashes and full seed inventory checks.
+    $disk=Assert-VmPrivateAcl (Join-Path $vm 'windows.qcow2') $vm;$diskInfo=Get-Item -LiteralPath $disk
+    if($state.disk -cne $disk -or $diskInfo.PSIsContainer -or $diskInfo.Length -lt 1 -or $diskInfo.Length -gt 80GB){throw 'Invalid owned virtual disk'}
+    $seed=Assert-LabPath $state.seed (Join-Path $labSigningRoot 'artifacts/driver-test-signing');Assert-LabPrivateAcl $seed
+    if(!(Get-Item -LiteralPath $seed).PSIsContainer){throw 'VM seed must be a private directory'}
+    $iso=Assert-LabPath (Join-Path $base 'Windows11-IoT-LTSC-2024-eval.iso') $base
+    $isoInfo=Get-Item -LiteralPath $iso
+    if($state.iso -cne $iso -or $isoInfo.PSIsContainer -or $isoInfo.Length -lt 1 -or $isoInfo.Length -gt 8GB){throw 'Invalid fixed guest ISO path/size'}
     if($VerifyInputs){
-        $disk=Assert-VmPrivateAcl (Join-Path $vm 'windows.qcow2') $vm;$diskInfo=Get-Item -LiteralPath $disk
-        if($state.disk -cne $disk -or $diskInfo.PSIsContainer -or $diskInfo.Length -lt 1 -or $diskInfo.Length -gt 80GB){throw 'Invalid owned virtual disk'}
-        $seed=Assert-LabPath $state.seed (Join-Path $labSigningRoot 'artifacts/driver-test-signing');Assert-LabPrivateAcl $seed
         $seedPath=Assert-LabPath (Join-Path $seed 'veylo-lab-seed.json') $seed;Assert-LabPrivateAcl $seedPath
         if((Get-Item -LiteralPath $seedPath).Length -gt 64KB){throw 'Oversized seed metadata'}
         $identity=Get-Content -LiteralPath $seedPath -Raw | ConvertFrom-Json
@@ -60,8 +111,7 @@ function Get-OwnedVm([string]$Directory,[switch]$VerifyInputs) {
             if($file.Name -cnotin ($names+@('veylo-lab-seed.json','autounattend.xml')) -or $file.PSIsContainer){throw 'Unexpected seed path'}
             Assert-LabPath $file.FullName $seed | Out-Null;Assert-LabPrivateAcl $file.FullName
         }
-        $exe=Assert-LabPath (Join-Path $base 'qemu/qemu-system-x86_64.exe') $base;$iso=Assert-LabPath (Join-Path $base 'Windows11-IoT-LTSC-2024-eval.iso') $base
-        if($state.iso -cne $iso){throw 'VM ISO identity differs'}
+        $exe=Assert-LabPath (Join-Path $base 'qemu/qemu-system-x86_64.exe') $base
         $lock=Get-Content -LiteralPath (Join-Path $labSigningRoot 'driver/lab.lock.json') -Raw | ConvertFrom-Json
         foreach($item in @(@{path=$exe;hash=$lock.qemu.systemSha256},@{path=$iso;hash=$lock.windows.sha256})){
             if($item.hash -cnotmatch '^[0-9a-f]{64}$' -or (Get-FileHash -LiteralPath $item.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.hash){throw 'Pinned VM input mismatch'}
@@ -126,6 +176,7 @@ function Read-VmJson([string]$Directory,[string]$Name) {
     return $json | ConvertFrom-Json @jsonOptions
 }
 function Get-VmArguments([string]$Vm,$State,[switch]$BootInstalled,[switch]$EvaluationActivationNetwork) {
+    $firmware=Get-VmFirmwarePaths $Vm $State
     $diskBoot=$BootInstalled -or $State.installed
     if($EvaluationActivationNetwork -and !$diskBoot){throw 'Evaluation activation networking requires an explicitly installed guest disk'}
     if(!$diskBoot -and (Test-Path -LiteralPath (Join-Path $Vm 'process.json'))){throw 'Initial ISO boot is allowed once; use -BootInstalled to resume the owned disk'}
@@ -137,6 +188,12 @@ function Get-VmArguments([string]$Vm,$State,[switch]$BootInstalled,[switch]$Eval
     $arguments=@('-machine','q35','-accel',$State.accelerator,'-cpu','max','-smp','2','-m','6144','-display','none','-nic',$nic,'-monitor','none','-qmp','stdio','-no-reboot',
         '-serial',('file:'+(Join-Path $Vm 'serial.log')),'-smbios',('type=1,manufacturer=QEMU,product=VeyloDriverLab,uuid='+$State.id),
         '-drive',('file='+$State.disk+',format=qcow2,if=ide,index=0'))
+    if($firmware.firmware -ceq 'UEFI'){
+        # This non-secure OVMF policy applies only to the isolated guest. Never
+        # change host firmware or attach an arbitrary caller-supplied flash file.
+        $arguments+=@('-drive',('file='+$firmware.code+',format=raw,if=pflash,unit=0,readonly=on'),
+            '-drive',('file='+$firmware.vars+',format=raw,if=pflash,unit=1'))
+    }
     if(!$diskBoot){$arguments+=@('-drive',('file='+$State.iso+',media=cdrom,if=ide,index=2,readonly=on'))}
     $arguments+=@('-device','qemu-xhci','-drive',('file=fat:ro:'+$State.seed+',format=raw,if=none,id=seed,readonly=on'),'-device','usb-storage,drive=seed,removable=on','-boot',$(if($diskBoot){'order=c'}else{'order=c,once=d'}))
     return $arguments

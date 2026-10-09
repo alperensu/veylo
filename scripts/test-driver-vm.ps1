@@ -8,7 +8,7 @@ $script:checks=0
 function Check([bool]$Condition,[string]$Name){$script:checks++;if(!$Condition){throw ('VM regression failed: '+$Name)};Write-Output ('Passed '+$Name)}
 function Reject([scriptblock]$Action,[string]$Name){$failed=$false;try{& $Action | Out-Null}catch{$failed=$true};Check $failed $Name}
 try{
-    foreach($name in @('driver-vm-common.ps1','start-driver-vm.ps1','run-driver-vm.ps1','control-driver-vm.ps1','stage-driver-acceptance.ps1','driver-vm-acceptance.ps1')){
+    foreach($name in @('prepare-driver-vm.ps1','driver-vm-common.ps1','start-driver-vm.ps1','run-driver-vm.ps1','control-driver-vm.ps1','stage-driver-acceptance.ps1','driver-vm-acceptance.ps1')){
         $errors=$null;$tokens=$null
         [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $name),[ref]$tokens,[ref]$errors) | Out-Null
         Check (!$errors) ('PowerShell parser '+$name)
@@ -22,6 +22,8 @@ try{
     [IO.File]::WriteAllText($disk,'owned fixture; not a disk')
     $diskAcl=Get-Acl -LiteralPath $disk;$diskAcl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $disk -AclObject $diskAcl
     $identity=[ordered]@{schema=1;id=[Guid]::NewGuid().ToString('D');ownedBy='Veylo isolated driver lab';disk=$disk;iso=(Join-Path $base 'Windows11-IoT-LTSC-2024-eval.iso');seed=(Join-Path $fixture 'artifacts/driver-test-signing/seed');accelerator='tcg';hostSecurityChanged=$false;installed=$false}
+    New-LabPrivateDirectory $identity.seed | Out-Null
+    [IO.File]::WriteAllText($identity.iso,'inert fixed ISO fixture; never booted')
     function Save-Identity {
         [IO.File]::WriteAllText($metadata,($identity | ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
         $fileAcl=Get-Acl -LiteralPath $metadata;$fileAcl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $metadata -AclObject $fileAcl
@@ -31,6 +33,106 @@ try{
     $old=$identity.id;$identity.id='invalid';Save-Identity;Reject {Get-OwnedVm $vm} 'malformed UUID rejected';$identity.id=$old
     $old=$identity.ownedBy;$identity.ownedBy='external';Save-Identity;Reject {Get-OwnedVm $vm} 'foreign VM ownership rejected';$identity.ownedBy=$old
     $identity.installed='false';Save-Identity;Reject {Get-OwnedVm $vm} 'nonboolean installed marker rejected';$identity.installed=$false
+    Save-Identity
+    Check ((Get-VmFirmwarePaths $vm ([pscustomobject]$identity)).firmware -ceq 'BIOS') 'legacy metadata defaults to BIOS without flash attachments'
+    $biosArgs=Get-VmArguments $vm ([pscustomobject]$identity)
+    Check (!($biosArgs -match 'if=pflash')) 'legacy BIOS launch has no pflash drive'
+    $identity.firmware='BIOS';Save-Identity
+    Check ((Get-OwnedVm $vm).state.firmware -ceq 'BIOS') 'explicit BIOS metadata accepted'
+    $biosLayout=Get-VmInstallLayout -Firmware BIOS
+    [xml]$biosXml=('<Disk xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"><CreatePartitions>'+$biosLayout.create+'</CreatePartitions><ModifyPartitions>'+$biosLayout.modify+'</ModifyPartitions></Disk>')
+    Check ($biosLayout.partitionId -eq 1 -and $biosXml.Disk.CreatePartitions.CreatePartition.Type -ceq 'Primary' -and
+        $biosXml.Disk.ModifyPartitions.ModifyPartition.Active -ceq 'true') 'BIOS unattend preserves primary active Windows partition one'
+    $uefiLayout=Get-VmInstallLayout -Firmware UEFI
+    [xml]$uefiXml=('<Disk xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State"><CreatePartitions>'+$uefiLayout.create+'</CreatePartitions><ModifyPartitions>'+$uefiLayout.modify+'</ModifyPartitions></Disk>')
+    $partitions=@($uefiXml.Disk.CreatePartitions.CreatePartition);$modify=@($uefiXml.Disk.ModifyPartitions.ModifyPartition)
+    Check ($uefiLayout.partitionId -eq 3 -and $partitions.Count -eq 3 -and $partitions[0].Type -ceq 'EFI' -and
+        $partitions[0].Size -ceq '300' -and $partitions[1].Type -ceq 'MSR' -and $partitions[1].Size -ceq '16' -and
+        $partitions[2].Type -ceq 'Primary' -and $partitions[2].Extend -ceq 'true' -and $modify.Count -eq 2 -and
+        $modify[0].PartitionID -ceq '1' -and $modify[0].Format -ceq 'FAT32' -and $modify[1].PartitionID -ceq '3' -and
+        $modify[1].Format -ceq 'NTFS' -and !($uefiLayout.modify -match '<Active>')) 'UEFI unattend uses GPT EFI300 FAT32 MSR16 and remaining NTFS Windows partition three'
+    # Expand only the saved XML string AST with an inert guest password. Never
+    # execute preparation, qemu-img, WDK discovery, mount or partition commands.
+    $prepareAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'prepare-driver-vm.ps1'),[ref]$null,[ref]$null)
+    $xmlTemplate=$prepareAst.Find({param($node) $node -is [Management.Automation.Language.ExpandableStringExpressionAst] -and $node.Extent.Text.Contains('<unattend ')},$true)
+    if(!$xmlTemplate){throw 'Missing guest unattend XML template'}
+    $password='inert guest fixture; never used'
+    foreach($mode in @('BIOS','UEFI')){
+        $layout=Get-VmInstallLayout -Firmware $mode
+        [xml]$unattend=& ([ScriptBlock]::Create($xmlTemplate.Extent.Text))
+        $manager=[Xml.XmlNamespaceManager]::new($unattend.NameTable);$manager.AddNamespace('u','urn:schemas-microsoft-com:unattend')
+        $target=$unattend.SelectSingleNode('//u:InstallTo/u:PartitionID',$manager)
+        $creates=$unattend.SelectNodes('//u:CreatePartitions/u:CreatePartition',$manager)
+        Check ($target.InnerText -ceq [string]$layout.partitionId -and $creates.Count -eq $(if($mode -ceq 'UEFI'){3}else{1}) -and
+            $unattend.SelectSingleNode('//u:DiskID',$manager).InnerText -ceq '0' -and
+            ($mode -ceq 'BIOS' -or $creates[0].Size -ceq '300')) ('actual saved unattend template maps new disk zero to '+$mode+' Windows partition')
+    }
+    $password=$null
+    Reject {Get-VmInstallLayout -Firmware 'foreign'} 'unknown guest install firmware rejected'
+    $code=Join-Path $base 'qemu/share/edk2-x86_64-code.fd';New-Item -ItemType Directory -Path (Split-Path $code -Parent) -Force | Out-Null
+    [IO.File]::WriteAllText($code,'inert firmware fixture; never booted')
+    $vars=Join-Path $vm 'uefi-vars.fd'
+    $varsStream=[IO.File]::Open($vars,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write)
+    try{$varsStream.SetLength(540672)}finally{$varsStream.Dispose()}
+    $varsAcl=Get-Acl -LiteralPath $vars;$varsAcl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $vars -AclObject $varsAcl
+    $firmwareLockPath=Join-Path $fixture 'driver/lab.lock.json';New-Item -ItemType Directory -Path (Split-Path $firmwareLockPath -Parent) -Force | Out-Null
+    $firmwareLock=@{qemu=@{uefiCodeSha256=(Get-FileHash -LiteralPath $code -Algorithm SHA256).Hash.ToLowerInvariant()}}
+    function Save-FirmwareLock {$firmwareLock | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $firmwareLockPath -Encoding utf8}
+    Save-FirmwareLock
+    $identity.firmware='UEFI';$identity.firmwareCode=$code;$identity.firmwareVars=$vars;Save-Identity
+    Check ((Get-OwnedVm $vm).state.firmware -ceq 'UEFI') 'owned UEFI metadata paths validated without input hashing'
+    Check ((Get-VmFirmwarePaths $vm ([pscustomobject]$identity) -VerifyInputs).code -ceq $code) 'UEFI immutable code pin verified against inert fixture lock'
+    $uefiArgs=Get-VmArguments $vm ([pscustomobject]$identity)
+    $flash=@($uefiArgs | Where-Object {$_ -match 'if=pflash'})
+    Check ($flash.Count -eq 2 -and $flash[0] -ceq ('file='+$code+',format=raw,if=pflash,unit=0,readonly=on') -and
+        $flash[1] -ceq ('file='+$vars+',format=raw,if=pflash,unit=1')) 'UEFI launch attaches only exact readonly code and owned writable NVRAM'
+    $old=$identity.firmwareVars;$identity.firmwareVars=Join-Path $fixture 'foreign-vars.fd';Save-Identity
+    Reject {Get-OwnedVm $vm} 'foreign NVRAM path rejected even without VerifyInputs'
+    Reject {Get-VmArguments $vm ([pscustomobject]$identity)} 'foreign NVRAM path cannot become a QEMU argument';$identity.firmwareVars=$old
+    $old=$identity.firmwareCode;$identity.firmwareCode=Join-Path $fixture 'foreign-code.fd';Save-Identity
+    Reject {Get-OwnedVm $vm} 'foreign firmware code rejected even without VerifyInputs'
+    Reject {Get-VmArguments $vm ([pscustomobject]$identity)} 'foreign firmware code cannot become a QEMU argument';$identity.firmwareCode=$old
+    foreach($field in @('firmwareCode','firmwareVars')){
+        $old=$identity[$field];$identity.Remove($field);Save-Identity
+        Reject {Get-OwnedVm $vm} ('missing UEFI metadata field rejected '+$field);$identity[$field]=$old
+    }
+    $identity.firmware='unexpected';Save-Identity;Reject {Get-OwnedVm $vm} 'unknown firmware enum rejected';$identity.firmware='UEFI';Save-Identity
+    $old=$firmwareLock.qemu.uefiCodeSha256;$firmwareLock.qemu.uefiCodeSha256='bad';Save-FirmwareLock
+    Reject {Get-VmFirmwarePaths $vm ([pscustomobject]$identity) -VerifyInputs} 'malformed UEFI code pin rejected'
+    $firmwareLock.qemu.uefiCodeSha256=('0'*64);Save-FirmwareLock
+    Reject {Get-VmFirmwarePaths $vm ([pscustomobject]$identity) -VerifyInputs} 'mismatched UEFI code hash rejected';$firmwareLock.qemu.uefiCodeSha256=$old;Save-FirmwareLock
+    $codeBytes=[IO.File]::ReadAllBytes($code);$stream=[IO.File]::Open($code,[IO.FileMode]::Open,[IO.FileAccess]::Write)
+    try{$stream.SetLength(16MB+1)}finally{$stream.Dispose()}
+    Reject {Get-OwnedVm $vm} 'oversized firmware code rejected without VerifyInputs';[IO.File]::WriteAllBytes($code,$codeBytes)
+    $codeBackup=Join-Path (Split-Path $code -Parent) 'fixture-code-backup.fd';Move-Item -LiteralPath $code -Destination $codeBackup
+    try{
+        New-Item -ItemType Junction -Path $code -Target $vm | Out-Null
+        Reject {Get-OwnedVm $vm} 'reparse firmware code rejected without VerifyInputs'
+    }finally{if(Test-Path -LiteralPath $code){[IO.Directory]::Delete($code)};Move-Item -LiteralPath $codeBackup -Destination $code}
+    $stream=[IO.File]::Open($vars,[IO.FileMode]::Open,[IO.FileAccess]::Write)
+    try{$stream.SetLength(16MB+1)}finally{$stream.Dispose()}
+    Reject {Get-OwnedVm $vm} 'oversized owned NVRAM rejected without VerifyInputs'
+    $stream=[IO.File]::Open($vars,[IO.FileMode]::Open,[IO.FileAccess]::Write)
+    try{$stream.SetLength(540671)}finally{$stream.Dispose()}
+    Reject {Get-OwnedVm $vm} 'wrong NVRAM flash size rejected'
+    $stream=[IO.File]::Open($vars,[IO.FileMode]::Open,[IO.FileAccess]::Write)
+    try{$stream.SetLength(540672)}finally{$stream.Dispose()}
+    $varsBackup=Join-Path $vm 'fixture-vars-backup.fd';Move-Item -LiteralPath $vars -Destination $varsBackup
+    try{
+        New-Item -ItemType Junction -Path $vars -Target $vm | Out-Null
+        Reject {Get-OwnedVm $vm} 'reparse NVRAM rejected without VerifyInputs'
+    }finally{if(Test-Path -LiteralPath $vars){[IO.Directory]::Delete($vars)};Move-Item -LiteralPath $varsBackup -Destination $vars}
+    $weak=Get-Acl -LiteralPath $vars;$weak.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'),[Security.AccessControl.FileSystemRights]::Read,[Security.AccessControl.AccessControlType]::Allow))
+    Set-Acl -LiteralPath $vars -AclObject $weak;Reject {Get-OwnedVm $vm} 'public-readable NVRAM rejected without VerifyInputs';Set-Acl -LiteralPath $vars -AclObject $varsAcl
+    $identity.firmware='BIOS';Save-Identity;Reject {Get-OwnedVm $vm} 'BIOS metadata cannot retain arbitrary flash attachments'
+    $identity.Remove('firmwareCode');$identity.Remove('firmwareVars');$identity.Remove('firmware');Save-Identity
+    Check ((Get-OwnedVm $vm).state.installed -eq $false) 'legacy BIOS fixture remains valid after isolated UEFI checks'
+    $old=$identity.disk;$identity.disk=Join-Path $fixture 'foreign-disk.qcow2';Save-Identity
+    Reject {Get-OwnedVm $vm} 'control-only ownership read rejects foreign disk metadata';$identity.disk=$old
+    $old=$identity.seed;$identity.seed=$fixture;Save-Identity
+    Reject {Get-OwnedVm $vm} 'control-only ownership read rejects seed outside private seed root';$identity.seed=$old
+    $old=$identity.iso;$identity.iso=Join-Path $fixture 'foreign.iso';Save-Identity
+    Reject {Get-OwnedVm $vm} 'control-only ownership read rejects foreign ISO metadata';$identity.iso=$old;Save-Identity
     $acceptanceSeed=New-LabPrivateDirectory (Join-Path $fixture 'artifacts/driver-test-signing/acceptance-fixture')
     $acceptance=New-LabPrivateDirectory (Join-Path $acceptanceSeed 'acceptance')
     $acceptanceFiles=[ordered]@{}

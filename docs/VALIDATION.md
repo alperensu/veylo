@@ -1,7 +1,7 @@
 # Driver acceptance tools / source checkpoint — 2026-10-09
 
 Passed: six native and six AddressSanitizer groups; 44 offline capture checks,
-149 safe VM-control/guest-decision checks, 110 managed checks, offline WPF
+181 safe VM-control/guest-decision checks, 110 managed checks, offline WPF
 persistence/shutdown/smoke, 18 driver-helper checks in a separate output directory,
 and existing package/signing checks. The combined headless command stopped on a
 pre-existing locked helper DLL; its remaining helper and UI checks passed using
@@ -36,8 +36,7 @@ Passed: independent read-only correctness and security reviews and follow-up
 fixes for snapshot preservation, scheduler transitions, clock publication races
 and startup error evidence. The final registry ACL calls also received a fresh
 independent security review after an earlier review attempt hit its usage limit.
-Fixed allowlisted
-registry paths use Get-Acl -Path for Windows PowerShell 5.1 compatibility;
+Fixed allowlisted registry paths use Get-Acl -Path for Windows PowerShell 5.1 compatibility;
 filesystem paths retain -LiteralPath. Actual guest registry corroboration is
 recorded separately from active Verifier evidence, and neither proves HVCI.
 
@@ -67,8 +66,18 @@ cold boot stopped in Windows Recovery with error 0xc0000189 and a system-capabil
 message. This is not a driver bugcheck or proof of driver incompatibility. The
 failed disk state was retained as hvci-boot-failed-20261009; restoring the owned
 licensed-ci-verifier-20261009 snapshot returned the guest to normal Windows boot.
-The current QEMU/WHPX platform has not demonstrated active VSM/HVCI. Repeating
+Read-only WHvGetCapability returned S_OK: host HypervisorPresent, LocalApicEmulation
+and ProcessorFeaturesBanks.Bank1.NestedVirtSupport are true. This does not prove
+QEMU's partition setup or guest VSM boot. Missing host nested/APIC support is not
+the observed explanation. The current guest has not demonstrated active VSM/HVCI. Repeating
 registry settings is not a demonstrated remedy; host security was not changed.
+
+Passed: optional new-VM UEFI preparation has fixed readonly code and private
+mutable NVRAM paths, with pinned firmware hashes verified against selective
+extraction from the checksum-pinned QEMU installer. BIOS remains default; three
+existing BIOS metadata records passed read-only compatibility checks. Inert
+expansion of the actual unattended XML verified EFI300/MSR16/Windows partition3
+and unchanged BIOS layout. Real UEFI boot/HVCI is not established by these tests.
 
 Not run/completed at this source checkpoint: one-hour acceptance, active HVCI
 capture, supported sleep/hibernate recovery, different-version upgrade/rollback,
@@ -82,7 +91,7 @@ remains false; the daily host security settings and saved user state are preserv
 
 Evidence: artifacts/driver-acceptance/{capture-ci-60-dedicated-producer-serial.log,
 capture-hour-ci-first-failed-serial.log,activation-verifier-sleep-serial.log,
-vm-fixtures-identity-final.log,native-tests-final.log,asan-final-tests.log,
+vm-fixtures-uefi-final.log,native-tests-final.log,asan-final-tests.log,
 security-final.log,core-after-timer.log,hvci-configured-and-registry-serial.log,
 hvci-boot-lock.png,recovered-desktop.png}. See [DRIVER-ACCEPTANCE.md](DRIVER-ACCEPTANCE.md).
 

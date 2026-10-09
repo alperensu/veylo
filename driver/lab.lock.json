@@ -4,7 +4,9 @@
     "url": "https://qemu.weilnetz.de/w64/qemu-w64-setup-20260811.exe",
     "sha512": "5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543",
     "systemSha256": "47d57a6072e0bb3bd98f87926eb129eb1736dfe818c67b3b81ef7ce4edd0b3cd",
-    "imageSha256": "9d930582d0d574bb106d89982c547688e10b8f356192d302cc3d0ae4e8674534"
+    "imageSha256": "9d930582d0d574bb106d89982c547688e10b8f356192d302cc3d0ae4e8674534",
+    "uefiCodeSha256": "33090cc07675baa5190d9f1e84bf5176b33bcbfa9bacac522961150cdb6dbb2a",
+    "uefiVarsSha256": "5d2ac383371b408398accee7ec27c8c09ea5b74a0de0ceea6513388b15be5d1e"
   },
   "windows": {
     "edition": "Windows 11 IoT Enterprise LTSC 2024 Evaluation",

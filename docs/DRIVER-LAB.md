@@ -94,6 +94,20 @@ olarak kullanılmaz. Varsayılan hızlandırıcı `whpx`'tir; hazır ve kullanı
 WHPX yerine CPU emülasyonu gerektiğinde örnekteki `tcg` seçilir. Betikler host
 Windows özelliklerini etkinleştirmez. TCG sonucu performans kabulü sayılmaz.
 
+Yeni UEFI laboratuvarı gerekiyorsa hazırlama komutuna `-Firmware UEFI` ekle.
+Varsayılan `BIOS` ve eski VM kayıtları korunur; mevcut diski UEFI'ye dönüştürmez.
+UEFI hazırlığı yeni diskte 300 MB FAT32 EFI, 16 MB MSR ve kalan NTFS Windows
+bölümünü oluşturacak kurulum dosyası üretir. Windows üçüncü bölüme kurulur.
+[Microsoft bölüm gereksinimleri](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/configure-uefigpt-based-hard-drive-partitions?view=windows-11).
+
+Firmware kodu sabitlenmiş QEMU paketindeki `edk2-x86_64-code.fd` dosyasından
+salt okunur bağlanır. `edk2-i386-vars.fd` şablonunun doğrulanmış kopyası yalnız
+yeni VM'nin korumalı `uefi-vars.fd` dosyasıdır; guest'in NVRAM değişiklikleri burada
+kalır. İlk şablon ve kod hash'leri kilit dosyasındadır; açılışta kod hash'i,
+NVRAM'ın sabit yolu, sahipliği ve boyutu denetlenir. Bu laboratuvar firmware'i
+guest Secure Boot'u etkinleştirmez; host firmware/güvenlik ayarlarını değiştirmez.
+UEFI'nin seçilmesi, VSM/HVCI'nin gerçekten çalıştığını kanıtlamaz.
+
 VM başlatma/kontrol betikleri PowerShell 7 ister. Çıktıdaki gerçek `vm-...`
 klasörünü kullanarak ilk açılışı yap:
 

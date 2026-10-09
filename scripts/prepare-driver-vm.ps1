@@ -1,8 +1,9 @@
 #Requires -Version 7.2
 # Creates only a new, owned virtual disk and seed. Never configures the host OS.
-param([switch]$AcceptEvaluationLicense,[string]$TestSignedPackage,[ValidateSet('whpx','tcg')][string]$Accelerator='whpx',[switch]$Start,[string]$EwdkRoot)
+param([switch]$AcceptEvaluationLicense,[string]$TestSignedPackage,[ValidateSet('whpx','tcg')][string]$Accelerator='whpx',[switch]$Start,[string]$EwdkRoot,[ValidateSet('BIOS','UEFI')][string]$Firmware='BIOS')
 $ErrorActionPreference='Stop'
-. (Join-Path $PSScriptRoot 'driver-signing.ps1')
+. (Join-Path $PSScriptRoot 'driver-vm-common.ps1')
+$Firmware=$Firmware.ToUpperInvariant()
 if(!$AcceptEvaluationLicense){throw 'Explicit -AcceptEvaluationLicense is required for the Microsoft evaluation guest only'}
 $toolRoot=Join-Path $labSigningRoot '.tools/driver-lab'
 $iso=Join-Path $toolRoot 'Windows11-IoT-LTSC-2024-eval.iso'
@@ -10,6 +11,17 @@ $lock=Get-Content -LiteralPath (Join-Path $labSigningRoot 'driver/lab.lock.json'
 foreach($item in @(@{path=$iso;hash=$lock.windows.sha256},@{path=(Join-Path $toolRoot 'qemu/qemu-system-x86_64.exe');hash=$lock.qemu.systemSha256},@{path=(Join-Path $toolRoot 'qemu/qemu-img.exe');hash=$lock.qemu.imageSha256})){
     Assert-LabPath $item.path $toolRoot | Out-Null
     if((Get-FileHash -LiteralPath $item.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.hash){throw 'Pinned VM input checksum mismatch'}
+}
+if($Firmware -ceq 'UEFI'){
+    $firmwareCode=Join-Path $toolRoot 'qemu/share/edk2-x86_64-code.fd'
+    $firmwareTemplate=Join-Path $toolRoot 'qemu/share/edk2-i386-vars.fd'
+    foreach($item in @(@{path=$firmwareCode;hash=$lock.qemu.uefiCodeSha256},@{path=$firmwareTemplate;hash=$lock.qemu.uefiVarsSha256})){
+        Assert-LabPath $item.path $toolRoot | Out-Null
+        $info=Get-Item -LiteralPath $item.path
+        if($info.PSIsContainer -or $info.Length -lt 1 -or $info.Length -gt 16MB -or
+           $item.hash -cnotmatch '\A[0-9a-f]{64}\z' -or
+           (Get-FileHash -LiteralPath $item.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.hash){throw 'Pinned UEFI firmware checksum/size mismatch'}
+    }
 }
 Assert-TestSignedLabManifest $TestSignedPackage | Out-Null
 if(!$EwdkRoot){
@@ -33,12 +45,21 @@ $id=[Guid]::NewGuid().ToString()
 $disk=Join-Path $vm 'windows.qcow2'
 & (Join-Path $toolRoot 'qemu/qemu-img.exe') create -f qcow2 $disk 64G
 if($LASTEXITCODE -ne 0){throw 'Owned virtual disk creation failed'}
+if($Firmware -ceq 'UEFI'){
+    $firmwareVars=Join-Path $vm 'uefi-vars.fd'
+    Copy-Item -LiteralPath $firmwareTemplate -Destination $firmwareVars
+    $varsAcl=Get-Acl -LiteralPath $firmwareVars;$varsAcl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $firmwareVars -AclObject $varsAcl
+    Assert-VmPrivateAcl $firmwareVars $vm | Out-Null
+    if((Get-Item -LiteralPath $firmwareVars).Length -ne 540672 -or
+       (Get-FileHash -LiteralPath $firmwareVars -Algorithm SHA256).Hash.ToLowerInvariant() -cne $lock.qemu.uefiVarsSha256){throw 'New owned UEFI NVRAM differs from its pinned template'}
+}
 foreach($name in ($labPublicNames+@('test-signing-manifest.json'))){Copy-Item -LiteralPath (Join-Path $TestSignedPackage $name) -Destination $seed}
 Copy-Item -LiteralPath $devcon -Destination (Join-Path $seed 'devcon.exe')
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'driver-vm-guest.ps1') -Destination (Join-Path $seed 'guest.ps1')
 $seedHashes=[ordered]@{};foreach($file in Get-ChildItem -LiteralPath $seed -File){$seedHashes[$file.Name]=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
 @{schema=1;id=$id;files=$seedHashes;testOnly=$true} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $seed 'veylo-lab-seed.json') -Encoding utf8
 $password='V!'+[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(24))+'a'
+$layout=Get-VmInstallLayout -Firmware $Firmware
 # Disk 0 below is ONLY the newly created QCOW2 attached by our fixed QEMU launch.
 # The generated XML contains a transient guest credential and stays private/ignored.
 @"
@@ -47,8 +68,8 @@ $password='V!'+[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerat
  <settings pass="windowsPE">
   <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS"><SetupUILanguage><UILanguage>en-US</UILanguage></SetupUILanguage><InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale><UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale></component>
   <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
-   <DiskConfiguration><Disk xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" wcm:action="add"><DiskID>0</DiskID><WillWipeDisk>true</WillWipeDisk><CreatePartitions><CreatePartition wcm:action="add"><Order>1</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition></CreatePartitions><ModifyPartitions><ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>NTFS</Format><Label>VEYLO-LAB</Label><Letter>C</Letter><Active>true</Active></ModifyPartition></ModifyPartitions></Disk><WillShowUI>OnError</WillShowUI></DiskConfiguration>
-   <ImageInstall><OSImage><InstallFrom><MetaData xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>1</Value></MetaData></InstallFrom><InstallTo><DiskID>0</DiskID><PartitionID>1</PartitionID></InstallTo><WillShowUI>OnError</WillShowUI></OSImage></ImageInstall>
+   <DiskConfiguration><Disk xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" wcm:action="add"><DiskID>0</DiskID><WillWipeDisk>true</WillWipeDisk><CreatePartitions>$($layout.create)</CreatePartitions><ModifyPartitions>$($layout.modify)</ModifyPartitions></Disk><WillShowUI>OnError</WillShowUI></DiskConfiguration>
+   <ImageInstall><OSImage><InstallFrom><MetaData xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" wcm:action="add"><Key>/IMAGE/INDEX</Key><Value>1</Value></MetaData></InstallFrom><InstallTo><DiskID>0</DiskID><PartitionID>$($layout.partitionId)</PartitionID></InstallTo><WillShowUI>OnError</WillShowUI></OSImage></ImageInstall>
    <UserData><AcceptEula>true</AcceptEula><FullName>Veylo Lab</FullName><Organization>Local driver evaluation</Organization></UserData>
   </component>
  </settings>
@@ -66,7 +87,14 @@ $password='V!'+[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerat
 "@ | Set-Content -LiteralPath (Join-Path $seed 'autounattend.xml') -Encoding utf8
 $password=$null
 [xml](Get-Content -LiteralPath (Join-Path $seed 'autounattend.xml') -Raw) | Out-Null
-$metadata=@{schema=1;id=$id;ownedBy='Veylo isolated driver lab';disk=$disk;seed=$seed;iso=$iso;accelerator=$Accelerator;createdUtc=[DateTime]::UtcNow.ToString('O');hostSecurityChanged=$false;installed=$false;kernelTestsPassed=$false}
+$metadata=@{schema=1;id=$id;ownedBy='Veylo isolated driver lab';disk=$disk;seed=$seed;iso=$iso;accelerator=$Accelerator;createdUtc=[DateTime]::UtcNow.ToString('O');hostSecurityChanged=$false;installed=$false;kernelTestsPassed=$false;firmware=$Firmware}
+if($Firmware -ceq 'UEFI'){$metadata.firmwareCode=$firmwareCode;$metadata.firmwareVars=$firmwareVars}
 $metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $vm 'vm.json') -Encoding utf8
+# All files above were created only in this new VM/seed. Explicitly retain the
+# current user's ownership even when an elevated token defaults to Administrators.
+foreach($file in @($disk,(Join-Path $vm 'vm.json'))+@(Get-ChildItem -LiteralPath $seed -File | ForEach-Object {$_.FullName})){
+    $acl=Get-Acl -LiteralPath $file;$acl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $file -AclObject $acl
+}
+Get-VmFirmwarePaths $vm ([pscustomobject]$metadata) -VerifyInputs | Out-Null
 Write-Output $vm
 if($Start){& (Join-Path $PSScriptRoot 'start-driver-vm.ps1') -VmDirectory $vm}
