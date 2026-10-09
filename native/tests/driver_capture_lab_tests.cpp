@@ -338,6 +338,15 @@ bool runFormat(IMMDevice* device,unsigned bits,Report& r) {
     };
     // Three packets let the driver's reserve prime before the first read.
     for(unsigned i=0;i<3;++i)if(!write()){r.check(false,"bounded producer prefill");return false;}
+    // Sleep(1) may sleep an entire default Windows clock tick (~15.6 ms).
+    // That made this 10 ms producer fall behind before its warmup completed.
+    // Use a private timer, keeping the existing 50 ms deadline and avoiding a
+    // process/system-wide multimedia timer-resolution change.
+    Handle pollTimer;
+    pollTimer.h=CreateWaitableTimerExW(nullptr,nullptr,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+        TIMER_MODIFY_STATE|SYNCHRONIZE);
+    r.check(pollTimer.h!=nullptr,"create private high-resolution capture test timer");
+    if(!pollTimer.h)return false;
     AudioStop stop{client.p};hr=client->Start();stop.started=SUCCEEDED(hr);
     r.check(stop.started,"start only the verified virtual microphone capture");
     if(!stop.started)return false;
@@ -346,6 +355,12 @@ bool runFormat(IMMDevice* device,unsigned bits,Report& r) {
     const uint64_t signalCutoff=qpc100ns()+2500000;
     uint64_t silenceCutoff=0, disconnectedAt=0, previousPosition=0,previousStamp=0;
     bool hadPacket=false,disconnected=false,ok=true;
+    auto abortRun=[&](const char* reason,HRESULT error=S_OK){
+        std::printf("PCM%u stopped: %s; elapsed=%llu ms, writes=%llu, HRESULT=0x%08lx\n",
+            bits,reason,static_cast<unsigned long long>(GetTickCount64()-began),
+            static_cast<unsigned long long>(sequence),static_cast<unsigned long>(error));
+        ok=false;
+    };
     while(GetTickCount64()-began<2300) {
         const uint64_t now=GetTickCount64();
         if(!disconnected&&now-began>=1250) {
@@ -353,17 +368,20 @@ bool runFormat(IMMDevice* device,unsigned bits,Report& r) {
             silenceCutoff=qpc100ns()+2500000; // excludes queued engine audio and the 100 ms driver timeout.
         }
         if(!disconnected&&now>=nextWrite) {
-            if(now-nextWrite>50||sequence>=160||!write()){ok=false;break;}
+            if(now-nextWrite>50){std::printf("PCM%u producer lateness=%llu ms\n",bits,static_cast<unsigned long long>(now-nextWrite));abortRun("producer scheduler deadline");break;}
+            if(sequence>=160){abortRun("producer packet bound");break;}
+            if(!write()){abortRun("producer IOCTL write",HRESULT_FROM_WIN32(GetLastError()));break;}
             nextWrite+=10;
         }
         UINT32 frames=0;
-        if(FAILED(capture->GetNextPacketSize(&frames))){ok=false;break;}
+        hr=capture->GetNextPacketSize(&frames);
+        if(FAILED(hr)){abortRun("capture GetNextPacketSize",hr);break;}
         unsigned drained=0;
         while(frames) {
-            if(++drained>128){ok=false;break;}
+            if(++drained>128){abortRun("capture drain bound");break;}
             BYTE* data=nullptr;DWORD flags=0;UINT64 position=0,stamp=0;
             hr=capture->GetBuffer(&data,&frames,&flags,&position,&stamp);
-            if(FAILED(hr)){ok=false;break;}
+            if(FAILED(hr)){abortRun("capture GetBuffer",hr);break;}
             bool valid=frames>0&&frames<=rate&&
                 ((flags&AUDCLNT_BUFFERFLAGS_SILENT)||data);
             if(hadPacket&&(position<previousPosition||stamp<=previousStamp))valid=false;
@@ -381,13 +399,26 @@ bool runFormat(IMMDevice* device,unsigned bits,Report& r) {
             }
             if(valid){previousPosition=position+frames;previousStamp=stamp;hadPacket=true;}
             ++r.packetsCaptured;
-            if(FAILED(capture->ReleaseBuffer(frames)))valid=false;
-            if(!valid){ok=false;break;}
-            if(FAILED(capture->GetNextPacketSize(&frames))){ok=false;break;}
+            hr=capture->ReleaseBuffer(frames);
+            if(FAILED(hr)){abortRun("capture ReleaseBuffer",hr);break;}
+            if(!valid){
+                std::printf("PCM%u invalid packet: frames=%u flags=0x%08lx position=%llu expected=%llu stamp=%llu previous=%llu now=%llu\n",
+                    bits,frames,static_cast<unsigned long>(flags),static_cast<unsigned long long>(position),
+                    static_cast<unsigned long long>(previousPosition),static_cast<unsigned long long>(stamp),
+                    static_cast<unsigned long long>(previousStamp),static_cast<unsigned long long>(qpc100ns()));
+                abortRun("capture packet validation");break;
+            }
+            hr=capture->GetNextPacketSize(&frames);
+            if(FAILED(hr)){abortRun("capture GetNextPacketSize during drain",hr);break;}
         }
         if(!ok)break;
         if(disconnected&&GetTickCount64()-disconnectedAt>=350&&quiet.size()>=minSilenceFrames)break;
-        Sleep(1);
+        LARGE_INTEGER due{};due.QuadPart=-10000;
+        if(!SetWaitableTimerEx(pollTimer.h,&due,0,nullptr,nullptr,nullptr,0)){
+            abortRun("arm capture test timer",HRESULT_FROM_WIN32(GetLastError()));break;
+        }
+        const DWORD waited=WaitForSingleObject(pollTimer.h,200);
+        if(waited!=WAIT_OBJECT_0){abortRun("capture test timer wait",waited==WAIT_FAILED?HRESULT_FROM_WIN32(GetLastError()):HRESULT_FROM_WIN32(ERROR_TIMEOUT));break;}
     }
     // Even failure paths close producer before stopping capture; RAII releases COM.
     driver.close();r.signalFrames+=static_cast<unsigned>(signal.size());
