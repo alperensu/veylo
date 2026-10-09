@@ -58,7 +58,12 @@ Findings in the first extended IOCTL test: all malformed diagnostic sizes
 were rejected, but 162 expectations incorrectly required ERROR_BAD_LENGTH
 rather than the actual ERROR_INVALID_USER_BUFFER (1784). The exact rejection
 expectations were corrected and independently re-reviewed. This initial
-269-check run is not counted as Passed; a corrected live rerun is required.
+269-check run is not counted as Passed. The corrected live rerun passed all
+269 checks, zero failures, exit 0. The copied tool was pinned to SHA256
+7b2a07a9a7e47db003a9ea6d3afef3db43328aafc7878b98d0442a02ad57833e before
+execution; evidence: kerneltrace-ioctl-corrected.png. It checks connected-owner
+authorization, other-handle rejection, every short output size, oversized
+output and nonzero input, in addition to the previous 104 checks.
 
 Passed: the same driver then completed a normal, non-instrumented actual
 ProductBridge run in 60,001 ms, all 36 checks with process exit 0. Steady
