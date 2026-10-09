@@ -81,6 +81,9 @@ $runner = 'C:\VeyloAcceptance\driver-vm-acceptance.ps1'
   sağlıklı aynı aygıt ve yeniden yapılan PCM16/PCM32 capture testi birlikte
   gereklidir. Soğuk açılış, yeni logon, temizlenmiş olay logu veya yalnızca komutun
   başarılı dönmesi geçiş sağlamaz; eksik platform kanıtı `Findings` olur.
+  Logon sürekliliği mevcut token'ın `AuthenticationId` değeriyle doğrulanır;
+  etkin Interactive/RemoteInteractive üyeliği gerekir. Servis, anonim kullanıcı,
+  ayrılmış kimlik veya yeni oturum kabul edilmez; token yetkisi değiştirilmez.
 - **Shutdown:** Yalnız kimliği doğrulanmış guest'in kapanmasını ister. Sürecin
   gerçekten sonlandığını host kontrolüyle ayrıca doğrula.
 
@@ -94,6 +97,33 @@ $runner = 'C:\VeyloAcceptance\driver-vm-acceptance.ps1'
 İlk hibernate baseline'ı yeniden hazırlayarak üzerine yazma. Bir tekrar için
 önceki kanıtı koruyan ayrı sahipli laboratuvar/snapshot kullan. Uyku komutu
 desteklenmiyorsa bu araç host veya guest güç politikasını otomatik değiştirmez.
+
+## Gerçek sürüm güncellemesi ve geri alma
+
+`driver-vm-version-transition.ps1` ayrı, sabit hash'li **0.5.0.0 ve 0.5.1.0**
+paketleri gerektirir. Eski paket gerçek tarihsel kaynak derlemesidir; INF sürümünü
+yeniden etiketlemek yeterli değildir. Hazırlanan özel payload'ın manifesti VM
+UUID'sini, runner'ı ve iki paketin altışar dosyasını bağlar. Kanonik manifest
+anahtarları Windows `\` ayıracını kullanır.
+
+VM kapalıyken `stage-driver-version-transition.ps1 -VmDirectory $vm
+-PreparedDirectory $payload` ile doğrulanmış özel payload'ı aktar. Araç disk kilidi
+ve süreç kimliğini kontrol eder; mevcut medya üzerine yazmaz. Guest'te
+`C:\VeyloVersionTransition` dizinini önce `C:\VeyloLab` ACL'siyle koru, ardından
+salt okunur seed'in `version-transition` içeriğini buraya kopyala. Script'i yalnız
+yükseltilmiş guest PowerShell'inde tam VM UUID'siyle çalıştır:
+
+```powershell
+& 'C:\VeyloVersionTransition\driver-vm-version-transition.ps1' -VmId $id
+```
+
+Sıra: eski sürümü zorlayarak baseline hazırlama → güncel sürüme yükseltme →
+Windows `DiRollbackDriver` ile gerçek geri alma → güncel sürümü geri yükleme.
+Her aşamada aynı aygıtın kurulu sürümü, SYS hash'i ve PCM16/PCM32 capture kontrolü
+gerekir. Zorlanan eski baseline, native geri alma sonucu olarak sayılmaz. Eski
+paketin yalnız public test sertifikası bu guest'in iki güven deposuna eklenebilir;
+host sertifika depoları değişmez. Yeniden başlatma veya belirsiz devam eden işlem
+`NeedsReboot`/`Findings` olur; ardından otomatik başka sürücü işlemi başlatılmaz.
 
 Raporlar `C:\VeyloAcceptance` altındadır; sonuç ve heartbeat COM1 üzerinden VM'nin
 `serial.log` dosyasına gider. Yeni açılış seri logu yenileyebildiğinden sonuçları

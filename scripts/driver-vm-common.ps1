@@ -29,6 +29,50 @@ function Assert-VmAcceptanceSeed([string]$Seed,[string]$VmId) {
     }
     return $directory
 }
+function Assert-VmVersionTransitionPayload([string]$Directory,[string]$VmId) {
+    $directory=Assert-LabPath $Directory;Assert-LabPrivateAcl $directory
+    if(!(Get-Item -LiteralPath $directory).PSIsContainer){throw 'Version transition payload must be a directory'}
+    $inventory=@(Get-ChildItem -LiteralPath $directory -Force)
+    if($inventory.Count -ne 4){throw 'Unexpected version transition root inventory'}
+    foreach($entry in $inventory){
+        if($entry.Name -cnotin @('driver-vm-version-transition.ps1','version-transition-manifest.json','old','current') -or
+           $entry.PSIsContainer -ne ($entry.Name -cin @('old','current'))){throw 'Unexpected version transition root path/type'}
+        Assert-LabPath $entry.FullName $directory | Out-Null;Assert-LabPrivateAcl $entry.FullName
+    }
+    $names=@('driver-vm-version-transition.ps1')
+    $packageNames=@('SesMicrophone.inf','SesMicrophone.sys','SesMicrophone.cat','lab-test.cer','ses_driver_capture_lab_tests.exe','test-signing-manifest.json')
+    foreach($version in @('old','current')){
+        $subdirectory=Assert-LabPath (Join-Path $directory $version) $directory
+        Assert-LabPrivateAcl $subdirectory
+        if(!(Get-Item -LiteralPath $subdirectory).PSIsContainer){throw 'Version package must be a directory'}
+        Assert-LabInventory $subdirectory $packageNames
+        foreach($name in $packageNames){$names+=($version+'\'+$name)}
+    }
+    $path=Assert-LabPath (Join-Path $directory 'version-transition-manifest.json') $directory
+    Assert-LabPrivateAcl $path
+    $info=Get-Item -LiteralPath $path
+    if($info.PSIsContainer -or $info.Length -lt 2 -or $info.Length -gt 16KB){throw 'Invalid version transition manifest size/type'}
+    $manifest=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if($manifest.schema -ne 1 -or $manifest.testOnly -isnot [bool] -or !$manifest.testOnly -or
+       $manifest.productionReady -isnot [bool] -or $manifest.productionReady -or $manifest.vmId -cne $VmId -or
+       $manifest.oldVersion -cne '0.5.0.0' -or $manifest.currentVersion -cne '0.5.1.0' -or $manifest.abi -ne 5 -or $manifest.protocol -ne 1){
+        throw 'Version transition manifest contract mismatch'
+    }
+    $entries=@($manifest.files.PSObject.Properties)
+    if($entries.Count -ne $names.Count){throw 'Version transition inventory mismatch'}
+    foreach($entry in $entries){
+        if($entry.Name -cnotin $names -or $entry.Value -isnot [string] -or $entry.Value -cnotmatch '^[0-9a-f]{64}$'){
+            throw 'Unexpected version transition entry'
+        }
+        $file=Assert-LabPath (Join-Path $directory $entry.Name) $directory;Assert-LabPrivateAcl $file
+        $info=Get-Item -LiteralPath $file
+        if($info.PSIsContainer -or $info.Length -lt 1 -or $info.Length -gt 16MB -or
+           (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.Value){
+            throw 'Version transition payload checksum/type/size mismatch'
+        }
+    }
+    return $directory
+}
 function Get-VmFirmwarePaths([string]$Vm,$State,[switch]$VerifyInputs) {
     $properties=@($State.PSObject.Properties.Name)
     $firmware=if($properties -contains 'firmware'){$State.firmware}else{'BIOS'}
@@ -105,9 +149,12 @@ function Get-OwnedVm([string]$Directory,[switch]$VerifyInputs) {
         $inventory=@(Get-ChildItem -LiteralPath $seed -Force)
         $hasAcceptance=Test-Path -LiteralPath (Join-Path $seed 'acceptance')
         if($hasAcceptance){Assert-VmAcceptanceSeed $seed $state.id | Out-Null}
-        if($inventory.Count -ne $names.Count+2+[int]$hasAcceptance){throw 'Unexpected seed files'}
+        $hasVersionTransition=Test-Path -LiteralPath (Join-Path $seed 'version-transition')
+        if($hasVersionTransition){Assert-VmVersionTransitionPayload (Join-Path $seed 'version-transition') $state.id | Out-Null}
+        if($inventory.Count -ne $names.Count+2+[int]$hasAcceptance+[int]$hasVersionTransition){throw 'Unexpected seed files'}
         foreach($file in $inventory){
             if($file.Name -ceq 'acceptance' -and $hasAcceptance -and $file.PSIsContainer){continue}
+            if($file.Name -ceq 'version-transition' -and $hasVersionTransition -and $file.PSIsContainer){continue}
             if($file.Name -cnotin ($names+@('veylo-lab-seed.json','autounattend.xml')) -or $file.PSIsContainer){throw 'Unexpected seed path'}
             Assert-LabPath $file.FullName $seed | Out-Null;Assert-LabPrivateAcl $file.FullName
         }

@@ -135,6 +135,14 @@ function New-Result([string]$Status){
 }
 # Child output is drained asynchronously, bounded to 1 MiB per invocation, and
 # killed on a deadline or output flood. No shell or user supplied arguments.
+function Stop-BoundedGuestChild($Process){
+    if($Process.HasExited){return}
+    try{$Process.Kill()}catch{
+        # The child may exit between HasExited and Kill, especially after S4.
+        # Only confirmed exit suppresses the race; a live-process error escapes.
+        if(!$Process.HasExited){throw}
+    }
+}
 function Invoke-BoundedTool([string]$Executable,[string[]]$Arguments,[string]$LogName,[int]$DeadlineSeconds,[switch]$CreateNewLog){
     $logPath=Get-OutputPath $LogName
     foreach($argument in $Arguments){if($argument.Contains('"') -or $argument.Contains("`r") -or $argument.Contains("`n")){throw 'Unsafe tool argument.'}}
@@ -164,7 +172,7 @@ function Invoke-BoundedTool([string]$Executable,[string[]]$Arguments,[string]$Lo
             }
             if($outputLimited -or $watch.Elapsed.TotalSeconds -gt $DeadlineSeconds){
                 $timedOut=!$outputLimited
-                if(!$process.HasExited){$process.Kill()}
+                Stop-BoundedGuestChild $process
                 break
             }
             if($watch.Elapsed.TotalSeconds -ge $nextHeartbeat){
@@ -177,8 +185,9 @@ function Invoke-BoundedTool([string]$Executable,[string[]]$Arguments,[string]$Lo
         return @{exitCode=$process.ExitCode;timedOut=$timedOut;outputLimited=$outputLimited;deadlineSeconds=$DeadlineSeconds;
             elapsedSeconds=[math]::Round($watch.Elapsed.TotalSeconds,2);log=$LogName;bytes=$total}
     }finally{
-        if($started -and !$process.HasExited){$process.Kill();$null=$process.WaitForExit(5000)}
-        $writer.Dispose();$process.Dispose();$watch.Stop()
+        try{
+            if($started -and !$process.HasExited){Stop-BoundedGuestChild $process;$null=$process.WaitForExit(5000)}
+        }finally{$writer.Dispose();$process.Dispose();$watch.Stop()}
     }
 }
 function Get-WindowsLicenseEvidence{
@@ -353,14 +362,76 @@ function Write-FirstHibernateSnapshot($Snapshot){
     }finally{$stream.Dispose()}
     Write-Serial 'VEYLO_ACCEPTANCE_SNAPSHOT' $Snapshot
 }
+function Initialize-HibernateTokenReader{
+    if('VeyloLab.HibernateTokenReader' -as [type]){return}
+    # Called only from a guarded guest mode, never at module load. The fixed
+    # TOKEN_STATISTICS ABI contains no pointers and is 56 bytes on x86/x64.
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Globalization;
+using System.Runtime.InteropServices;
+namespace VeyloLab {
+    public static class HibernateTokenReader {
+        [StructLayout(LayoutKind.Explicit, Size = 56)]
+        private struct TokenStatistics {
+            [FieldOffset(8)] public uint AuthenticationLow;
+            [FieldOffset(12)] public int AuthenticationHigh;
+        }
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DllImport("advapi32.dll", ExactSpelling = true, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetTokenInformation(IntPtr token, int informationClass,
+            out TokenStatistics statistics, uint informationLength, out uint returnLength);
+        public static string ReadAuthenticationId(IntPtr token) {
+            if (token == IntPtr.Zero || token == new IntPtr(-1))
+                throw new ArgumentException("An existing identity token is required.");
+            TokenStatistics statistics;
+            uint returned;
+            if (!GetTokenInformation(token, 10, out statistics, 56, out returned))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "TokenStatistics query failed.");
+            if (returned != 56)
+                throw new InvalidOperationException("Unexpected TokenStatistics ABI length.");
+            return unchecked((uint)statistics.AuthenticationHigh).ToString("x8", CultureInfo.InvariantCulture)
+                + statistics.AuthenticationLow.ToString("x8", CultureInfo.InvariantCulture);
+        }
+    }
+}
+'@
+}
+function Read-HibernateAuthenticationId($Identity){
+    Initialize-HibernateTokenReader
+    # Borrowed handle: WindowsIdentity owns it and stays alive until the caller's
+    # finally. Never close, duplicate, modify or elevate this token.
+    return [VeyloLab.HibernateTokenReader]::ReadAuthenticationId($Identity.Token)
+}
+function Test-HibernateInteractiveMembership($Principal){
+    # IsInRole(SecurityIdentifier) tests enabled token membership, unlike
+    # merely enumerating WindowsIdentity.Groups (which omits group attributes).
+    foreach($sid in @('S-1-5-4','S-1-5-14')){
+        if($Principal.IsInRole([Security.Principal.SecurityIdentifier]::new($sid))){return $true}
+    }
+    return $false
+}
+function Test-HibernateLogonSession($Session){
+    return ($Session -is [Collections.IDictionary] -and $Session.userSid -is [string] -and
+        $Session.userSid -cmatch '^S-1-(?:[0-9]+-)+[0-9]+$' -and
+        $Session.userSid -cnotin @('S-1-5-18','S-1-5-19','S-1-5-20','S-1-5-7') -and
+        $Session.authenticationId -is [string] -and $Session.authenticationId -cmatch '^[0-9a-f]{16}$' -and
+        $Session.authenticationId -cnotin @('0000000000000000','00000000000003e4','00000000000003e5','00000000000003e6','00000000000003e7') -and
+        $Session.interactive -is [bool] -and $Session.interactive -and
+        $Session.sessionId -is [int] -and $Session.sessionId -ge 1)
+}
 function Get-HibernateSessionEvidence{
     $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
     try{
-        $logonSids=@($identity.Groups | ForEach-Object {$_.Value} | Where-Object {$_ -cmatch '^S-1-5-5-[0-9]+-[0-9]+$'})
-        if($logonSids.Count -ne 1){throw 'An exact interactive guest logon SID is required for hibernate continuity.'}
+        $tokenPrincipal=[Security.Principal.WindowsPrincipal]::new($identity)
+        $session=@{userSid=$identity.User.Value;authenticationId=(Read-HibernateAuthenticationId $identity);
+            interactive=(Test-HibernateInteractiveMembership $tokenPrincipal);sessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId}
+        if(!(Test-HibernateLogonSession $session)){throw 'An original interactive user logon with a non-reserved authentication LUID is required.'}
         $guestOs=Get-CimInstance -ClassName Win32_OperatingSystem
-        return @{bootUtc=$guestOs.LastBootUpTime.ToUniversalTime().ToString('o');
-            userSid=$identity.User.Value;logonSid=$logonSids[0];sessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId}
+        $session.bootUtc=$guestOs.LastBootUpTime.ToUniversalTime().ToString('o')
+        return $session
     }finally{$identity.Dispose()}
 }
 # Parse invariant XML, never localized event messages. DTDs, duplicated fields,
@@ -414,12 +485,12 @@ function Get-HibernateResumeDecision($Snapshot,$Session,$Events,[string]$Expecte
            $Snapshot.testOnly -isnot [bool] -or !$Snapshot.testOnly -or $Snapshot.vmId -cne $ExpectedVmId -or
            $Snapshot.eventRecordId -isnot [long] -and $Snapshot.eventRecordId -isnot [int] -or $Snapshot.eventRecordId -lt 1 -or
            $now -le $prepared -or ($now-$prepared).TotalHours -gt 24){return $decision}
-        foreach($field in @('bootUtc','userSid','logonSid','sessionId')){
+        if(!(Test-HibernateLogonSession $Snapshot.session) -or !(Test-HibernateLogonSession $Session)){return $decision}
+        foreach($field in @('bootUtc','userSid','authenticationId','interactive','sessionId')){
             if($Snapshot.session[$field] -cne $Session[$field]){$decision.reason='Cold boot or guest logon/session continuity mismatch.';return $decision}
         }
         $boot=[DateTimeOffset]::ParseExact([string]$Session.bootUtc,'o',[Globalization.CultureInfo]::InvariantCulture)
-        if($boot -gt $prepared -or $Session.userSid -cnotmatch '^S-1-(?:[0-9]+-)+[0-9]+$' -or
-           $Session.logonSid -cnotmatch '^S-1-5-5-[0-9]+-[0-9]+$' -or $Session.sessionId -isnot [int] -or $Session.sessionId -lt 1){return $decision}
+        if($boot -gt $prepared){return $decision}
         $inventory=@($Events)
         if($inventory.Count -lt 2 -or $inventory.Count -ge 128){return $decision}
         $seen=@{};$sleep=@();$wake=@()

@@ -46,7 +46,8 @@ struct ExtendedEvidence {
     unsigned requestedSeconds=0;
     uint64_t elapsedMs=0, writes=0, maxLatenessMs=0, maxWriteGap100ns=0, maxIoctl100ns=0;
     uint32_t minimumQueuedSteady=std::numeric_limits<uint32_t>::max();
-    bool mmcss=false;
+    bool mmcss=false,consumerMmcss=false;
+    uint64_t maxConsumerDrainGap100ns=0;
     unsigned statusSamples=0, producerReconnects=0;
     uint64_t driverReceivedFrames=0, driverSilenceFrames=0;
     uint32_t driverUnderruns=0, driverOverruns=0, steadyUnderruns=0;
@@ -77,6 +78,7 @@ struct Report {
             "\"requested_seconds\":%u,\"elapsed_ms\":%llu,\"writes\":%llu,\"maximum_producer_lateness_ms\":%llu,"
             "\"maximum_steady_write_completion_gap_us\":%llu,\"maximum_ioctl_duration_us\":%llu,"
             "\"minimum_queued_frames_steady\":%u,\"producer_mmcss_pro_audio\":%s,"
+            "\"consumer_mmcss_pro_audio\":%s,\"max_consumer_drain_gap_us\":%llu,"
             "\"status_samples\":%u,\"producer_reconnects\":%u,\"driver_received_frames\":%llu,"
             "\"driver_silence_frames\":%llu,\"driver_underruns\":%u,\"driver_overruns\":%u,\"steady_underruns\":%u,\"clients\":[",
             e.requested?"true":"false",e.ran?"true":"false",e.requestedSeconds,
@@ -84,6 +86,7 @@ struct Report {
             static_cast<unsigned long long>(e.maxLatenessMs),static_cast<unsigned long long>(e.maxWriteGap100ns/10),
             static_cast<unsigned long long>(e.maxIoctl100ns/10),
             e.minimumQueuedSteady==std::numeric_limits<uint32_t>::max()?0:e.minimumQueuedSteady,e.mmcss?"true":"false",
+            e.consumerMmcss?"true":"false",static_cast<unsigned long long>(e.maxConsumerDrainGap100ns/10),
             e.statusSamples,e.producerReconnects,
             static_cast<unsigned long long>(e.driverReceivedFrames),static_cast<unsigned long long>(e.driverSilenceFrames),
             e.driverUnderruns,e.driverOverruns,e.steadyUnderruns)>0&&ok;
@@ -119,6 +122,15 @@ struct PropertyValue { PROPVARIANT value{}; ~PropertyValue(){PropVariantClear(&v
 struct ComApartment {
     HRESULT result=CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     ~ComApartment(){if(SUCCEEDED(result))CoUninitialize();}
+};
+struct MmcssAudio {
+    DWORD index=0;
+    HANDLE task=AvSetMmThreadCharacteristicsW(L"Pro Audio",&index);
+    bool ready=task&&AvSetMmThreadPriority(task,AVRT_PRIORITY_HIGH);
+    MmcssAudio()=default;
+    MmcssAudio(const MmcssAudio&)=delete;
+    MmcssAudio& operator=(const MmcssAudio&)=delete;
+    ~MmcssAudio(){if(task)AvRevertMmThreadCharacteristics(task);}
 };
 uint64_t qpc100ns() {
     LARGE_INTEGER counter{}, frequency{};
@@ -396,6 +408,9 @@ bool runFormat(IMMDevice* device,unsigned bits,Report& r) {
         TIMER_MODIFY_STATE|SYNCHRONIZE);
     r.check(pollTimer.h!=nullptr,"create private high-resolution capture test timer");
     if(!pollTimer.h)return false;
+    MmcssAudio consumerMmcss;
+    r.check(consumerMmcss.ready,"register capture consumer with MMCSS Pro Audio priority");
+    if(!consumerMmcss.ready)return false;
     AudioStop stop{client.p};hr=client->Start();stop.started=SUCCEEDED(hr);
     r.check(stop.started,"start only the verified virtual microphone capture");
     if(!stop.started)return false;
@@ -528,7 +543,7 @@ struct ExtendedCapture {
     Com<IAudioClient> client;
     Com<IAudioCaptureClient> capture;
     bool started=false,hadPacket=false;
-    uint64_t previousPosition=0,previousStamp=0,cutoff=0,lastPacketMs=0;
+    uint64_t previousPosition=0,previousStamp=0,cutoff=0,lastPacketMs=0,lastDrain100ns=0;
     std::vector<double> signal,quiet;
     ExtendedCapture(){signal.reserve(StreamingAnalyzer::blockFrames);quiet.reserve(minSilenceFrames);}
     void close() {
@@ -536,6 +551,7 @@ struct ExtendedCapture {
         if(capture.p){capture.p->Release();capture.p=nullptr;}
         if(client.p){client.p->Release();client.p=nullptr;}
         hadPacket=false;signal.clear();quiet.clear();
+        lastDrain100ns=0;
     }
     ~ExtendedCapture(){close();}
     bool open(IMMDevice* device) {
@@ -583,12 +599,6 @@ bool lifecycleAcknowledgementExpired(uint64_t now,uint64_t epoch) {
 bool silenceObservationReady(uint64_t now,uint64_t epoch,size_t first,size_t second) {
     return now>=epoch&&now-epoch>=5000000&&first>=minSilenceFrames&&second>=minSilenceFrames;
 }
-struct MmcssAudio {
-    DWORD index=0;
-    HANDLE task=AvSetMmThreadCharacteristicsW(L"Pro Audio",&index);
-    bool ready=task&&AvSetMmThreadPriority(task,AVRT_PRIORITY_HIGH);
-    ~MmcssAudio(){if(task)AvRevertMmThreadCharacteristics(task);}
-};
 struct ProducerPublication {
     ExtendedEvidence evidence;
     uint64_t began=0,phaseEpoch=0;
@@ -729,6 +739,9 @@ bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
     auto& e=r.extended;e.ran=true;
     const unsigned before=r.failures;
     std::printf("Extended real kernel capture: %u seconds, two PCM32 shared clients in one process.\n",seconds);
+    MmcssAudio consumerMmcss;e.consumerMmcss=consumerMmcss.ready;
+    r.check(consumerMmcss.ready,"register extended capture consumer with MMCSS Pro Audio priority");
+    if(!consumerMmcss.ready)return false;
     ExtendedCapture consumers[2];
     for(auto& consumer:consumers) {
         if(!consumer.open(device)){r.check(false,"start both shared capture clients on verified endpoint");return false;}
@@ -750,8 +763,10 @@ bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
     auto copyProducerEvidence=[&](const ExtendedEvidence& source) {
         const auto clients=std::array<ExtendedClientEvidence,2>{e.clients[0],e.clients[1]};
         const bool requested=e.requested,ran=e.ran;const unsigned requestedSeconds=e.requestedSeconds;
+        const bool consumerRegistered=e.consumerMmcss;const uint64_t drainGap=e.maxConsumerDrainGap100ns;
         e=source;e.clients[0]=clients[0];e.clients[1]=clients[1];
         e.requested=requested;e.ran=ran;e.requestedSeconds=requestedSeconds;
+        e.consumerMmcss=consumerRegistered;e.maxConsumerDrainGap100ns=drainGap;
     };
     while(qpc100ns()<deadline&&ok) {
         state=producer.snapshot();const uint64_t now=qpc100ns();copyProducerEvidence(state.evidence);
@@ -770,6 +785,9 @@ bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
         }
         for(unsigned index=0;index<2&&ok;++index) {
             auto& consumer=consumers[index];auto& evidence=e.clients[index];
+            const uint64_t drainNow=qpc100ns();
+            if(consumer.lastDrain100ns)e.maxConsumerDrainGap100ns=std::max(e.maxConsumerDrainGap100ns,drainNow-consumer.lastDrain100ns);
+            consumer.lastDrain100ns=drainNow;
             UINT32 frames=0;unsigned drained=0;
             if(FAILED(consumer.capture->GetNextPacketSize(&frames))){abortRun("capture packet size");break;}
             while(frames&&ok) {
@@ -803,9 +821,18 @@ bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
                         }
                     }
                 }
+                const uint64_t expected=consumer.previousPosition,previousStamp=consumer.previousStamp;
+                const bool hadPrevious=consumer.hadPacket;
                 consumer.previousPosition=position+frames;consumer.previousStamp=stamp;consumer.hadPacket=true;
                 if(FAILED(consumer.capture->ReleaseBuffer(frames))){abortRun("release capture buffer");break;}
-                if(!valid){abortRun("buffer, fresh timestamp, continuity or bounded analyzer queue");break;}
+                if(!valid){
+                    std::printf("Extended PCM32 invalid packet: client=%u frames=%u flags=0x%08lx position=%llu expected=%llu stamp=%llu previous=%llu now=%llu had_previous=%s eligible=%s max_consumer_drain_gap_us=%llu\n",
+                        index,frames,static_cast<unsigned long>(flags),static_cast<unsigned long long>(position),
+                        static_cast<unsigned long long>(expected),static_cast<unsigned long long>(stamp),
+                        static_cast<unsigned long long>(previousStamp),static_cast<unsigned long long>(qpc100ns()),
+                        hadPrevious?"true":"false",eligible?"true":"false",static_cast<unsigned long long>(e.maxConsumerDrainGap100ns/10));
+                    abortRun("buffer, fresh timestamp, continuity or bounded analyzer queue");break;
+                }
                 if(FAILED(consumer.capture->GetNextPacketSize(&frames))){abortRun("capture drain packet size");break;}
             }
             // A stalled consumer must fail even when the other shared client
@@ -843,6 +870,8 @@ bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
     std::printf("Extended producer timing: max lateness=%llu ms max write gap=%llu us max IOCTL=%llu us min steady queue=%u frames MMCSS=%s.\n",
         static_cast<unsigned long long>(e.maxLatenessMs),static_cast<unsigned long long>(e.maxWriteGap100ns/10),
         static_cast<unsigned long long>(e.maxIoctl100ns/10),e.minimumQueuedSteady,e.mmcss?"Pro Audio":"failed");
+    std::printf("Extended consumer timing: max drain gap=%llu us MMCSS=%s.\n",
+        static_cast<unsigned long long>(e.maxConsumerDrainGap100ns/10),e.consumerMmcss?"Pro Audio":"failed");
     r.check(e.driverReceivedFrames==e.writes*SES_DRIVER_FRAMES,
         "driver received-frame counter matches every successful producer packet");
     for(auto& consumer:consumers)consumer.close();analyzer.finish();

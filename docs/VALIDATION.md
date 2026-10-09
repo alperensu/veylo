@@ -1,7 +1,7 @@
 # Driver acceptance tools / source checkpoint — 2026-10-09
 
 Passed: six native and six AddressSanitizer groups; 44 offline capture checks,
-244 safe VM-control/guest-decision checks, 110 managed checks, offline WPF
+303 safe VM-control/guest-decision checks, 110 managed checks, offline WPF
 persistence/shutdown/smoke, 18 driver-helper checks in a separate output directory,
 and existing package/signing checks. The combined headless command stopped on a
 pre-existing locked helper DLL; its remaining helper and UI checks passed using
@@ -99,13 +99,64 @@ the installation media's key prompt; choosing the DVD and immediately sending
 Space reached the installer without firmware or host policy changes. Real HVCI
 remains unverified; UEFI boot alone is not its proof.
 
-Passed: the new two-stage hibernate runner's 62 inert fixtures also passed under
-Windows PowerShell 5.1. It requires the original boot/logon/session, paired real
+Passed: the final two-stage hibernate runner's 103 inert/native ABI checks also
+passed under Windows PowerShell 5.1. It requires the original boot/logon/session, paired real
 S4 events, healthy original device and post-resume PCM16/PCM32 capture. Both
 independent read-only reviews passed after fixing a P2 stale-success report:
 verification now invalidates the previous result before attempt-specific reads.
 Five regression fixtures retain Findings when snapshot/ACL/hash/event/capture
-reads throw. Real S4 acceptance has not yet been established.
+reads throw. The first real preparation rejected missing logon-SID evidence before
+any power request. The collector now reads TokenStatistics.AuthenticationId from
+the existing identity token, checks enabled Interactive/RemoteInteractive
+membership, and rejects service/anonymous identities and reserved authentication
+IDs in both collection and decision. No token is elevated, duplicated or modified.
+The final correctness and security follow-ups passed independently after
+replacing host-dependent fixture identity/session calls with deterministic mocks.
+A child-exit/Kill race seen after S4 now suppresses only confirmed process exit;
+live-process errors and timeout flags remain failures, and resources are disposed.
+Four inert stop/race checks passed. Real S4
+acceptance has not yet been established.
+
+Passed: the new UEFI guest installed the driver and passed 104 kernel IOCTL checks
+and 20 PCM16/PCM32 capture checks, with zero findings/unsupported formats. Normal
+evaluation activation produced LicenseStatus=1 and about 90 days remaining. Its
+licensed pre-HVCI disk and NVRAM were retained before the next offline-network
+boot. These results precede HVCI activation; they do not prove HVCI compatibility.
+
+Passed: a separate export of historical commit
+3ba0c2b63234948600c9da9aa3ade5901f076f6f built the actual 0.5.0.0 source using the
+pinned EWDK, then file-only test-signed its SYS/CAT. All 126 historical source
+files matched Git blobs; independent correctness review verified provenance,
+tooling hashes and the 12-file ZIP inventory. This is a genuine older kernel,
+not a changed version label. Private signing files were removed; no host trust
+store was changed. Different-version guest update/rollback remains untested.
+
+Passed: the guest-only historical transition runner and stopped-VM stager are
+implemented. Windows PowerShell 5.1 and PowerShell 7 each passed 34 inert checks;
+the real 13-file prepared payload passed hash, private ACL and canonical inventory
+checks. Independent correctness/security reviews found a separator mismatch and
+a destination-exists staging preservation risk; both were fixed and re-reviewed.
+The runner requires old baseline, current upgrade, actual DiRollbackDriver and
+final current restoration, with installed version/SYS hash and PCM checks at
+each stage. Reboot or uncertain in-flight mutation cannot pass or start a recovery
+mutation. These are preparation results; real guest transitions remain untested.
+
+Findings retained: the UEFI guest's first active-Verifier short run lost one
+480-frame PCM16 packet; its next extended run stopped at 38.265 seconds on a
+capture position gap while steady producer underruns remained zero. Another
+guest was undergoing hibernate/resume during these attempts. The test's capture
+thread lacked MMCSS registration even though its dedicated producer had it.
+Both short and extended consumers now register with MMCSS Pro Audio/HIGH or
+fail closed; detailed invalid-packet and consumer drain timing are reported.
+All previous continuity/freshness/queue/underrun limits remain unchanged. Six
+native and six ASan groups plus 44 offline checks passed; real isolated retest
+is still needed. The initial kernel capture result is not retroactively erased.
+
+Incomplete: the first resumed S4 attempt was interrupted by a later host shutdown
+(User32 1074 at 2026-10-09T13:36:29Z). The guest disk and serial evidence were
+retained before restoring the licensed pre-test snapshot. Its original session
+could not receive final verification; this is not a passed hibernate test or an
+established driver bugcheck.
 
 Not run/completed at this source checkpoint: one-hour acceptance, active HVCI
 capture, supported sleep/hibernate recovery, different-version upgrade/rollback,
@@ -120,8 +171,14 @@ remains false; the daily host security settings and saved user state are preserv
 Evidence: artifacts/driver-acceptance/{capture-ci-60-dedicated-producer-serial.log,
 capture-hour-ci-first-failed-serial.log,activation-verifier-sleep-serial.log,
 vm-fixtures-uefi-final.log,vm-fixtures-hibernate-reviewed.log,
+vm-fixtures-token-final.log,winps-token-final.log,secrets-token-final.log,
+vm-fixtures-transition-fixed.log,winps-token-transition-final.log,
+native-consumer-final.log,asan-consumer-final.log,capture-consumer-offline-final.log,
+uefi-ci-60-position-gap-serial.log,hibernate-resume-host-shutdown-incomplete-serial.log,
 standard-user-pcm-capture-serial.log,capture-hour-host-reboot-incomplete-serial.log,
-uefi-pre-driver-serial.log,ci-fe8590a-passed.log,native-tests-final.log,asan-final-tests.log,
+uefi-pre-driver-serial.log,uefi-initial-kernel-capture-serial.log,
+uefi-licensed-ci-before-reboot-serial.log,ci-fe8590a-passed.log,
+ci-3cfaea3-passed.log,native-tests-final.log,asan-final-tests.log,
 security-final.log,core-after-timer.log,hvci-configured-and-registry-serial.log,
 hvci-boot-lock.png,recovered-desktop.png}. See [DRIVER-ACCEPTANCE.md](DRIVER-ACCEPTANCE.md).
 

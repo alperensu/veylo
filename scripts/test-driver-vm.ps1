@@ -8,7 +8,7 @@ $script:checks=0
 function Check([bool]$Condition,[string]$Name){$script:checks++;if(!$Condition){throw ('VM regression failed: '+$Name)};Write-Output ('Passed '+$Name)}
 function Reject([scriptblock]$Action,[string]$Name){$failed=$false;try{& $Action | Out-Null}catch{$failed=$true};Check $failed $Name}
 try{
-    foreach($name in @('prepare-driver-vm.ps1','driver-vm-common.ps1','start-driver-vm.ps1','run-driver-vm.ps1','control-driver-vm.ps1','stage-driver-acceptance.ps1','driver-vm-acceptance.ps1')){
+    foreach($name in @('prepare-driver-vm.ps1','driver-vm-common.ps1','start-driver-vm.ps1','run-driver-vm.ps1','control-driver-vm.ps1','stage-driver-acceptance.ps1','driver-vm-acceptance.ps1','stage-driver-version-transition.ps1','driver-vm-version-transition.ps1')){
         $errors=$null;$tokens=$null
         [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $name),[ref]$tokens,[ref]$errors) | Out-Null
         Check (!$errors) ('PowerShell parser '+$name)
@@ -151,8 +151,79 @@ try{
     }
     Save-Acceptance
     Check ((Assert-VmAcceptanceSeed $acceptanceSeed $identity.id) -eq $acceptance) 'fixed private acceptance seed hash inventory accepted'
+    $versionDirectory=New-LabPrivateDirectory (Join-Path $acceptanceSeed 'version-transition')
+    $versionFiles=[ordered]@{}
+    $packageNames=@('SesMicrophone.inf','SesMicrophone.sys','SesMicrophone.cat','lab-test.cer','ses_driver_capture_lab_tests.exe','test-signing-manifest.json')
+    foreach($version in @('old','current')){
+        New-LabPrivateDirectory (Join-Path $versionDirectory $version) | Out-Null
+        foreach($name in $packageNames){$versionFiles[$version+'\'+$name]=''}
+    }
+    $versionFiles['driver-vm-version-transition.ps1']=''
+    foreach($name in @($versionFiles.Keys)){
+        $file=Join-Path $versionDirectory $name
+        [IO.File]::WriteAllText($file,'inert version fixture; no executable or certificate')
+        $fileAcl=Get-Acl -LiteralPath $file;$fileAcl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $file -AclObject $fileAcl
+        $versionFiles[$name]=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $versionIdentity=@{schema=1;vmId=$identity.id;testOnly=$true;productionReady=$false;oldVersion='0.5.0.0';currentVersion='0.5.1.0';abi=5;protocol=1;files=$versionFiles}
+    $versionManifest=Join-Path $versionDirectory 'version-transition-manifest.json'
+    function Save-VersionFixture {
+        $versionIdentity | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $versionManifest -Encoding utf8
+        $fileAcl=Get-Acl -LiteralPath $versionManifest;$fileAcl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $versionManifest -AclObject $fileAcl
+    }
+    Save-VersionFixture
+    Check ((Assert-VmVersionTransitionPayload $versionDirectory $identity.id) -ceq $versionDirectory) 'bounded version payload accepted without executing files'
+    Reject {Assert-VmVersionTransitionPayload $versionDirectory ([Guid]::NewGuid().ToString('D'))} 'foreign version payload VM rejected'
+    foreach($case in @(@{name='schema';value=2},@{name='testOnly';value='true'},@{name='productionReady';value=$true},@{name='oldVersion';value='0.5.1.0'},@{name='abi';value=4})){
+        $original=$versionIdentity[$case.name];$versionIdentity[$case.name]=$case.value;Save-VersionFixture
+        Reject {Assert-VmVersionTransitionPayload $versionDirectory $identity.id} ('version payload invalid contract '+$case.name)
+        $versionIdentity[$case.name]=$original
+    }
+    $original=$versionFiles['old\SesMicrophone.sys'];$versionFiles['old\SesMicrophone.sys']='0'*64;Save-VersionFixture
+    Reject {Assert-VmVersionTransitionPayload $versionDirectory $identity.id} 'version payload checksum corruption rejected'
+    $versionFiles['old\SesMicrophone.sys']=$original
+    $versionFiles.Remove('old\SesMicrophone.sys');$versionFiles['old/SesMicrophone.sys']=$original;Save-VersionFixture
+    Reject {Assert-VmVersionTransitionPayload $versionDirectory $identity.id} 'version payload alternate separator rejected'
+    $versionFiles.Remove('old/SesMicrophone.sys');$versionFiles['old\SesMicrophone.sys']=$original
+    $versionFiles['../foreign']='0'*64;Save-VersionFixture
+    Reject {Assert-VmVersionTransitionPayload $versionDirectory $identity.id} 'version payload traversal entry rejected'
+    $versionFiles.Remove('../foreign');Save-VersionFixture
+    $extra=Join-Path $versionDirectory 'foreign.ps1';[IO.File]::WriteAllText($extra,'inert')
+    Reject {Assert-VmVersionTransitionPayload $versionDirectory $identity.id} 'version payload root extras rejected'
+    Remove-Item -LiteralPath $extra
+    $weak=Get-Acl -LiteralPath $versionManifest;$originalAcl=$weak
+    $weak.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-1-0'),[Security.AccessControl.FileSystemRights]::Read,[Security.AccessControl.AccessControlType]::Allow))
+    Set-Acl -LiteralPath $versionManifest -AclObject $weak
+    Reject {Assert-VmVersionTransitionPayload $versionDirectory $identity.id} 'version payload public-readable manifest rejected'
+    Set-Acl -LiteralPath $versionManifest -AclObject (Get-Acl -LiteralPath (Join-Path $versionDirectory 'driver-vm-version-transition.ps1'))
     # Extract only the pure ACL guard; never execute the guest runner on host.
     $guestAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'driver-vm-acceptance.ps1'),[ref]$null,[ref]$null)
+    $stopDefinition=$guestAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Stop-BoundedGuestChild'},$true)
+    if(!$stopDefinition){throw 'Missing bounded child stop helper.'}
+    $stopRunspace=[PowerShell]::Create()
+    try{
+        $null=$stopRunspace.AddScript({param($helper)
+            $ErrorActionPreference='Stop'
+            . ([ScriptBlock]::Create($helper))
+            foreach($case in @('exited','running','exit-race','live-error')){
+                $mock=[pscustomobject]@{case=$case;exited=($case -ceq 'exited');kills=0}
+                $mock | Add-Member -MemberType ScriptProperty -Name HasExited -Value {return $this.exited}
+                $mock | Add-Member -MemberType ScriptMethod -Name Kill -Value {
+                    $this.kills++
+                    if($this.case -ceq 'live-error'){throw 'inert live child kill failure'}
+                    $this.exited=$true
+                    if($this.case -ceq 'exit-race'){throw 'inert child already exited'}
+                }
+                $threw=$false;try{Stop-BoundedGuestChild $mock}catch{$threw=$true}
+                [pscustomobject]@{name=$case;passed=($threw -eq ($case -ceq 'live-error') -and
+                    $mock.kills -eq $(if($case -ceq 'exited'){0}else{1}) -and
+                    $mock.exited -eq ($case -cne 'live-error'))}
+            }
+        }).AddArgument($stopDefinition.Extent.Text)
+        $stopResults=@($stopRunspace.Invoke())
+        if($stopRunspace.Streams.Error.Count -gt 0 -or $stopResults.Count -ne 4){throw 'Bounded child stop fixtures failed.'}
+        foreach($stopResult in $stopResults){Check $stopResult.passed ('inert bounded child '+$stopResult.name)}
+    }finally{$stopRunspace.Dispose()}
     # Only the pure identity validator and its assertion wrapper execute. The
     # device inventory is mocked; no host CIM, driver or DevCon is accessed.
     $deviceIdentitySource=(@('Test-SesDeviceIdentity','Assert-OneSesDevice') | ForEach-Object {
@@ -450,11 +521,26 @@ try{
     }finally{$registryRunspace.Dispose()}
     # Only isolated helper ASTs and the extracted prepare clause execute here.
     # Guest/host power tools, CIM, event log access and COM1 are inert mocks.
-    $hibernateHelpers=@('ConvertFrom-HibernateEventXml','Get-HibernateResumeDecision','Get-HibernateEvents','Write-FirstHibernateSnapshot')
+    $hibernateHelpers=@('ConvertFrom-HibernateEventXml','Get-HibernateResumeDecision','Get-HibernateEvents','Write-FirstHibernateSnapshot',
+        'Get-HibernateSessionEvidence','Test-HibernateLogonSession','Test-HibernateInteractiveMembership')
     $hibernateSource=($hibernateHelpers | ForEach-Object {
         $wanted=$_
         $definition=$guestAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $wanted},$true)
-        if(!$definition){throw ('Missing hibernate helper '+$wanted)};$definition.Extent.Text
+        if(!$definition){throw ('Missing hibernate helper '+$wanted)}
+        $helperSource=$definition.Extent.Text
+        if($wanted -ceq 'Get-HibernateSessionEvidence'){
+            # Substitute only the extracted test copy's three platform calls.
+            # CI may run in session 0; no real token/session controls this fixture.
+            foreach($replacement in @(
+                @{from='[Security.Principal.WindowsIdentity]::GetCurrent()';to='(New-FixtureHibernateIdentity)'},
+                @{from='[Security.Principal.WindowsPrincipal]::new($identity)';to='(New-FixtureHibernatePrincipal $identity)'},
+                @{from='[Diagnostics.Process]::GetCurrentProcess().SessionId';to='(Get-FixtureHibernateSessionId)'}
+            )){
+                if([regex]::Matches($helperSource,[regex]::Escape($replacement.from)).Count -ne 1){throw 'Hibernate fixture platform substitution changed.'}
+                $helperSource=$helperSource.Replace($replacement.from,$replacement.to)
+            }
+        }
+        $helperSource
     }) -join "`r`n"
     $hibernateClause=@($modeSwitch.Clauses | Where-Object {$_.Item1.Value -ceq 'HibernatePrepare'})[0].Item2.Extent.Text
     $hibernateBody=$hibernateClause.Substring(1,$hibernateClause.Length-2)
@@ -466,9 +552,22 @@ try{
             $ErrorActionPreference='Stop';Set-StrictMode -Version 2.0
             . ([ScriptBlock]::Create($source))
             function Emit([bool]$Passed,[string]$Name){[pscustomobject]@{passed=$Passed;name=('hibernate '+$Name)}}
+            $script:disposedIdentities=0
+            function New-FixtureHibernateIdentity {
+                $mock=[pscustomobject]@{User=[pscustomobject]@{Value='S-1-5-21-1-2-3-500'}}
+                $mock | Add-Member -MemberType ScriptMethod -Name Dispose -Value {$script:disposedIdentities++}
+                return $mock
+            }
+            function New-FixtureHibernatePrincipal {param($Identity)
+                if($Identity.User.Value -cne 'S-1-5-21-1-2-3-500'){throw 'Unexpected inert identity.'}
+                $mock=[pscustomobject]@{}
+                $mock | Add-Member -MemberType ScriptMethod -Name IsInRole -Value {param($Sid) return $Sid.Value -ceq 'S-1-5-4'}
+                return $mock
+            }
+            function Get-FixtureHibernateSessionId {return 1}
             $vmId='11111111-2222-3333-4444-555555555555'
             function New-Session {
-                return @{bootUtc='2026-10-09T07:00:00.0000000Z';userSid='S-1-5-21-1-2-3-500';logonSid='S-1-5-5-0-100';sessionId=1}
+                return @{bootUtc='2026-10-09T07:00:00.0000000Z';userSid='S-1-5-21-1-2-3-500';authenticationId='0000000000000100';interactive=$true;sessionId=1}
             }
             function New-Baseline {
                 return @{schema=1;vmId=$vmId;mode='HibernatePrepare';status='Snapshot';testOnly=$true;
@@ -491,10 +590,73 @@ try{
             Emit ((Get-HibernateResumeDecision $baseline $session @($events[1],$events[0]) $vmId $now).resumeVerified) 'reverse query order still uses record order'
             Emit (!(Get-HibernateResumeDecision $null $session $events $vmId $now).resumeVerified) 'missing snapshot rejected'
             Emit (!(Get-HibernateResumeDecision $baseline $session @() $vmId $now).resumeVerified) 'request success without events cannot pass'
-            foreach($field in @('bootUtc','userSid','logonSid','sessionId')){
+            foreach($field in @('bootUtc','userSid','authenticationId','interactive','sessionId')){
                 $changed=New-Session;$changed[$field]=if($field -ceq 'sessionId'){2}else{'changed'}
                 Emit (!(Get-HibernateResumeDecision $baseline $changed $events $vmId $now).resumeVerified) ('continuity mismatch rejected '+$field)
             }
+            foreach($value in @($null,100,'0000000000000000','000000000000010','00000000000000100','000000000000010G','00000000000000FF')){
+                $changed=New-Session;$changed.authenticationId=$value
+                $changedBaseline=New-Baseline;$changedBaseline.session.authenticationId=$value
+                Emit (!(Get-HibernateResumeDecision $changedBaseline $changed $events $vmId $now).resumeVerified) 'missing zero non-string malformed or noncanonical authentication LUID rejected'
+            }
+            $changed=New-Baseline;$changed.session.Remove('authenticationId');$changed.session.logonSid='S-1-5-5-0-100'
+            Emit (!(Get-HibernateResumeDecision $changed $session $events $vmId $now).resumeVerified) 'obsolete group-logon-SID baseline cannot pass'
+            foreach($field in @('userSid','authenticationId','interactive','sessionId')){
+                $values=switch($field){
+                    'userSid' {@('S-1-5-18','S-1-5-19','S-1-5-20','S-1-5-7')}
+                    'authenticationId' {@('00000000000003e4','00000000000003e5','00000000000003e6','00000000000003e7')}
+                    'interactive' {@($null,$false,'true',1)}
+                    'sessionId' {@(0,'1')}
+                }
+                foreach($value in $values){
+                    $changed=New-Session;$changed[$field]=$value;$changedBaseline=New-Baseline;$changedBaseline.session[$field]=$value
+                    Emit (!(Test-HibernateLogonSession $changed) -and !(Get-HibernateResumeDecision $changedBaseline $changed $events $vmId $now).resumeVerified) ('service anonymous noninteractive or malformed session rejected '+$field)
+                }
+            }
+            $changed=New-Baseline;$changed.session.Remove('interactive')
+            Emit (!(Get-HibernateResumeDecision $changed $session $events $vmId $now).resumeVerified) 'legacy baseline without interactive membership proof rejected'
+            foreach($case in @(@{interactive=$true;remote=$false;expected=$true},@{interactive=$false;remote=$true;expected=$true},@{interactive=$false;remote=$false;expected=$false})){
+                $mockPrincipal=[pscustomobject]@{interactive=$case.interactive;remote=$case.remote;calls=@()}
+                $mockPrincipal | Add-Member -MemberType ScriptMethod -Name IsInRole -Value {
+                    param($Sid);$this.calls+=,$Sid.Value
+                    if($Sid.Value -ceq 'S-1-5-4'){return $this.interactive}
+                    if($Sid.Value -ceq 'S-1-5-14'){return $this.remote};throw 'Unexpected role SID.'
+                }
+                $membership=Test-HibernateInteractiveMembership $mockPrincipal
+                Emit ($membership -eq $case.expected -and $mockPrincipal.calls[0] -ceq 'S-1-5-4' -and
+                    ($case.interactive -or $mockPrincipal.calls[1] -ceq 'S-1-5-14')) 'only enabled interactive or remote-interactive roles accepted'
+            }
+            # Only the current identity lifetime is read; native token querying
+            # and OS boot data are mocked. No DLL, CIM or power command executes.
+            $script:nativeReads=0;$script:bootReads=0;$script:mockAuthenticationId='0000000000000100'
+            function Read-HibernateAuthenticationId {param($Identity)
+                if(!$Identity){throw 'Missing identity in mocked token reader.'}
+                $script:nativeReads++;if($script:mockAuthenticationId -ceq 'throw'){throw 'inert token query failure'}
+                return $script:mockAuthenticationId
+            }
+            function Get-CimInstance {param($ClassName)
+                if($ClassName -cne 'Win32_OperatingSystem'){throw 'Unexpected inert CIM class.'}
+                $script:bootReads++;return [pscustomobject]@{LastBootUpTime=[DateTime]::SpecifyKind([DateTime]'2026-10-09T07:00:00',[DateTimeKind]::Utc)}
+            }
+            $actual=Get-HibernateSessionEvidence
+            Emit ($actual.authenticationId -ceq '0000000000000100' -and $actual.bootUtc -ceq '2026-10-09T07:00:00.0000000Z' -and
+                $actual.sessionId -ceq 1 -and $actual.interactive -ceq $true -and $script:nativeReads -eq 1 -and $script:bootReads -eq 1 -and
+                $script:disposedIdentities -eq 1 -and !$actual.ContainsKey('logonSid')) 'session collector uses inert identity session and enabled interactive membership and disposes identity'
+            foreach($value in @($null,100,'0000000000000000','000000000000010','00000000000000100','000000000000010G','00000000000000FF','throw')){
+                $script:mockAuthenticationId=$value;$reads=$script:bootReads;$disposed=$script:disposedIdentities;$rejected=$false;$message=''
+                try{Get-HibernateSessionEvidence | Out-Null}catch{$rejected=$true;$message=$_.Exception.Message}
+                Emit ($rejected -and $script:bootReads -eq $reads -and $script:disposedIdentities -eq ($disposed+1) -and
+                    ($value -cne 'throw' -or $message -ceq 'inert token query failure')) 'invalid or failed native LUID read stops before boot query and disposes identity'
+            }
+            foreach($value in @('00000000000003e4','00000000000003e5','00000000000003e6','00000000000003e7')){
+                $script:mockAuthenticationId=$value;$reads=$script:bootReads;$rejected=$false
+                try{Get-HibernateSessionEvidence | Out-Null}catch{$rejected=$true}
+                Emit ($rejected -and $script:bootReads -eq $reads) 'collector rejects reserved service or anonymous LUID before boot query'
+            }
+            $script:mockAuthenticationId='0000000000000100'
+            function Test-HibernateInteractiveMembership {param($Principal) return $false}
+            $reads=$script:bootReads;$rejected=$false;try{Get-HibernateSessionEvidence | Out-Null}catch{$rejected=$true}
+            Emit ($rejected -and $script:bootReads -eq $reads) 'collector rejects token without enabled interactive membership before boot query'
             foreach($case in @(
                 @{field='vmId';value='foreign'},@{field='schema';value=2},@{field='mode';value='Capture'},
                 @{field='status';value='Requested'},@{field='testOnly';value='true'},@{field='eventRecordId';value='100'},
@@ -629,7 +791,7 @@ try{
         }).AddArgument($hibernateSource).AddArgument($hibernateBody).AddArgument($hibernateVerifyBody).AddArgument($fixture)
         $hibernateResults=@($hibernateRunspace.Invoke())
         if($hibernateRunspace.Streams.Error.Count -gt 0){throw ('Inert hibernate fixtures failed: '+($hibernateRunspace.Streams.Error | Out-String))}
-        Check ($hibernateResults.Count -eq 62) 'inert hibernate regression fixture inventory complete'
+        Check ($hibernateResults.Count -eq 103) 'inert hibernate regression fixture inventory complete'
         foreach($hibernateResult in $hibernateResults){Check $hibernateResult.passed $hibernateResult.name}
     }finally{$hibernateRunspace.Dispose()}
     Reject {Assert-VmAcceptanceSeed $acceptanceSeed ([Guid]::NewGuid().ToString('D'))} 'acceptance seed for foreign VM rejected'
