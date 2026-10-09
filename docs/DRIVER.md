@@ -8,10 +8,12 @@
 Veylo-driver-0.5.1.0-isolated-lab.zip imzasız geliştirme çıktısıdır; günlük bilgisayara
 yüklenmemelidir. Ayrı `TEST-SIGNED-isolated-lab.zip` paketi dosya tabanlı
 test sertifikasıyla SYS ve CAT imzası taşır; bu Microsoft üretim imzası değildir.
-Format doğrulaması, tampon rezervi ve PnP yaşam döngüsü kaynak/test düzeyinde güçlendirildi; gerçek kernel kabulü henüz yok. Uygulama ZIP'i üretim
+İzole Windows 11 build 26100 guest'te kurulum, 104 kernel IOCTL kontrolü ve
+PCM16/PCM32 gerçek ses aktarımı geçti. Bu test-policy sonucudur; üretim kernel
+politikası, HVCI, geniş yaşam döngüsü ve alıcı uygulama kabulü tamamlanmadı. Uygulama ZIP'i üretim
 sürücüsü içermez, VB-CABLE ile çalışmaya devam eder. Kur/güncelle üretim paketi yokken
 devre dışıdır. [İzole VM adımları](DRIVER-LAB.md) ve
-[Microsoft imzalama hazırlığı](DRIVER-SIGNING.md) ayrı rehberlerdedir.
+[Microsoft imzalama hazırlığı](https://github.com/alperensu/veylo/blob/main/docs/DRIVER-SIGNING.md) ayrı rehberlerdedir.
 
 ## Üretim imzalı paketle normal kullanım
 
@@ -66,7 +68,8 @@ Windows 10 2004+ / Windows 11 x64 için ayrı VM veya test bilgisayarı ve geri
 dönüş snapshot'ı gerekir. Test sertifikası ve gerekiyorsa test signing yalnızca
 bu ortamda kullanılmalıdır. Resmî WDK/DevCon ve Microsoft test sertifikası
 prosedürüyle yükle; normal Veylo kurulum yardımcısını bypass etme. Bu proje için
-henüz laboratuvar bulunmuyor. Somut hazırlık ve kabul adımları [DRIVER-LAB.md](DRIVER-LAB.md) içindedir.
+izole değerlendirme VM'si kuruldu; kısa kernel/capture ve standart Verifier
+kontrolleri geçti. Somut hazırlık ve kalan kabul adımları [DRIVER-LAB.md](DRIVER-LAB.md) içindedir.
 
 Uygulama kapalıyken sadece laboratuvarda:
 

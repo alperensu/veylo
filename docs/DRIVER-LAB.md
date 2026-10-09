@@ -2,9 +2,11 @@
 
 Veylo **0.7.5-dev**, sürücü **0.5.1.0**. Normal Setup kernel sürücüsünü
 paketlemez; günlük uygulama mevcut VB-CABLE ile çalışır. Dosya düzeyinde test
-imzalı SYS/CAT ve içerik doğrulamaları tamamlandı. Gerçek Windows kernel
-yüklemesi, capture, HVCI/Driver Verifier ve alıcı uygulama kabulü henüz
-**Not run** durumundadır; günlük kullanıma hazır olunduğu anlamına gelmez.
+imzalı SYS/CAT ve içerik doğrulamaları tamamlandı. İzole Windows 11 build 26100
+guest'te kurulum, 104 IOCTL kontrolü ve PCM16/PCM32 gerçek WASAPI capture geçti.
+Driver Verifier standart kontrolleri açıkken aynı kısa testler geçti.
+HVCI, uzun süreli testler ve alıcı uygulama kabulü henüz **Not run** durumundadır;
+günlük kullanıma hazır olunduğu anlamına gelmez. [Güncel kanıt ve sınırlar](https://github.com/alperensu/veylo/blob/main/docs/VALIDATION.md).
 
 ## Host üzerinde hazırlanabilen çıktılar
 
@@ -102,6 +104,10 @@ kurulumu ilk açılışta gerçekleşir. `guest.ps1`, QEMU üretici/model bilgis
 `VEYLO-LAB` adını, VM UUID'sini ve seed hash'lerini kontrol ettikten sonra
 **yalnız guest içinde** açık test sertifikasını Root/TrustedPublisher deposuna
 ekler ve guest test-signing'i açar. Ardından sürücüyü kurmadan kapanır.
+Guest oturumu yükseltilmiş değilse yalnız VM içinde UAC onayı ister. SYSTEM
+başlangıç görevinin kodu ve manifesti guest Administrators/SYSTEM dışına kapatılır.
+Temiz imajda TrustedPublisher deposu yoksa sabit Windows certutil aracıyla
+oluşturulur; bir yetki hatası başarı olarak gösterilmez.
 
 QEMU `-no-reboot` ile çalışır: Windows yeniden başlatma istediğinde süreç
 kapanır. Aynı sanal diskte kuruluma `start-driver-vm.ps1 -VmDirectory $vm
@@ -175,8 +181,8 @@ Host üzerinde güvenli `ses_driver_capture_lab_tests.exe --self-test` yalnız
 analizör/PCM/tampon kontrolleridir; gerçek endpoint veya kernel capture kanıtı
 değildir. Guest raporları `C:\VeyloLab\result.json`, `capture.json`, `install.log`,
 `ioctl.log`, `capture.log` altındadır; seri çıktı VM klasöründeki `serial.log`'a
-yazılır. Süreç başladı diye testi geçmiş sayma. Bu sürüm için gerçek kernel
-ve capture sonucu hâlen **Not run**.
+yazılır. Süreç başladı diye testi geçmiş sayma. Bu sürümde kısa izole kernel
+ve capture testleri geçti; HVCI, uzun süreli testler ve uygulama kabulü bekliyor.
 
 ## Tamamlanacak kabul matrisi
 

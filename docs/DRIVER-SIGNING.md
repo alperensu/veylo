@@ -44,7 +44,9 @@ PFX veya parola içermez.
 | Paket/ZIP | **Passed:** sabit envanter, dosya hash'leri, sürüm/ABI/protokol; PFX/özel anahtar girdisi yok |
 | Hata senaryoları | **Passed:** 35 bütünlük ve gerçek SYS/CAT/INF/CER bozma kontrolü |
 | Managed analyzer build | **Passed:** `latest-all`, 0 uyarı |
-| Windows kernel policy, gerçek capture | **Not run:** dosya imzası bu testlerin yerine geçmez |
+| İzole test-policy kernel ve capture | **Passed:** Windows 11 build 26100 guest'te kurulum, 104 IOCTL ve PCM16/PCM32 için 20 gerçek WASAPI kontrolü; üretim politikası kabulü değildir |
+| Günlük Windows kernel politikası | **Not run:** Microsoft üretim imzalı paket yok |
+| Driver Verifier | **Passed:** yalnız Veylo için standart kontroller açıkken kısa 104 IOCTL / 20 WASAPI kontrolü; HVCI veya uzun süreli kabul değildir |
 | Microsoft üretim imzası | **Not run:** test sertifikası bu kabulü sağlamaz |
 
 CMS doğrulaması yalnız kriptografidir. Sertifika zinciri explicit test

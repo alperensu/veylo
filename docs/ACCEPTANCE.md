@@ -1,4 +1,4 @@
-# Veylo kabul durumu — 2026-10-08
+# Veylo kabul durumu — 2026-10-09
 
 Bu tablo ürünün tamamlandığı iddiası değildir. **Passed** yalnızca belirtilen
 kontrolün geçtiğini; **Partial** uygulama ve bazı testler bulunmasına rağmen
@@ -35,7 +35,7 @@ oyun modu gibi özel özellikler kendi koşullarında ayrıca değerlendirilir.
 | CPU ve bellek | Partial | 0.6.8'in 3.600,688 saniyelik düşük ölçüm yüklü, susturulmuş koşusu tamamlandı: CPU yüzde 0,174048; OS ömür boyu tepe çalışma kümesi 148.312.064 bayt; tampon hatası sıfır, çıkış kodu 0. Bu normal ürün başlangıcı ölçümü değildir; önceki 150 MB sınırı aşan koşular geçersiz sayılmaz. Ayrı normal 0.6.10 gözleminde 119 örnek yalnızca görünür pencereyi kapsadı; gizli kullanım hedefi değerlendirilmedi. |
 | Ek gecikme en fazla 40 ms | Not run | Fiziksel uçtan uca/diferansiyel ölçüm yok. Tampon hesapları ve sentetik saat testleri fiziksel gecikme kabulü yerine geçmez. |
 | Paket, lisans ve güvenlik | Partial | Kaynak/paket bütünlüğü, bağımlılık sabitleme ve değişiklik bazında bağımsız kod/güvenlik incelemeleri mevcut. Bunlar kernel/laboratuvar veya tam ürün güvenlik garantisi değildir. dailyUseReady=false. |
-| Kendi Veylo Mikrofon sürücüsü | Partial — geliştirme devam ediyor | 0.5.1 sürücüsü sabitlenmiş EWDK ile derlendi; InfVerif/Inf2Cat ve taşınabilir format, zamanlama, tampon testleri geçti. Üretim imzası, ayrı Windows laboratuvarı, Driver Verifier/HVCI ve gerçek alıcı uygulamalarla uyumluluk kabulü tamamlanmadı. Günlük makinede güvenlik ayarları kapatılmadı. VB-CABLE yolu bu sürücüyü gerektirmez. |
+| Kendi Veylo Mikrofon sürücüsü | Partial — izole kernel/capture geçti | 0.5.1 sürücüsü sabitlenmiş EWDK ile derlendi; InfVerif/Inf2Cat ve test imzası doğrulandı. Ayrı Windows 11 build 26100 VM'de kurulum, 104 IOCTL ve PCM16/PCM32 için 20 gerçek WASAPI kontrolü geçti; aynı kısa testler standart Driver Verifier açıkken de geçti. Microsoft üretim imzası, HVCI, uzun süreli yaşam döngüsü ve gerçek alıcı uygulama kabulü tamamlanmadı. Günlük makinenin güvenlik ayarları değiştirilmedi; VB-CABLE bu sürücüyü gerektirmez. |
 
 Mevcut ölçüm bilgisayarı: Windows 11 Home, 10.0.26300; Ryzen 5 7600,
 6 çekirdek/12 mantıksal işlemci. Bu bilgi Windows 10, farklı mikrofonlar veya
