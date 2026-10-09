@@ -1,5 +1,6 @@
 #include "../../driver/shared/audio_validation.h"
 #include "../../driver/shared/pcm_ring.h"
+#include "../../driver/shared/capture_diagnostics.h"
 #include "../src/transfer_queue.hpp"
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -8,6 +9,14 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <cstddef>
+#include <type_traits>
+static_assert(std::is_standard_layout_v<SesDriverDiagnostics>&&std::is_trivially_copyable_v<SesDriverDiagnostics>);
+static_assert(sizeof(SesDriverDiagnostics)==160&&sizeof(SesDriverDiagnostics)<=256);
+static_assert(offsetof(SesDriverDiagnostics,capture_calls)==8);
+static_assert(offsetof(SesDriverDiagnostics,first_underrun_tick_hns)==112);
+static_assert((SES_IOCTL_DIAGNOSTICS&3u)==0u); // METHOD_BUFFERED
+static_assert(((SES_IOCTL_DIAGNOSTICS>>14)&3u)==3u); // Same read/write access
 static unsigned checks=0;
 static void check(bool ok,const char* name){++checks;if(!ok){std::fprintf(stderr,"FAIL %s\n",name);std::exit(1);}}
 static void workerTimer(){
@@ -115,5 +124,107 @@ static void workerCadence(unsigned quantum){
         check(delivered&&unexpected_silence==0&&ring.underruns==0&&dropped==0,"1/5/10ms capture cadence survives jitter after priming");
     }
 }
-int main(){workerTimer();clockAndFormat();reserveAndDrift(10000,true);reserveAndDrift(9990,false);reserveAndDrift(10010,false);workerCadence(48);workerCadence(240);workerCadence(480);workerCadence(960);
+struct DiagnosticUnderrun {SesDriverStatus before{},after{};uint32_t remaining=0;};
+static DiagnosticUnderrun diagnosticCapture(ses_driver::CaptureDiagnostics& diagnostics,
+                                           ses_driver::PcmRing& ring,uint32_t frames,uint64_t tick_hns){
+    const auto token=diagnostics.beginCapture(ring.attached,frames,ring.queued(),tick_hns);
+    std::array<int32_t,SES_DRIVER_FRAMES> output{};DiagnosticUnderrun event{};
+    for(uint32_t remaining=frames;remaining;){
+        const uint32_t chunk=remaining>SES_DRIVER_FRAMES?SES_DRIVER_FRAMES:remaining;
+        const auto before=ring.status();const bool primed=ring.primed;
+        ring.pull(output.data(),chunk,32,tick_hns/10000);const auto after=ring.status();
+        diagnostics.pulled(token,ring.attached,primed,chunk,remaining,tick_hns,before,after);
+        if(!event.remaining&&primed&&before.underruns!=after.underruns)event={before,after,remaining};
+        if(remaining==chunk)diagnostics.endCapture(token,ring.attached,ring.queued());
+        remaining-=chunk;
+    }
+    return event;
+}
+static void captureDiagnostics(){
+    using namespace ses_driver;
+    CaptureDiagnostics diagnostics;PcmRing ring;
+    const auto initial=diagnostics.snapshot();
+    check(validCaptureDiagnostics(initial),"Diagnostic wire version, size, and reserved fields are initialized");
+    auto invalid=initial;invalid.version=2;check(!validCaptureDiagnostics(invalid),"Unknown diagnostics version rejected");
+    invalid=initial;invalid.size=sizeof(invalid)-1;check(!validCaptureDiagnostics(invalid),"Truncated diagnostics layout rejected");
+    invalid=initial;invalid.reserved0=1;check(!validCaptureDiagnostics(invalid),"Nonzero first diagnostics reserved word rejected");
+    invalid=initial;invalid.reserved1=1;check(!validCaptureDiagnostics(invalid),"Nonzero second diagnostics reserved word rejected");
+    diagnosticCapture(diagnostics,ring,1920,5000000);
+    diagnostics.successfulWrite(false,5000000);
+    check(diagnostics.snapshot().capture_calls==0&&diagnostics.snapshot().total_requested_frames==0&&
+          diagnostics.snapshot().last_successful_write_tick_hns==0,"Disconnected capture baseline and writes are excluded");
+    check(diagnostics.beginCapture(true,0,0,0)==0,"Empty capture does not count as a source call");
+    SesDriverHello hello{1,sizeof(hello),48000,1,32,480};
+    SesDriverPacket packet{1,sizeof(packet),480,0,0,{}};packet.pcm[0]=1073741824;
+    check(ring.connect(hello,0),"Connect diagnostics nominal fixture");diagnostics.reset();
+    for(unsigned i=0;i<3;++i){check(ring.push(packet,0),"Prefill diagnostics nominal fixture");++packet.sequence;diagnostics.successfulWrite(true,0);}
+    for(unsigned ms=0;ms<1000;++ms){
+        if(ms&&ms%10==0){check(ring.push(packet,ms),"Write diagnostics nominal fixture");++packet.sequence;diagnostics.successfulWrite(true,ms*10000ull);}
+        diagnosticCapture(diagnostics,ring,48,ms*10000ull);
+    }
+    const auto nominal=diagnostics.snapshot();
+    check(nominal.capture_calls==1000&&nominal.total_requested_frames==48000&&
+          nominal.max_capture_frames==48&&nominal.max_pull_chunk_frames==48,"1000 nominal 48-frame pulls retain whole-call totals");
+    check(!nominal.first_underrun_present&&ring.underruns==0,"Nominal diagnostics do not invent an underrun");
+    check(nominal.last_capture_frames==48&&nominal.last_capture_tick_hns==9990000&&
+          nominal.last_capture_queued_after==ring.queued()&&nominal.last_capture_queued_before>=nominal.last_capture_queued_after,
+          "Last nominal call has its own tick and exact before/after queue");
+    check(nominal.last_successful_write_tick_hns==9900000&&nominal.last_successful_write_gap_hns==100000&&
+          nominal.max_successful_write_gap_hns==100000,"Successful write arrival gaps use 100ns units");
+    check(ring.status().reserved==0&&sizeof(SesDriverStatus)==48,"Legacy status reserved and size remain unchanged");
+
+    // A delayed whole-call request must remain visible even though each pull is
+    // bounded to 480 frames. Snapshot counters are ring lifetime values.
+    check(ring.connect(hello,1000),"Reconnect diagnostics delayed fixture");diagnostics.reset();packet.sequence=0;
+    for(unsigned i=0;i<3;++i){check(ring.push(packet,1000),"Prefill diagnostics delayed fixture");++packet.sequence;diagnostics.successfulWrite(true,10000000);}
+    diagnosticCapture(diagnostics,ring,48,10000000);
+    const auto queue_before=ring.queued();
+    const auto event=diagnosticCapture(diagnostics,ring,1920,10200000);
+    const auto delayed=diagnostics.snapshot();
+    check(event.remaining!=0&&delayed.first_underrun_present==1,"Oversized delayed capture records a real first steady underrun");
+    check(delayed.capture_calls==2&&delayed.total_requested_frames==1968&&delayed.max_capture_frames==1920&&
+          delayed.max_pull_chunk_frames==480,"Delayed 1920-frame call is not mislabeled as four ordinary pulls");
+    check(delayed.last_capture_frames==1920&&delayed.last_capture_queued_before==queue_before&&
+          delayed.last_capture_queued_after==ring.queued()&&delayed.last_capture_tick_hns==10200000,
+          "Whole delayed call queue and tick survive chunk splitting");
+    check(delayed.first_underrun_capture_frames==1920&&delayed.first_underrun_chunk_frames==480&&
+          delayed.first_underrun_remaining_frames==event.remaining&&delayed.first_underrun_queued_before==event.before.queued_frames,
+          "First underrun preserves original-call, chunk, remaining, and exact queued context");
+    check(delayed.first_underrun_old_count==event.before.underruns&&delayed.first_underrun_new_count==event.after.underruns&&
+          delayed.first_underrun_received_frames==event.after.received_frames&&
+          delayed.first_underrun_silence_before==event.before.silence_frames&&delayed.first_underrun_silence_after==event.after.silence_frames,
+          "First underrun snapshots exact cumulative received, silence, and counter transition");
+    check(delayed.first_underrun_tick_hns==10200000&&delayed.first_underrun_successful_write_tick_hns==10000000&&
+          delayed.first_underrun_since_successful_write_hns==200000,"First underrun retains successful write arrival age");
+    const auto sticky=delayed.first_underrun_silence_after;
+    diagnosticCapture(diagnostics,ring,480,10210000);
+    check(diagnostics.snapshot().first_underrun_silence_after==sticky&&
+          diagnostics.snapshot().first_underrun_tick_hns==10200000,"Later starvation cannot overwrite the first underrun event");
+
+    const auto stale=diagnostics.beginCapture(true,1920,42,10300000);
+    diagnostics.reset();diagnostics.successfulWrite(true,10350000);
+    diagnostics.pulled(stale,true,true,480,1440,10400000,event.before,event.after);
+    diagnostics.endCapture(stale,true,7);
+    const auto reset=diagnostics.snapshot();
+    check(reset.capture_calls==0&&reset.total_requested_frames==0&&!reset.first_underrun_present&&
+          reset.last_capture_frames==0&&reset.last_capture_queued_after==0&&reset.max_pull_chunk_frames==0,
+          "CONNECT reset excludes in-flight old-session chunks and clears source-session diagnostics");
+    const auto fresh=diagnostics.beginCapture(true,48,100,10400000);
+    diagnostics.pulled(fresh,true,false,48,48,10400000,event.before,event.after);
+    diagnostics.endCapture(fresh,true,52);
+    check(diagnostics.snapshot().capture_calls==1&&!diagnostics.snapshot().first_underrun_present&&
+          diagnostics.snapshot().last_capture_queued_after==52,"New-session capture resumes and unprimed silence is excluded");
+    const auto ignored=diagnostics.beginCapture(false,480,0,10500000);
+    diagnostics.pulled(ignored,false,true,480,480,10500000,event.before,event.after);
+    diagnostics.endCapture(ignored,false,0);
+    check(diagnostics.snapshot().capture_calls==1&&!diagnostics.snapshot().first_underrun_present,
+          "Disconnected chunks cannot become source-session underrun evidence");
+    check(CaptureDiagnostics::saturatingAdd(~uint64_t(0)-3,4)==~uint64_t(0)&&
+          CaptureDiagnostics::saturatingAdd(~uint64_t(0),1)==~uint64_t(0),"Diagnostics counters saturate rather than wrap");
+    check(CaptureDiagnostics::elapsed(1,2)==0&&CaptureDiagnostics::elapsed(20,10)==10,
+          "Write-age arithmetic cannot underflow on backward ticks");
+    diagnostics.successfulWrite(true,10349999);
+    check(diagnostics.snapshot().last_successful_write_gap_hns==0,"Backward simulated write tick cannot create a huge gap");
+}
+int main(){workerTimer();clockAndFormat();reserveAndDrift(10000,true);reserveAndDrift(9990,false);reserveAndDrift(10010,false);workerCadence(48);workerCadence(240);workerCadence(480);workerCadence(960);captureDiagnostics();
     std::printf("%u portable driver validation checks passed; no kernel or installation test was run\n",checks);}

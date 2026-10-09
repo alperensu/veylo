@@ -66,6 +66,44 @@ struct ProducerStatusHistory {
         return observations[(next+capacity-count+index)%capacity];
     }
 };
+struct KernelDiagnosticRecord {
+    uint32_t sourceSession=0,queryError=ERROR_NOT_READY;
+    bool available=false;
+    SesDriverDiagnostics data{};
+};
+bool validKernelDiagnostics(const SesDriverDiagnostics& d) {
+    return d.version==SES_DRIVER_DIAGNOSTICS_VERSION&&d.size==sizeof(d)&&d.reserved0==0&&d.reserved1==0&&
+        d.first_underrun_present<=1&&d.max_pull_chunk_frames<=SES_DRIVER_FRAMES&&
+        d.last_capture_queued_before<=SES_DRIVER_CAPACITY&&d.last_capture_queued_after<=SES_DRIVER_CAPACITY&&
+        (!d.first_underrun_present||(d.first_underrun_queued_before<=SES_DRIVER_CAPACITY&&
+            d.first_underrun_chunk_frames>0&&d.first_underrun_chunk_frames<=SES_DRIVER_FRAMES&&
+            d.first_underrun_remaining_frames>=d.first_underrun_chunk_frames&&
+            d.first_underrun_capture_frames>=d.first_underrun_remaining_frames&&
+            d.first_underrun_new_count>d.first_underrun_old_count));
+}
+bool writeKernelDiagnosticRecord(FILE* file,const KernelDiagnosticRecord& record) {
+    bool ok=std::fprintf(file,"{\"source_session\":%u,\"available\":%s,\"query_error\":%u,\"data\":{",
+        record.sourceSession,record.available?"true":"false",record.queryError)>0;
+    const auto& d=record.data;bool first=true;
+    auto field=[&](const char* name,uint64_t value) {
+        ok=std::fprintf(file,"%s\"%s\":%llu",first?"":",",name,static_cast<unsigned long long>(value))>0&&ok;first=false;
+    };
+#define SES_DIAGNOSTIC_FIELD(name) field(#name,d.name)
+    SES_DIAGNOSTIC_FIELD(version);SES_DIAGNOSTIC_FIELD(size);SES_DIAGNOSTIC_FIELD(capture_calls);
+    SES_DIAGNOSTIC_FIELD(total_requested_frames);SES_DIAGNOSTIC_FIELD(max_capture_frames);SES_DIAGNOSTIC_FIELD(max_pull_chunk_frames);
+    SES_DIAGNOSTIC_FIELD(last_capture_queued_before);SES_DIAGNOSTIC_FIELD(last_capture_queued_after);
+    SES_DIAGNOSTIC_FIELD(last_capture_frames);SES_DIAGNOSTIC_FIELD(reserved0);SES_DIAGNOSTIC_FIELD(last_capture_tick_hns);
+    SES_DIAGNOSTIC_FIELD(last_successful_write_tick_hns);SES_DIAGNOSTIC_FIELD(last_successful_write_gap_hns);
+    SES_DIAGNOSTIC_FIELD(max_successful_write_gap_hns);SES_DIAGNOSTIC_FIELD(first_underrun_present);
+    SES_DIAGNOSTIC_FIELD(first_underrun_queued_before);SES_DIAGNOSTIC_FIELD(first_underrun_chunk_frames);
+    SES_DIAGNOSTIC_FIELD(first_underrun_remaining_frames);SES_DIAGNOSTIC_FIELD(first_underrun_capture_frames);
+    SES_DIAGNOSTIC_FIELD(first_underrun_old_count);SES_DIAGNOSTIC_FIELD(first_underrun_new_count);SES_DIAGNOSTIC_FIELD(reserved1);
+    SES_DIAGNOSTIC_FIELD(first_underrun_tick_hns);SES_DIAGNOSTIC_FIELD(first_underrun_since_successful_write_hns);
+    SES_DIAGNOSTIC_FIELD(first_underrun_successful_write_tick_hns);SES_DIAGNOSTIC_FIELD(first_underrun_received_frames);
+    SES_DIAGNOSTIC_FIELD(first_underrun_silence_before);SES_DIAGNOSTIC_FIELD(first_underrun_silence_after);
+#undef SES_DIAGNOSTIC_FIELD
+    return std::fprintf(file,"}}")>0&&ok;
+}
 struct ExtendedEvidence {
     bool requested=false, ran=false;
     bool product=false,workerMmcss=false;
@@ -80,9 +118,21 @@ struct ExtendedEvidence {
     unsigned statusSamples=0, producerReconnects=0;
     uint64_t driverReceivedFrames=0, driverSilenceFrames=0;
     uint32_t driverUnderruns=0, driverOverruns=0, steadyUnderruns=0;
+    bool kernelDiagnostics=false;
+    unsigned diagnosticCount=0;
+    std::array<KernelDiagnosticRecord,3> diagnostics{};
     ProducerStatusHistory statusHistory;
     ExtendedClientEvidence clients[2];
 };
+bool completeKernelDiagnostics(const ExtendedEvidence& e) {
+    if(e.diagnosticCount!=e.diagnostics.size())return false;
+    for(unsigned i=0;i<e.diagnosticCount;++i) {
+        const auto& record=e.diagnostics[i];
+        if(record.sourceSession!=i+1||!record.available||record.queryError!=ERROR_SUCCESS||
+           !validKernelDiagnostics(record.data)||record.data.first_underrun_present)return false;
+    }
+    return true;
+}
 struct Report {
     unsigned checks=0, failures=0, unsupported=0, selfTests=0, verifiedEndpoints=0;
     unsigned formatsPassed=0, packetsWritten=0, packetsCaptured=0, signalFrames=0, silenceFrames=0;
@@ -155,9 +205,26 @@ struct Report {
             "\"last_observed_status\":%u,\"last_observed_error\":%u,"
             "\"maximum_worker_status_publication_age_us\":%llu,"
             "\"driver_counter_scope\":\"sum_of_connected_source_session_deltas_excludes_disconnected_holds\","
-            "\"bounded_flush_deadline_ms\":150}}}\n",e.product&&e.requested?"true":"false",e.product&&e.ran?"true":"false",
+            "\"bounded_flush_deadline_ms\":150,",e.product&&e.requested?"true":"false",e.product&&e.ran?"true":"false",
             e.workerMmcss?"true":"false",e.queueDrops,static_cast<unsigned long long>(e.submittedPackets),e.sourceSessions,
             e.bridgeStatus,e.bridgeLastError,static_cast<unsigned long long>(e.maxWorkerPublicationAge100ns/10))>0&&ok;
+        ok=std::fprintf(file,"\"kernel_diagnostics\":{\"requested\":%s,\"mode\":\"optional_instrumented_driver_bridge\","
+            "\"source\":\"SES_IOCTL_DIAGNOSTICS_on_production_worker_owner_handle\",\"clock\":\"interrupt_time_100ns\","
+            "\"scope\":\"kernel_trace_connected_source_sessions\","
+            "\"first_underrun_counter_scope\":\"original_ring_lifetime_counters\","
+            "\"timing_effect\":\"additional_bounded_ioctls_on_first_underrun_and_each_source_session_end_or_failure\","
+            "\"not_audio_latency\":true,\"query_deadline_ms\":100,\"record_capacity\":3,\"record_count\":%u,\"records\":[",
+            e.kernelDiagnostics?"true":"false",e.diagnosticCount)>0&&ok;
+        const KernelDiagnosticRecord* firstFailure=nullptr;
+        for(unsigned i=0;i<e.diagnosticCount&&i<e.diagnostics.size();++i) {
+            if(i)ok=std::fprintf(file,",")>0&&ok;
+            ok=writeKernelDiagnosticRecord(file,e.diagnostics[i])&&ok;
+            if(!firstFailure&&validKernelDiagnostics(e.diagnostics[i].data)&&e.diagnostics[i].data.first_underrun_present)firstFailure=&e.diagnostics[i];
+        }
+        ok=std::fprintf(file,"],\"first_failure_record\":")>0&&ok;
+        if(firstFailure)ok=writeKernelDiagnosticRecord(file,*firstFailure)&&ok;
+        else ok=std::fprintf(file,"null")>0&&ok;
+        ok=std::fprintf(file,"}}}}\n")>0&&ok;
         return std::fclose(file)==0&&ok;
     }
 };
@@ -728,7 +795,7 @@ struct ExtendedProducer {
     std::atomic<bool> stop{false},finished{false};
     std::atomic<unsigned> resumePermit{0};
     std::thread worker;
-    ExtendedProducer(unsigned seconds):worker([this,seconds]{run(seconds);}){}
+    ExtendedProducer(unsigned seconds,bool=false):worker([this,seconds]{run(seconds);}){}
     ProducerPublication snapshot(){return publication.snapshot();}
     void publish(const ProducerPublication& state){if(!publication.publish(state))std::terminate();}
     void finish() {
@@ -874,7 +941,7 @@ struct ProductBridgeProducer {
     std::atomic<bool> stop{false},finished{false};
     std::atomic<unsigned> resumePermit{0};
     std::thread worker;
-    ProductBridgeProducer(unsigned seconds):worker([this,seconds]{run(seconds);}){}
+    ProductBridgeProducer(unsigned seconds,bool kernelDiagnostics=false):worker([this,seconds,kernelDiagnostics]{run(seconds,kernelDiagnostics);}){}
     ProducerPublication snapshot(){return publication.snapshot();}
     void publish(const ProducerPublication& state){if(!publication.publish(state))std::terminate();}
     void finish() {
@@ -887,9 +954,10 @@ struct ProductBridgeProducer {
         }
     }
     ~ProductBridgeProducer(){finish();}
-    void run(unsigned seconds) {
-        ProducerPublication state{};auto& e=state.evidence;e.product=true;e.workerMmcss=true;
+    void run(unsigned seconds,bool kernelDiagnostics) {
+        ProducerPublication state{};auto& e=state.evidence;e.product=true;e.workerMmcss=true;e.kernelDiagnostics=kernelDiagnostics;
         ses::DriverBridge bridge;Handle timer;MmcssAudio mmcss;e.mmcss=mmcss.ready;
+        bridge.diagnosticCaptureEnabled=kernelDiagnostics;
         uint64_t baselineReceived=0,baselineSilence=0,sessionSubmitted=0;
         uint64_t previousReceived=0,previousSilence=0;
         uint32_t baselineUnderruns=0,baselineOverruns=0,previousUnderruns=0,previousOverruns=0;
@@ -900,6 +968,29 @@ struct ProductBridgeProducer {
         for(unsigned p=0;p<4;++p)for(unsigned i=0;i<SES_DRIVER_FRAMES;++i)
             pcm[p][i]=static_cast<float>(waveform(p*SES_DRIVER_FRAMES+i));
         auto fail=[&](const char* reason){state.failure=reason;publish(state);};
+        auto stopAndCollect=[&]() {
+            bool withinDeadline=false;
+            if(kernelDiagnostics&&bridge.status==2) {
+                const uint64_t ticket=bridge.requestDiagnostics(),deadline=qpc100ns()+1000000;
+                while(bridge.diagnosticCompletedSequence!=ticket&&qpc100ns()<deadline)Sleep(1);
+                withinDeadline=bridge.diagnosticCompletedSequence==ticket&&qpc100ns()<=deadline;
+            }
+            bridge.stop(); // capturedDiagnostics is worker-owned until this join.
+            e.maxIoctl100ns=std::max(e.maxIoctl100ns,bridge.maxIoctl100ns.load());
+            sessionOpen=false;
+            if(kernelDiagnostics&&e.diagnosticCount<e.diagnostics.size()) {
+                auto& record=e.diagnostics[e.diagnosticCount++];record.sourceSession=e.sourceSessions;
+                record.queryError=bridge.diagnosticError.load();
+                if(!withinDeadline&&record.queryError==ERROR_NOT_READY)record.queryError=ERROR_TIMEOUT;
+                // Preserve an earlier successful automatic first-event query
+                // even if the explicit terminal query failed. The record's
+                // unavailable/error fields still reject capture acceptance.
+                if(validKernelDiagnostics(bridge.capturedDiagnostics))record.data=bridge.capturedDiagnostics;
+                record.available=withinDeadline&&bridge.diagnosticReady&&record.queryError==ERROR_SUCCESS&&validKernelDiagnostics(record.data);
+                if(bridge.diagnosticReady&&record.queryError==ERROR_SUCCESS&&!record.available)
+                    record.queryError=withinDeadline?ERROR_INVALID_DATA:ERROR_TIMEOUT;
+            }
+        };
         auto connect=[&]() {
             bridge.start();const uint64_t deadline=qpc100ns()+2000000;
             while(!stop&&bridge.status!=2&&bridge.status!=6&&qpc100ns()<deadline)Sleep(1);
@@ -960,7 +1051,7 @@ struct ProductBridgeProducer {
             totalSent=e.writes*SES_DRIVER_FRAMES;
             totalReceived=e.driverReceivedFrames;totalSilence=e.driverSilenceFrames;
             totalUnderruns=e.driverUnderruns;totalOverruns=e.driverOverruns;totalDrops=e.queueDrops;
-            bridge.stop();sessionOpen=false;return ok;
+            stopAndCollect();return ok;
         };
         timer.h=CreateWaitableTimerExW(nullptr,nullptr,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_MODIFY_STATE|SYNCHRONIZE);
         if(!timer.h||!mmcss.ready)fail("product upstream private high-resolution timer or MMCSS Pro Audio registration");
@@ -1013,12 +1104,12 @@ struct ProductBridgeProducer {
         if(sessionOpen) {
             // Failure evidence must retain actual worker values, including any
             // rejected queue/counter sample, before stop clears live state.
-            readStatus(false,state.began,qpc100ns(),state.phase);bridge.stop();
+            readStatus(false,state.began,qpc100ns(),state.phase);stopAndCollect();
         }
         state.done=true;publish(state);finished=true;
     }
 };
-template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
+template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Report& r,bool kernelDiagnostics=false) {
     auto& e=r.extended;e.ran=true;
     const unsigned before=r.failures;
     std::printf("Extended real kernel capture: %u seconds, two PCM32 shared clients in one process.\n",seconds);
@@ -1033,7 +1124,7 @@ template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Rep
     timer.h=CreateWaitableTimerExW(nullptr,nullptr,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_MODIFY_STATE|SYNCHRONIZE);
     if(!timer.h){r.check(false,"extended private high-resolution consumer timer");return false;}
     StreamingAnalyzer analyzer;
-    Producer producer(seconds);
+    Producer producer(seconds,kernelDiagnostics);
     const uint64_t startupDeadline=GetTickCount64()+1000;
     ProducerPublication state=producer.snapshot();
     while(!state.ready&&!state.done&&GetTickCount64()<startupDeadline){Sleep(1);state=producer.snapshot();}
@@ -1161,6 +1252,9 @@ template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Rep
         r.check(e.workerMmcss,"real DriverBridge worker registers MMCSS Pro Audio in every source session");
         r.check(e.queueDrops==0&&e.writes==e.submittedPackets,"every real upstream callback reaches DriverBridge without TransferQueue drops");
         r.check(e.sourceSessions==3,"real DriverBridge stop/start clears stale audio across both lifecycle changes");
+        if(e.kernelDiagnostics) {
+            r.check(completeKernelDiagnostics(e),"optional instrumented run retains three valid kernel diagnostics from the actual worker owner sessions");
+        }
     }
     for(auto& consumer:consumers)consumer.close();analyzer.finish();
     r.check(ok&&!analyzer.failed,"extended capture keeps bounded memory, packet integrity, waveform fidelity and driver counters");
@@ -1177,7 +1271,7 @@ template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Rep
     return r.failures==before;
 }
 
-struct Options {bool offline=false,lab=false,extended=false,product=false;unsigned seconds=60;const char* reportPath=nullptr;};
+struct Options {bool offline=false,lab=false,extended=false,product=false,kernelDiagnostics=false;unsigned seconds=60;const char* reportPath=nullptr;};
 bool parseOptions(int argc,char** argv,Options& options) {
     bool durationSet=false;
     for(int i=1;i<argc;++i) {
@@ -1185,6 +1279,7 @@ bool parseOptions(int argc,char** argv,Options& options) {
         else if(!std::strcmp(argv[i],"--isolated-lab")&&!options.lab)options.lab=true;
         else if(!std::strcmp(argv[i],"--extended")&&!options.extended)options.extended=true;
         else if(!std::strcmp(argv[i],"--product-bridge")&&!options.product)options.product=true;
+        else if(!std::strcmp(argv[i],"--kernel-diagnostics")&&!options.kernelDiagnostics)options.kernelDiagnostics=true;
         else if(!std::strcmp(argv[i],"--json-report")&&i+1<argc&&!options.reportPath&&argv[i+1][0]&&argv[i+1][0]!='-')options.reportPath=argv[++i];
         else if(!std::strcmp(argv[i],"--duration-seconds")&&i+1<argc&&!durationSet) {
             const char* value=argv[++i];unsigned seconds=0;
@@ -1195,7 +1290,7 @@ bool parseOptions(int argc,char** argv,Options& options) {
         } else return false;
     }
     return options.offline!=options.lab&&(!options.extended||options.lab)&&(!durationSet||options.extended)&&
-        (!options.product||(options.lab&&options.extended&&durationSet));
+        (!options.product||(options.lab&&options.extended&&durationSet))&&(!options.kernelDiagnostics||options.product);
 }
 void mailboxSelfTest(Report& r) {
     const char oddFailure[]="fixture odd generation",evenFailure[]="fixture even generation";
@@ -1392,6 +1487,58 @@ void extendedSelfTest(Report& r) {
         "CLI never activates production DriverBridge on offline self-test");
     optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--product-bridge","--product-bridge"},false,
         "CLI rejects duplicate production DriverBridge flags");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--product-bridge","--kernel-diagnostics"},true,
+        "CLI permits explicitly instrumented kernel diagnostics only on bounded production DriverBridge lab capture");
+    optionsCheck({"test","--self-test","--kernel-diagnostics"},false,
+        "CLI rejects kernel diagnostics in offline mode");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--kernel-diagnostics"},false,
+        "CLI rejects kernel diagnostics on the strict synthetic producer");
+    optionsCheck({"test","--isolated-lab","--extended","--product-bridge","--kernel-diagnostics"},false,
+        "CLI rejects kernel diagnostics without explicit bounded duration");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--product-bridge","--kernel-diagnostics","--kernel-diagnostics"},false,
+        "CLI rejects duplicate kernel diagnostics flags");
+    SesDriverDiagnostics diagnostic{};diagnostic.version=SES_DRIVER_DIAGNOSTICS_VERSION;diagnostic.size=sizeof(diagnostic);
+    check(validKernelDiagnostics(diagnostic),"diagnostic validator accepts exact additive v1 wire layout without requiring an underrun");
+    auto badDiagnostic=diagnostic;badDiagnostic.version++;
+    const bool rejectsVersion=!validKernelDiagnostics(badDiagnostic);badDiagnostic=diagnostic;badDiagnostic.size--;
+    const bool rejectsSize=!validKernelDiagnostics(badDiagnostic);badDiagnostic=diagnostic;badDiagnostic.reserved0=1;
+    const bool rejectsReserved0=!validKernelDiagnostics(badDiagnostic);badDiagnostic=diagnostic;badDiagnostic.reserved1=1;
+    check(rejectsVersion&&rejectsSize&&rejectsReserved0&&!validKernelDiagnostics(badDiagnostic),
+        "diagnostic validator rejects wrong version, truncated output and both nonzero reserved fields");
+    diagnostic.first_underrun_present=1;diagnostic.first_underrun_queued_before=407;
+    diagnostic.first_underrun_chunk_frames=480;diagnostic.first_underrun_remaining_frames=961;
+    diagnostic.first_underrun_capture_frames=1441;diagnostic.first_underrun_old_count=7;diagnostic.first_underrun_new_count=8;
+    diagnostic.max_capture_frames=1441;diagnostic.max_pull_chunk_frames=480;
+    diagnostic.last_successful_write_tick_hns=123456789012345678ULL;diagnostic.first_underrun_tick_hns=123456789012456789ULL;
+    check(validKernelDiagnostics(diagnostic),"diagnostic validator preserves original large capture call and remaining frames including current chunk");
+    badDiagnostic=diagnostic;badDiagnostic.first_underrun_remaining_frames=479;
+    const bool rejectsRemaining=!validKernelDiagnostics(badDiagnostic);badDiagnostic=diagnostic;badDiagnostic.first_underrun_present=2;
+    const bool rejectsPresent=!validKernelDiagnostics(badDiagnostic);badDiagnostic=diagnostic;badDiagnostic.max_pull_chunk_frames=481;
+    check(rejectsRemaining&&rejectsPresent&&!validKernelDiagnostics(badDiagnostic),
+        "diagnostic validator rejects malformed first-underrun flag, remaining count and oversized internal chunk");
+    ExtendedEvidence diagnosticEvidence{};diagnosticEvidence.diagnosticCount=3;
+    for(unsigned i=0;i<3;++i)diagnosticEvidence.diagnostics[i]={i+1,ERROR_SUCCESS,true,diagnostic};
+    check(!completeKernelDiagnostics(diagnosticEvidence),"a terminal-query underrun cannot pass instrumented acceptance even when previous status was healthy");
+    for(auto& record:diagnosticEvidence.diagnostics)record.data.first_underrun_present=0;
+    check(completeKernelDiagnostics(diagnosticEvidence),"optional diagnostic acceptance requires three complete sequential owner-session records");
+    diagnosticEvidence.diagnosticCount=2;const bool rejectsMissing=!completeKernelDiagnostics(diagnosticEvidence);
+    diagnosticEvidence.diagnosticCount=3;diagnosticEvidence.diagnostics[1].queryError=ERROR_INVALID_FUNCTION;
+    const bool rejectsUnsupported=!completeKernelDiagnostics(diagnosticEvidence);
+    diagnosticEvidence.diagnostics[1].queryError=ERROR_SUCCESS;diagnosticEvidence.diagnostics[1].sourceSession=1;
+    check(rejectsMissing&&rejectsUnsupported&&!completeKernelDiagnostics(diagnosticEvidence),
+        "optional diagnostic gate rejects missing sessions, unsupported old-driver query and duplicate owner-session evidence");
+    FILE* diagnosticFile=std::tmpfile();bool serialized=false;
+    if(diagnosticFile) {
+        const KernelDiagnosticRecord record{1,ERROR_SUCCESS,true,diagnostic};
+        const bool written=writeKernelDiagnosticRecord(diagnosticFile,record);std::fflush(diagnosticFile);std::rewind(diagnosticFile);
+        std::array<char,4096> text{};const auto bytes=std::fread(text.data(),1,text.size()-1,diagnosticFile);
+        serialized=written&&bytes>0&&std::strstr(text.data(),"\"source_session\":1,\"available\":true,\"query_error\":0")&&
+            std::strstr(text.data(),"\"last_successful_write_tick_hns\":123456789012345678")&&
+            std::strstr(text.data(),"\"first_underrun_remaining_frames\":961")&&
+            std::strstr(text.data(),"\"first_underrun_capture_frames\":1441");
+        std::fclose(diagnosticFile);
+    }
+    check(serialized,"diagnostic JSON preserves full-width kernel interrupt timestamps and original first-underrun call context");
     check(productDeliveryComplete(3,1440,4800,3360)&&!productDeliveryComplete(3,960,4320,3360)&&
         !productDeliveryComplete(3,1440,4320,3360)&&!productDeliveryComplete(3,1440,5280,3360),
         "product terminal gate requires every callback and independent owner-session received-frame delta exactly");
@@ -1422,11 +1569,12 @@ void extendedSelfTest(Report& r) {
 int main(int argc,char** argv) {
     Options options;
     if(!parseOptions(argc,argv,options)) {
-        std::puts("Usage: ses_driver_capture_lab_tests (--self-test | --isolated-lab [--extended [--duration-seconds 10..3600] [--product-bridge]]) [--json-report path]; --product-bridge requires explicit --extended and --duration-seconds.");return 2;
+        std::puts("Usage: ses_driver_capture_lab_tests (--self-test | --isolated-lab [--extended [--duration-seconds 10..3600] [--product-bridge [--kernel-diagnostics]]]) [--json-report path]; --product-bridge requires explicit --extended and --duration-seconds.");return 2;
     }
     Report report;
     report.extended.requested=options.extended;report.extended.requestedSeconds=options.extended?options.seconds:0;
     report.extended.product=options.product;
+    report.extended.kernelDiagnostics=options.kernelDiagnostics;
     if(options.offline){selfTest(report);extendedSelfTest(report);}
     else {
         std::puts("--isolated-lab is an acknowledgement, not isolation. Run only in a dedicated lab.");
@@ -1438,7 +1586,7 @@ int main(int argc,char** argv) {
             report.check(found,"exactly one capture endpoint maps to ROOT\\SES_MICROPHONE and service SesMicrophone");
             if(found){runFormat(selected.p,16,report);runFormat(selected.p,32,report);
                 if(options.extended&&report.failures==0&&report.unsupported==0) {
-                    if(options.product)runExtended<ProductBridgeProducer>(selected.p,options.seconds,report);
+                    if(options.product)runExtended<ProductBridgeProducer>(selected.p,options.seconds,report,options.kernelDiagnostics);
                     else runExtended<ExtendedProducer>(selected.p,options.seconds,report);
                 }}
         }

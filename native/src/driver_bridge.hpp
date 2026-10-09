@@ -67,7 +67,8 @@ class DriverBridge {
         BoundedDriverIo<> io;
         if(!io.open()){lastError=io.error();fatalIo=io.fatal();status=6;return;}
         DriverWorkerMmcss mmcss;workerMmcss=mmcss.ready;
-        uint64_t sequence=0;SesDriverPacket packet{SES_DRIVER_PROTOCOL,sizeof(packet),SES_DRIVER_FRAMES,0,0,{}};std::array<float,480> samples{};
+        uint64_t sequence=0,servicedDiagnosticRequest=0;uint32_t baselineUnderruns=0;bool diagnosticsAttempted=false;
+        SesDriverPacket packet{SES_DRIVER_PROTOCOL,sizeof(packet),SES_DRIVER_FRAMES,0,0,{}};std::array<float,480> samples{};
         while(running){
             if(!io.connected()){
                 queue.discard();
@@ -78,7 +79,8 @@ class DriverBridge {
                 if(!call(io,SES_IOCTL_CONNECT,&hello,sizeof(hello),&info,sizeof(info))||!validStatus(info)){
                     if(io.fatal())break;
                     status=lastError==ERROR_REVISION_MISMATCH?3u:6u;io.disconnect();WaitForSingleObject(stopEvent,500);continue;}
-                sequence=0;publishCounters(info);protocol=info.version;lastError=0;status=2;
+                sequence=0;baselineUnderruns=info.underruns;diagnosticsAttempted=false;
+                publishCounters(info);protocol=info.version;lastError=0;status=2;
             }
             SesDriverStatus info{};
             if(!call(io,SES_IOCTL_STATUS,nullptr,0,&info,sizeof(info))||!validStatus(info)){
@@ -88,6 +90,30 @@ class DriverBridge {
                 packet.sequence=sequence;for(unsigned i=0;i<480;++i){double x=samples[i];x=std::isfinite(x)?std::clamp(x,-1.,1.):0.;packet.pcm[i]=static_cast<int32_t>(x*2147483647.);}
                 if(!call(io,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0)){status=6;if(io.fatal())break;io.disconnect();continue;}
                 ++sequence;sent+=480;
+            }
+            // Opt-in lab sampling follows normal audio delivery. The production
+            // default issues no diagnostic IOCTLs. Only this worker writes the
+            // plain snapshot; the lab reader must stop/join before inspecting it.
+            if(diagnosticCaptureEnabled&&running){
+                const uint64_t request=diagnosticRequestSequence.load();
+                if(request!=servicedDiagnosticRequest||(!diagnosticsAttempted&&info.underruns>baselineUnderruns)){
+                    diagnosticsAttempted=true;diagnosticReady=false;
+                    SesDriverDiagnostics diagnostics{};
+                    const uint64_t begin=qpc100ns();
+                    const bool ok=io.call(stopEvent,SES_IOCTL_DIAGNOSTICS,nullptr,0,&diagnostics,sizeof(diagnostics));
+                    const uint64_t duration=qpc100ns()-begin;
+                    if(duration>maxIoctl100ns.load())maxIoctl100ns=duration;
+                    const DWORD error=ok?driverDiagnosticsError(diagnostics):io.error();
+                    if(error){
+                        diagnosticError=error;
+                    }else{
+                        capturedDiagnostics=diagnostics;diagnosticError=0;diagnosticReady=true;
+                    }
+                    // An automatic query already in flight cannot acknowledge
+                    // a later explicit request. Publish its captured ticket last.
+                    servicedDiagnosticRequest=request;diagnosticCompletedSequence=request;
+                    if(io.fatal()){lastError=error;fatalIo=true;status=6;break;}
+                }
             }
             const DWORD idle=cadence.wait(stopEvent,2);
             if(idle!=WAIT_OBJECT_0+1){
@@ -103,8 +129,17 @@ public:
     std::atomic<int32_t> drift{0};std::atomic<uint64_t> sent{0},received{0},silence{0};
     std::atomic<uint64_t> maxIoctl100ns{0},lastWriteCompletion100ns{0},lastWriteGap100ns{0},maxWriteGap100ns{0};
     std::atomic<uint64_t> statusObserved100ns{0};
+    // Lab-only opt-in. Set the flag before start; inspect capturedDiagnostics
+    // only after stop/join. Request and completion indicators may be read live.
+    bool diagnosticCaptureEnabled=false;
+    SesDriverDiagnostics capturedDiagnostics{};
+    std::atomic<bool> diagnosticReady{false};
+    std::atomic<uint64_t> diagnosticRequestSequence{0},diagnosticCompletedSequence{0};
+    std::atomic<uint32_t> diagnosticError{0};
+    uint64_t requestDiagnostics(){diagnosticReady=false;diagnosticError=ERROR_NOT_READY;return diagnosticRequestSequence.fetch_add(1)+1;}
     ~DriverBridge(){stop();}
     void start(){stop();
+        capturedDiagnostics={};diagnosticRequestSequence=0;diagnosticCompletedSequence=0;diagnosticReady=false;diagnosticError=ERROR_NOT_READY;
         if(BoundedDriverIo<>::poisoned()){fatalIo=true;status=6;lastError=ERROR_TIMEOUT;return;}
         fatalIo=false;queue.discard();sent=0;received=0;silence=0;underruns=0;overruns=0;queueDrops=0;
         maxIoctl100ns=0;lastWriteCompletion100ns=0;lastWriteGap100ns=0;maxWriteGap100ns=0;statusObserved100ns=0;

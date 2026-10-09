@@ -202,9 +202,13 @@ try{
     # driver, device, certificate, registry or host audio is accessed.
     $captureDefinition=$guestAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Test-CaptureReport'},$true)
     if(!$captureDefinition){throw 'Missing capture report decision.'}
+    $captureOptionGuards=($guestAst.FindAll({param($node) $node -is [Management.Automation.Language.IfStatementAst] -and
+        ($node.Extent.Text.Contains("throw 'Capture options are valid only in Capture mode.'") -or
+         $node.Extent.Text.Contains("throw 'KernelDiagnostics requires Extended and ProductBridge.'"))},$true) | ForEach-Object {$_.Extent.Text}) -join "`n"
+    if(!$captureOptionGuards){throw 'Missing capture option guards.'}
     $captureRunspace=[PowerShell]::Create()
     try{
-        $null=$captureRunspace.AddScript({param($helper)
+        $null=$captureRunspace.AddScript({param($helper,$optionGuards)
             $ErrorActionPreference='Stop';Set-StrictMode -Version 2.0
             . ([ScriptBlock]::Create($helper))
             function New-InertCapture {
@@ -214,6 +218,32 @@ try{
                             queue_drops=0;submitted_packets=5896;source_sessions=3;last_observed_status=2;last_observed_error=0}}}
             }
             function Emit-Capture([bool]$Passed,[string]$Name){[pscustomobject]@{passed=$Passed;name=$Name}}
+            function New-InertDiagnosticCapture([bool]$Requested=$true){
+                $report=New-InertCapture
+                $diagnostics=@{requested=$Requested;mode='optional_instrumented_driver_bridge';
+                    source='SES_IOCTL_DIAGNOSTICS_on_production_worker_owner_handle';clock='interrupt_time_100ns';
+                    scope='kernel_trace_connected_source_sessions';first_underrun_counter_scope='original_ring_lifetime_counters';
+                    timing_effect='additional_bounded_ioctls_on_first_underrun_and_each_source_session_end_or_failure';
+                    not_audio_latency=$true;query_deadline_ms=100;record_capacity=3;record_count=0;records=@();first_failure_record=$null}
+                if($Requested){
+                    $diagnostics.record_count=3
+                    foreach($session in 1..3){
+                        $data=@{}
+                        foreach($field in @('version','size','capture_calls','total_requested_frames','max_capture_frames','max_pull_chunk_frames',
+                            'last_capture_queued_before','last_capture_queued_after','last_capture_frames','reserved0','last_capture_tick_hns',
+                            'last_successful_write_tick_hns','last_successful_write_gap_hns','max_successful_write_gap_hns',
+                            'first_underrun_present','first_underrun_queued_before','first_underrun_chunk_frames','first_underrun_remaining_frames',
+                            'first_underrun_capture_frames','first_underrun_old_count','first_underrun_new_count','reserved1',
+                            'first_underrun_tick_hns','first_underrun_since_successful_write_hns','first_underrun_successful_write_tick_hns',
+                            'first_underrun_received_frames','first_underrun_silence_before','first_underrun_silence_after')){$data[$field]=0}
+                        $data.version=1;$data.size=160;$data.capture_calls=100;$data.total_requested_frames=4800
+                        $data.max_capture_frames=960;$data.max_pull_chunk_frames=480;$data.last_capture_frames=48
+                        $diagnostics.records+=@{source_session=$session;available=$true;query_error=0;data=$data}
+                    }
+                }
+                $report.extended_kernel_capture.product_bridge.kernel_diagnostics=$diagnostics
+                return $report
+            }
             Emit-Capture (Test-CaptureReport (New-InertCapture) $true 60 $true) 'product bridge complete report accepted'
             $strict=New-InertCapture;$strict.extended_kernel_capture.mode='strict_synthetic_producer'
             Emit-Capture (Test-CaptureReport $strict $true 60 $false) 'strict producer complete report accepted'
@@ -260,9 +290,103 @@ try{
             }
             $report=New-InertCapture;$report.extended_kernel_capture.product_bridge.source_sessions=99
             Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) 'extra owner sessions cannot satisfy exact lifecycle'
-        }).AddArgument($captureDefinition.Extent.Text)
+            Emit-Capture (Test-CaptureReport (New-InertDiagnosticCapture) $true 60 $true $true) 'instrumented three ordered owner sessions accepted'
+            Emit-Capture (Test-CaptureReport (New-InertDiagnosticCapture $false) $true 60 $true) 'explicit noninstrumented current report accepted'
+            Emit-Capture (!(Test-CaptureReport (New-InertCapture) $true 60 $true $true)) 'legacy report cannot satisfy diagnostic request'
+            Emit-Capture (!(Test-CaptureReport (New-InertDiagnosticCapture) $true 60 $true)) 'instrumented report cannot satisfy ordinary product acceptance'
+            Emit-Capture (!(Test-CaptureReport (New-InertDiagnosticCapture) $false 60 $false)) 'instrumented report cannot satisfy ordinary base acceptance'
+            Emit-Capture (!(Test-CaptureReport (New-InertDiagnosticCapture) $true 60 $false $true)) 'diagnostics require product mode'
+            Emit-Capture (!(Test-CaptureReport (New-InertDiagnosticCapture) $false 60 $true $true)) 'diagnostics require extended mode'
+            Emit-Capture (!(Test-CaptureReport (New-InertDiagnosticCapture $false) $true 60 $true $true)) 'diagnostics requested flag must match invocation'
+            foreach($value in @($null,$true,'diagnostics',@(@{requested=$true},@{requested=$true}))){
+                $report=New-InertDiagnosticCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics=$value
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) 'diagnostic envelope must be one actual object'
+            }
+            foreach($count in 2,4){
+                $report=New-InertDiagnosticCapture;$diag=$report.extended_kernel_capture.product_bridge.kernel_diagnostics
+                $diag.records=if($count -eq 2){@($diag.records[0],$diag.records[1])}else{@($diag.records)+@($diag.records[2])}
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) 'actual diagnostic array must contain exactly three records'
+            }
+            $report=New-InertDiagnosticCapture;$diag=$report.extended_kernel_capture.product_bridge.kernel_diagnostics
+            $diag.records=@($diag.records[1],$diag.records[0],$diag.records[2])
+            Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) 'reordered diagnostic owner sessions rejected'
+            foreach($field in @('requested','mode','source','clock','scope','first_underrun_counter_scope','timing_effect','not_audio_latency',
+                'query_deadline_ms','record_capacity','record_count','records','first_failure_record')){
+                $report=New-InertDiagnosticCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.Remove($field)
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) ('missing diagnostic envelope '+$field)
+            }
+            foreach($case in @(@{field='requested';value='true'},@{field='requested';value=$false},@{field='mode';value='normal'},
+                @{field='source';value='foreign'},@{field='clock';value='qpc_100ns'},@{field='scope';value='unknown'},
+                @{field='first_underrun_counter_scope';value='session_counters'},@{field='timing_effect';value='none'},
+                @{field='not_audio_latency';value='true'},@{field='not_audio_latency';value=$false},@{field='not_audio_latency';value=1},
+                @{field='query_deadline_ms';value=101},@{field='record_capacity';value=4},@{field='record_count';value=2},
+                @{field='record_count';value=4},@{field='records';value=@()},@{field='records';value='records'},
+                @{field='records';value=@{source_session=1}},@{field='records';value=$null})){
+                $report=New-InertDiagnosticCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics[$case.field]=$case.value
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) ('invalid diagnostic envelope '+$case.field)
+            }
+            foreach($case in @(@{field='source_session';value=2},@{field='source_session';value=0},@{field='available';value=$false},
+                @{field='available';value='true'},@{field='available';value=1},@{field='query_error';value=50},@{field='query_error';value='0'},
+                @{field='data';value=@()},@{field='data';value=$null})){
+                $report=New-InertDiagnosticCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.records[0][$case.field]=$case.value
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) ('invalid diagnostic record '+$case.field)
+            }
+            foreach($field in @('source_session','available','query_error','data')){
+                $report=New-InertDiagnosticCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.records[0].Remove($field)
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) ('missing diagnostic record '+$field)
+            }
+            $fields=@((New-InertDiagnosticCapture).extended_kernel_capture.product_bridge.kernel_diagnostics.records[0].data.Keys)
+            foreach($field in $fields){
+                $report=New-InertDiagnosticCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.records[0].data.Remove($field)
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) ('missing diagnostic scalar '+$field)
+                foreach($value in @(@(0,0),'0',0.0,-1,$null,$true)){
+                    $report=New-InertDiagnosticCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.records[0].data[$field]=$value
+                    Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) ('malformed diagnostic scalar '+$field)
+                }
+            }
+            foreach($case in @(@{field='version';value=2},@{field='size';value=48},@{field='reserved0';value=1},@{field='reserved1';value=1},
+                @{field='first_underrun_present';value=2},@{field='max_pull_chunk_frames';value=481},@{field='max_capture_frames';value=[uint64]4294967296},
+                @{field='last_capture_queued_before';value=4097},@{field='last_capture_queued_after';value=4097},@{field='last_capture_frames';value=961})){
+                $report=New-InertDiagnosticCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.records[0].data[$case.field]=$case.value
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) ('invalid diagnostic bounds '+$case.field)
+            }
+            $report=New-InertDiagnosticCapture;$data=$report.extended_kernel_capture.product_bridge.kernel_diagnostics.records[0].data
+            $data.max_capture_frames=[uint32]::MaxValue;$data.last_capture_frames=100000
+            Emit-Capture (Test-CaptureReport $report $true 60 $true $true) 'large original capture requests remain legitimate diagnostic evidence'
+            function New-FirstFailureCapture {
+                $report=New-InertDiagnosticCapture;$diag=$report.extended_kernel_capture.product_bridge.kernel_diagnostics
+                $data=$diag.records[1].data;$data.first_underrun_present=1;$data.first_underrun_chunk_frames=48
+                $data.first_underrun_remaining_frames=48;$data.first_underrun_capture_frames=48;$data.first_underrun_new_count=1
+                $diag.first_failure_record=($diag.records[1] | ConvertTo-Json -Depth 5 | ConvertFrom-Json -AsHashtable)
+                return $report
+            }
+            Emit-Capture (!(Test-CaptureReport (New-FirstFailureCapture) $true 60 $true $true)) 'valid retained terminal first-underrun context cannot pass healthy capture acceptance'
+            foreach($case in @(@{field='first_underrun_queued_before';value=4097},@{field='first_underrun_chunk_frames';value=0},
+                @{field='first_underrun_chunk_frames';value=481},@{field='first_underrun_remaining_frames';value=47},
+                @{field='first_underrun_capture_frames';value=47},@{field='first_underrun_new_count';value=0})){
+                $report=New-FirstFailureCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.records[1].data[$case.field]=$case.value
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) ('invalid first-underrun geometry '+$case.field)
+            }
+            $report=New-FirstFailureCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.first_failure_record=$null
+            Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) 'missing retained first failure rejected'
+            $report=New-FirstFailureCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.first_failure_record.data.first_underrun_tick_hns=99
+            Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) 'mismatched retained first-failure context rejected'
+            $report=New-InertDiagnosticCapture;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.first_failure_record=@{source_session=1}
+            Emit-Capture (!(Test-CaptureReport $report $true 60 $true $true)) 'fabricated first-failure record rejected'
+            $report=New-InertDiagnosticCapture $false;$report.extended_kernel_capture.product_bridge.kernel_diagnostics.record_count=1
+            Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) 'unrequested instrumented record count rejected'
+            foreach($case in @(@{mode='Capture';extended=$true;product=$true;diag=$true;pass=$true},
+                @{mode='Capture';extended=$false;product=$true;diag=$true;pass=$false},
+                @{mode='Capture';extended=$true;product=$false;diag=$true;pass=$false},
+                @{mode='Diagnostics';extended=$true;product=$true;diag=$true;pass=$false},
+                @{mode='Capture';extended=$false;product=$false;diag=$false;pass=$true})){
+                $Mode=$case.mode;$Extended=$case.extended;$ProductBridge=$case.product;$KernelDiagnostics=$case.diag;$PSBoundParameters=@{}
+                $allowed=$true;try{& ([ScriptBlock]::Create($optionGuards))}catch{$allowed=$false}
+                Emit-Capture ($allowed -eq $case.pass) 'extracted diagnostic option guards enforce exact mode combinations'
+            }
+        }).AddArgument($captureDefinition.Extent.Text).AddArgument($captureOptionGuards)
         $captureResults=@($captureRunspace.Invoke())
-        if($captureRunspace.Streams.Error.Count -gt 0 -or $captureResults.Count -ne 79){throw 'Capture report fixtures failed.'}
+        if($captureRunspace.Streams.Error.Count -gt 0 -or $captureResults.Count -ne 362){throw ('Capture report fixtures failed: count='+$captureResults.Count+' errors='+($captureRunspace.Streams.Error | Out-String))}
         foreach($captureResult in $captureResults){Check $captureResult.passed ('inert capture report '+$captureResult.name)}
     }finally{$captureRunspace.Dispose()}
     $stopDefinition=$guestAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Stop-BoundedGuestChild'},$true)

@@ -6,6 +6,7 @@ param(
     [string]$Mode='Diagnostics',
     [switch]$Extended,
     [switch]$ProductBridge,
+    [switch]$KernelDiagnostics,
     [ValidateRange(10,3600)][int]$DurationSeconds=60
 )
 $ErrorActionPreference='Stop'
@@ -19,11 +20,12 @@ if($VmId -eq [Guid]::Empty -or $system.Manufacturer -cne 'QEMU' -or
    ![Guid]::TryParse([string]$product.UUID,[ref]$hardwareId) -or $hardwareId -ne $VmId){
     throw 'Guest identity rejected: this runner requires its exact isolated Veylo VM UUID.'
 }
-if(($Extended -or $ProductBridge -or $PSBoundParameters.ContainsKey('DurationSeconds')) -and $Mode -cne 'Capture'){
+if(($Extended -or $ProductBridge -or $KernelDiagnostics -or $PSBoundParameters.ContainsKey('DurationSeconds')) -and $Mode -cne 'Capture'){
     throw 'Capture options are valid only in Capture mode.'
 }
 if($PSBoundParameters.ContainsKey('DurationSeconds') -and !$Extended){throw 'DurationSeconds requires Extended.'}
 if($ProductBridge -and !$Extended){throw 'ProductBridge requires Extended.'}
+if($KernelDiagnostics -and (!$Extended -or !$ProductBridge)){throw 'KernelDiagnostics requires Extended and ProductBridge.'}
 $acceptanceRoot='C:\VeyloAcceptance'
 $labRoot='C:\VeyloLab'
 $outputNames=@('diagnostics.json','verifier.json','capture-result.json','capture.json','capture.log',
@@ -135,12 +137,44 @@ function New-Result([string]$Status){
     return [ordered]@{schema=1;vmId=$VmId.ToString('D');mode=$Mode;status=$Status;
         utc=[DateTime]::UtcNow.ToString('o');testOnly=$true;productionReady=$false}
 }
-function Test-CaptureReport($Evidence,[bool]$ExtendedRequested,[int]$Seconds,[bool]$ProductBridgeRequested){
+function Test-CaptureReport($Evidence,[bool]$ExtendedRequested,[int]$Seconds,[bool]$ProductBridgeRequested,[bool]$KernelDiagnosticsRequested=$false){
     # A missing or malformed report never turns a tool success into acceptance.
     try{
         function Test-ReportInteger($Value){
             return (($Value -is [int] -or $Value -is [long] -or $Value -is [uint32] -or $Value -is [uint64]) -and $Value -ge 0)
         }
+        function Test-ReportObject($Value){return ($Value -is [Collections.IDictionary] -or $Value -is [pscustomobject])}
+        function Test-ReportProperty($Value,[string]$Name){
+            if($Value -is [Collections.IDictionary]){return $Value.Contains($Name)}
+            return ($null -ne $Value -and $null -ne $Value.PSObject.Properties[$Name])
+        }
+        $diagnostic32=@('version','size','max_capture_frames','max_pull_chunk_frames','last_capture_queued_before',
+            'last_capture_queued_after','last_capture_frames','reserved0','first_underrun_present',
+            'first_underrun_queued_before','first_underrun_chunk_frames','first_underrun_remaining_frames',
+            'first_underrun_capture_frames','first_underrun_old_count','first_underrun_new_count','reserved1')
+        $diagnostic64=@('capture_calls','total_requested_frames','last_capture_tick_hns','last_successful_write_tick_hns',
+            'last_successful_write_gap_hns','max_successful_write_gap_hns','first_underrun_tick_hns',
+            'first_underrun_since_successful_write_hns','first_underrun_successful_write_tick_hns',
+            'first_underrun_received_frames','first_underrun_silence_before','first_underrun_silence_after')
+        function Test-DiagnosticRecord($Record,[int]$Session){
+            if(!(Test-ReportObject $Record) -or !(Test-ReportInteger $Record.source_session) -or
+               $Record.source_session -ne $Session -or $Record.available -isnot [bool] -or !$Record.available -or
+               !(Test-ReportInteger $Record.query_error) -or $Record.query_error -ne 0 -or !(Test-ReportObject $Record.data)){return $false}
+            $data=$Record.data
+            foreach($name in $diagnostic32){if(!(Test-ReportInteger $data.$name) -or $data.$name -gt [uint32]::MaxValue){return $false}}
+            foreach($name in $diagnostic64){if(!(Test-ReportInteger $data.$name)){return $false}}
+            if($data.version -ne 1 -or $data.size -ne 160 -or $data.reserved0 -ne 0 -or $data.reserved1 -ne 0 -or
+               $data.first_underrun_present -gt 1 -or $data.max_pull_chunk_frames -gt 480 -or
+               $data.last_capture_queued_before -gt 4096 -or $data.last_capture_queued_after -gt 4096 -or
+               $data.last_capture_frames -gt $data.max_capture_frames){return $false}
+            if($data.first_underrun_present -eq 1 -and ($data.first_underrun_queued_before -gt 4096 -or
+               $data.first_underrun_chunk_frames -le 0 -or $data.first_underrun_chunk_frames -gt 480 -or
+               $data.first_underrun_remaining_frames -lt $data.first_underrun_chunk_frames -or
+               $data.first_underrun_capture_frames -lt $data.first_underrun_remaining_frames -or
+               $data.first_underrun_new_count -le $data.first_underrun_old_count)){return $false}
+            return $true
+        }
+        if($KernelDiagnosticsRequested -and (!$ExtendedRequested -or !$ProductBridgeRequested)){return $false}
         if($ProductBridgeRequested -and !$ExtendedRequested){return $false}
         foreach($name in @('schema','checks','failures','unsupported','verified_endpoints','formats_passed','self_tests')){
             if(!(Test-ReportInteger $Evidence.$name)){return $false}
@@ -148,6 +182,47 @@ function Test-CaptureReport($Evidence,[bool]$ExtendedRequested,[int]$Seconds,[bo
         if($Evidence.schema -ne 1 -or $Evidence.checks -le 0 -or $Evidence.failures -ne 0 -or
            $Evidence.unsupported -ne 0 -or $Evidence.verified_endpoints -ne 1 -or
            $Evidence.formats_passed -ne 2 -or $Evidence.self_tests -ne 0){return $false}
+        # Even a base/legacy acceptance request must not consume an instrumented
+        # report as ordinary product evidence. Old reports may omit this object.
+        $diagnostics=$null
+        if((Test-ReportProperty $Evidence 'extended_kernel_capture') -and
+           (Test-ReportProperty $Evidence.extended_kernel_capture 'product_bridge') -and
+           (Test-ReportProperty $Evidence.extended_kernel_capture.product_bridge 'kernel_diagnostics')){
+            $diagnostics=$Evidence.extended_kernel_capture.product_bridge.kernel_diagnostics
+            if(!(Test-ReportObject $diagnostics) -or $diagnostics.requested -isnot [bool] -or
+               $diagnostics.requested -cne $KernelDiagnosticsRequested){return $false}
+            foreach($pair in @(@('mode','optional_instrumented_driver_bridge'),@('source','SES_IOCTL_DIAGNOSTICS_on_production_worker_owner_handle'),
+                @('clock','interrupt_time_100ns'),@('scope','kernel_trace_connected_source_sessions'),
+                @('first_underrun_counter_scope','original_ring_lifetime_counters'),
+                @('timing_effect','additional_bounded_ioctls_on_first_underrun_and_each_source_session_end_or_failure'))){
+                if($diagnostics.($pair[0]) -isnot [string] -or $diagnostics.($pair[0]) -cne $pair[1]){return $false}
+            }
+            if($diagnostics.not_audio_latency -isnot [bool] -or !$diagnostics.not_audio_latency -or
+               !(Test-ReportInteger $diagnostics.query_deadline_ms) -or $diagnostics.query_deadline_ms -ne 100 -or
+               !(Test-ReportInteger $diagnostics.record_capacity) -or $diagnostics.record_capacity -ne 3 -or
+               !(Test-ReportInteger $diagnostics.record_count) -or $diagnostics.records -isnot [array]){return $false}
+            if($KernelDiagnosticsRequested){
+                if($diagnostics.record_count -ne 3 -or $diagnostics.records.Count -ne 3){return $false}
+                $firstFailure=$null
+                for($i=0;$i -lt 3;$i++){
+                    $record=$diagnostics.records[$i]
+                    if(!(Test-DiagnosticRecord $record ($i+1))){return $false}
+                    if($null -eq $firstFailure -and $record.data.first_underrun_present -eq 1){$firstFailure=$record}
+                }
+                if(!(Test-ReportProperty $diagnostics 'first_failure_record')){return $false}
+                if($null -eq $firstFailure){if($null -ne $diagnostics.first_failure_record){return $false}}
+                else{
+                    $retained=$diagnostics.first_failure_record
+                    if(!(Test-DiagnosticRecord $retained $firstFailure.source_session)){return $false}
+                    foreach($name in ($diagnostic32+$diagnostic64)){if($retained.data.$name -ne $firstFailure.data.$name){return $false}}
+                    # A terminal diagnostic can observe an underrun after the
+                    # final ordinary STATUS sample. Valid failure evidence is
+                    # retained, but it can never pass this capture acceptance.
+                    return $false
+                }
+            }elseif($diagnostics.record_count -ne 0 -or $diagnostics.records.Count -ne 0 -or
+                !(Test-ReportProperty $diagnostics 'first_failure_record') -or $null -ne $diagnostics.first_failure_record){return $false}
+        }elseif($KernelDiagnosticsRequested){return $false}
         if(!$ExtendedRequested){return $true}
         $extended=$Evidence.extended_kernel_capture
         if($extended.requested -isnot [bool] -or $extended.ran -isnot [bool] -or $extended.mode -isnot [string] -or
@@ -765,6 +840,7 @@ try{
             $arguments=@('--isolated-lab','--json-report',$jsonPath)
             if($Extended){$arguments+=@('--extended','--duration-seconds',[string]$DurationSeconds)}
             if($ProductBridge){$arguments+='--product-bridge'}
+            if($KernelDiagnostics){$arguments+='--kernel-diagnostics'}
             $deadline=180;if($Extended){$deadline+=$DurationSeconds}
             $result.process=Invoke-BoundedTool (Join-Path $acceptanceRoot 'ses_driver_capture_lab_tests.exe') $arguments 'capture.log' $deadline
             try{
@@ -777,7 +853,7 @@ try{
             }
             $evidence=$result.capture
             $passed=($result.process.exitCode -eq 0 -and !$result.process.timedOut -and !$result.process.outputLimited -and
-                (Test-CaptureReport $evidence $Extended.IsPresent $DurationSeconds $ProductBridge.IsPresent))
+                (Test-CaptureReport $evidence $Extended.IsPresent $DurationSeconds $ProductBridge.IsPresent $KernelDiagnostics.IsPresent))
             $result.status=if($passed){'Passed'}else{'Findings'}
             Write-Report 'capture-result.json' $result
         }

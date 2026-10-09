@@ -75,7 +75,7 @@ static void immediateAndValidation(){
     check(!io.call(stop.h,SES_IOCTL_STATUS,nullptr,0,output.data(),48)&&io.error()==ERROR_INVALID_DATA,"Wrong returned byte count rejected");
     check(output.front()==0x33&&output.back()==0x33,"Failed completion does not publish output");
     check(!io.call(stop.h,SES_IOCTL_CONNECT,&hello,sizeof(SesDriverPacket)+1,output.data(),48)&&io.error()==ERROR_INVALID_PARAMETER,"Oversized input rejected before copying");
-    check(!io.call(stop.h,SES_IOCTL_STATUS,nullptr,0,output.data(),49),"Oversized output rejected before issue");
+    check(!io.call(stop.h,SES_IOCTL_STATUS,nullptr,0,output.data(),Io::outputCapacity+1),"Oversized output rejected before issue");
     check(!io.call(stop.h,SES_IOCTL_STATUS,nullptr,0,nullptr,48),"Null output with positive size rejected");
     FakeApi::mode=FakeApi::Mode::Failure;
     check(!io.call(stop.h,SES_IOCTL_STATUS,nullptr,0,output.data(),48)&&io.error()==ERROR_ACCESS_DENIED&&!io.fatal(),"Immediate failure remains terminal and retryable");
@@ -86,6 +86,47 @@ static void immediateAndValidation(){
     bad=status;bad.connected=2;check(ses::driverStatusError(bad)==ERROR_INVALID_DATA,"Invalid connection state rejected");
     bad=status;bad.reserved=1;check(ses::driverStatusError(bad)==ERROR_INVALID_DATA,"Reserved bits rejected");
     bad=status;bad.queued_frames=SES_DRIVER_CAPACITY+1;check(ses::driverStatusError(bad)==ERROR_INVALID_DATA,"Unbounded queued frames rejected");
+}
+static void diagnosticOutput(){
+    Stop stop;Io io;attach(io);FakeApi::mode=FakeApi::Mode::Immediate;
+    struct GuardedDiagnostics {uint64_t before=0x11223344;SesDriverDiagnostics value{};uint64_t after=0x55667788;} output;
+    check(io.call(stop.h,SES_IOCTL_DIAGNOSTICS,nullptr,0,&output.value,sizeof(output.value)),"Additive diagnostic output completes at its exact 160-byte size");
+    check(output.before==0x11223344&&output.after==0x55667788,"Expanded fixed output does not overwrite neighboring caller memory");
+    const auto* bytes=reinterpret_cast<const unsigned char*>(&output.value);
+    check(bytes[0]==0x5a&&bytes[sizeof(output.value)-1]==0x5a,"Full additive output copied from stable heap storage");
+    check(FakeApi::output!=&output.value&&FakeApi::outputBytes==sizeof(output.value),"Expanded output remains heap-owned for overlapped I/O");
+    FakeApi::mode=FakeApi::Mode::WrongBytes;output.value={};
+    check(!io.call(stop.h,SES_IOCTL_DIAGNOSTICS,nullptr,0,&output.value,sizeof(output.value))&&io.error()==ERROR_INVALID_DATA,"Diagnostic byte count must match its requested size exactly");
+    check(output.value.version==0,"Short diagnostic completion publishes no partial structure");
+    SesDriverDiagnostics info{};info.version=SES_DRIVER_DIAGNOSTICS_VERSION;info.size=sizeof(info);
+    check(ses::driverDiagnosticsError(info)==0,"Valid empty diagnostic session accepted");
+    auto bad=info;bad.version=2;check(ses::driverDiagnosticsError(bad)==ERROR_REVISION_MISMATCH,"Independent diagnostic version checked");
+    bad=info;bad.size=48;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"Legacy status size cannot impersonate diagnostics");
+    bad=info;bad.reserved0=1;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"First diagnostic reserved field rejected");
+    bad=info;bad.reserved1=1;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"Second diagnostic reserved field rejected");
+    bad=info;bad.first_underrun_present=2;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"Underrun presence flag must be boolean");
+    bad=info;bad.max_pull_chunk_frames=481;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"Actual pull chunks retain the kernel's 480-frame bound");
+    bad=info;bad.last_capture_queued_before=4097;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"Diagnostic queue-before remains bounded");
+    bad=info;bad.last_capture_queued_after=4097;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"Diagnostic queue-after remains bounded");
+    bad=info;bad.last_capture_frames=1;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"Last capture cannot exceed recorded maximum");
+    info.max_capture_frames=0xffffffffu;info.last_capture_frames=100000;info.max_pull_chunk_frames=480;
+    check(ses::driverDiagnosticsError(info)==0,"Large original capture requests are evidence and are not capped at ring capacity");
+    info.first_underrun_present=1;info.first_underrun_chunk_frames=48;info.first_underrun_remaining_frames=100000;info.first_underrun_capture_frames=100000;
+    check(ses::driverDiagnosticsError(info)==0,"First underrun may belong to a large original capture request");
+    bad=info;bad.first_underrun_chunk_frames=481;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"First underrun actual chunk bounded");
+    bad=info;bad.first_underrun_remaining_frames=47;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"Remaining request includes current pull chunk");
+    bad=info;bad.first_underrun_capture_frames=99999;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"Remaining request cannot exceed original capture");
+    bad=info;bad.first_underrun_queued_before=4097;check(ses::driverDiagnosticsError(bad)==ERROR_INVALID_DATA,"First underrun queue remains bounded");
+    ses::DriverBridge bridge;check(!bridge.diagnosticCaptureEnabled&&!bridge.diagnosticReady&&bridge.capturedDiagnostics.version==0,"Normal product defaults to no diagnostic query");
+    const uint64_t firstTicket=bridge.requestDiagnostics();
+    check(firstTicket==1&&bridge.diagnosticRequestSequence==firstTicket&&!bridge.diagnosticReady&&bridge.diagnosticError==ERROR_NOT_READY,"Explicit lab request reports pending without fabricating a snapshot");
+    // Reproduce an automatic query completing after an explicit request begins.
+    bridge.diagnosticError=0;bridge.diagnosticReady=true;bridge.diagnosticCompletedSequence=0;
+    check(bridge.diagnosticCompletedSequence!=firstTicket,"In-flight automatic completion cannot acknowledge a later explicit end query");
+    bridge.diagnosticCompletedSequence=firstTicket;
+    check(bridge.diagnosticCompletedSequence==firstTicket,"Explicit end completion acknowledges exactly the captured request ticket");
+    const uint64_t secondTicket=bridge.requestDiagnostics();
+    check(secondTicket==2&&bridge.diagnosticCompletedSequence!=secondTicket&&!bridge.diagnosticReady,"A previous successful explicit query cannot satisfy the next request");
 }
 static void pendingAndCancellation(){
     Stop stop;Io io;attach(io);std::array<unsigned char,48> output{};
@@ -121,6 +162,27 @@ static void repeatAndLease(){
     const unsigned beforeDestructor=FakeApi::closed;{Io io;attach(io);}
     check(FakeApi::closed==beforeDestructor+2,"Destructor closes exactly its own terminal event and device");
 }
+// A distinct fake specialization isolates the process-quarantine fixture while
+// exercising the full additive output's late completion after worker exit.
+struct LargeOutputApi:FakeApi {};
+static void uncompletedDiagnostic(){
+    using LargeIo=ses::BoundedDriverIo<LargeOutputApi>;
+    Stop stop;FakeApi::mode=FakeApi::Mode::Never;SetEvent(stop.h);
+    const unsigned beforeClosed=FakeApi::closed;
+    void* keptOutput=nullptr;OVERLAPPED* kept=nullptr;
+    {
+        LargeIo io;check(io.open(),"Acquire isolated full-output lifetime fixture");io.attach(FakeApi::event());
+        SesDriverDiagnostics output{};
+        check(!io.call(stop.h,SES_IOCTL_DIAGNOSTICS,nullptr,0,&output,sizeof(output))&&io.fatal(),"Uncompleted additive query quarantines its full fixed output");
+        check(output.version==0,"Uncompleted additive output never reaches caller");
+        keptOutput=FakeApi::output;kept=FakeApi::ov;
+    }
+    check(FakeApi::closed==beforeClosed,"Full additive pending event and device survive worker destruction");
+    FakeApi::complete();
+    const auto* bytes=static_cast<const unsigned char*>(keptOutput);
+    check(bytes[0]==0x5a&&bytes[sizeof(SesDriverDiagnostics)-1]==0x5a&&kept->InternalHigh==sizeof(SesDriverDiagnostics),"Late kernel writes safely cover every retained additive output byte");
+    LargeIo blocked;check(!blocked.open()&&blocked.fatal(),"Full-output late completion cannot bypass quarantine restart refusal");
+}
 static void neverCompletes(){
     Stop stop;FakeApi::mode=FakeApi::Mode::Never;
     const unsigned beforeClosed=FakeApi::closed;
@@ -154,4 +216,4 @@ static void neverCompletes(){
     Io blocked;check(!blocked.open()&&blocked.fatal(),"Late completion never automatically reattaches poisoned process");
     std::printf("Cancellation grace measured under1000ms; retained exactly one request and two private handles until process exit\n");
 }
-int main(){immediateAndValidation();pendingAndCancellation();repeatAndLease();neverCompletes();std::printf("%u offline bounded driver I/O checks passed; no kernel driver opened\n",checks.load());}
+int main(){immediateAndValidation();diagnosticOutput();pendingAndCancellation();repeatAndLease();uncompletedDiagnostic();neverCompletes();std::printf("%u offline bounded driver I/O checks passed; no kernel driver opened\n",checks.load());}

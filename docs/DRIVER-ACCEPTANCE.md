@@ -206,9 +206,37 @@ HVCI'nin çalışma kanıtı, VBS durumunun `2`, yapılandırılan ve çalışan
 ve [HVCI doğrulaması](https://learn.microsoft.com/en-us/windows/security/hardware-security/enable-virtualization-based-protection-of-code-integrity)
 ayrı değerlendirilir.
 
-Üretim bridge'inin iptal sonrası beklemesi, iptale yanıt vermeyen bozuk bir kernel
-sürücüsünde hâlâ sınırlı sürede kapanma kanıtı sunmaz. Özel idle timer düzeltmesi
-bu eski sınırı kaldırmaz. Gerçek sürücünün normal bağlantı kesme testleri, böyle
-bir kernel arızası simülasyonunun yerine geçmez.
+Üretim bridge'i normal I/O için 30 ms, iptal sonrası terminal tamamlanma için
+250 ms bekler. Tamamlanmayan istek, buffer ve iki handle süreç ömrü boyunca
+korunur; aynı süreçte yeniden bağlantı reddedilir. Sahte OS fixture'ı worker
+join'inin bir saniyelik test sınırında tamamlandığını ve geç gelen yazmanın
+geçerli belleğe ulaştığını doğrular. Bu, bozuk gerçek kernel veya Windows
+zamanlaması altında aynı süreyi garanti etmez.
+
+## Sürücü 0.5.2: isteğe bağlı kernel tanısı
+
+Protokol 1'in ses ve STATUS yapıları korunur. Ek `SES_IOCTL_DIAGNOSTICS`, bağlı
+üreticinin kendi handle'ına, sıfır input ile tam 160 bayt çıktı verir. Ayrı tanı
+sürümü 1'dir; PCM, pointer veya ses kaydı içermez. CONNECT ölçümleri sıfırlar.
+İlk normal akış underrun'u, yazmanın kernel'e varış aralığı ve capture çağrısının
+tampon/örnek bilgileri saklanır. Capture boyutu tek `SesBridgeCapture` çağrısıdır;
+DMA sarılmasında bölünen bütün position-update işleminin boyutu sayılmaz.
+Zamanlar `KeQueryInterruptTime` temelli 100 ns birimindedir; QPC veya ölçülen ses
+gecikmesi değildir.
+
+Yalnız tanı koşusunda, mevcut test komutuna şu seçenek eklenebilir:
+
+```powershell
+& 'C:\VeyloAcceptance\driver-vm-acceptance.ps1' -VmId $id -Mode Capture -Extended -ProductBridge -KernelDiagnostics -DurationSeconds 60
+```
+
+Uygulama varsayılanında ek tanı IOCTL'i yoktur. Tanı modu ilk underrun'da ve her
+üretici oturumu sonunda ek sınırlı sorgu yapar; zamanlamaya etkisi olabileceği
+için normal kabul kanıtından ayrılır. Snapshot yalnız worker join sonrasında
+okunur. Otomatik sorgu, daha sonra istenen son sorgunun biletini onaylayamaz.
+Üç sıralı oturumun tamamı geçerli olmalı; son sorguda görülen underrun da kabulü
+reddeder. Son sorgu başarısızsa önceki geçerli ilk hata verisi korunur, ancak
+kayıt kullanılabilir/başarılı gösterilmez. Bu ölçümler ses boşluğunu düzeltmiş
+olduğumuz anlamına gelmez.
 
 [Güncel sonuçlar](VALIDATION.md) · [Kabul durumu](ACCEPTANCE.md)

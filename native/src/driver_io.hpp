@@ -25,6 +25,16 @@ inline DWORD driverStatusError(const SesDriverStatus& info){
     if(info.size!=sizeof(info)||info.connected!=1||info.reserved||info.queued_frames>SES_DRIVER_CAPACITY)return ERROR_INVALID_DATA;
     return ERROR_SUCCESS;
 }
+inline DWORD driverDiagnosticsError(const SesDriverDiagnostics& info){
+    if(info.version!=SES_DRIVER_DIAGNOSTICS_VERSION)return ERROR_REVISION_MISMATCH;
+    if(info.size!=sizeof(info)||info.reserved0||info.reserved1||info.first_underrun_present>1||
+       info.max_pull_chunk_frames>SES_DRIVER_FRAMES||info.last_capture_queued_before>SES_DRIVER_CAPACITY||
+       info.last_capture_queued_after>SES_DRIVER_CAPACITY||info.last_capture_frames>info.max_capture_frames)return ERROR_INVALID_DATA;
+    if(info.first_underrun_present&&(info.first_underrun_queued_before>SES_DRIVER_CAPACITY||
+       info.first_underrun_chunk_frames>SES_DRIVER_FRAMES||info.first_underrun_chunk_frames>info.first_underrun_remaining_frames||
+       info.first_underrun_remaining_frames>info.first_underrun_capture_frames))return ERROR_INVALID_DATA;
+    return ERROR_SUCCESS;
+}
 
 // One worker owns the process-wide I/O slot. A broken cancellation permanently
 // consumes it: at most one stable request and its two handles survive until OS
@@ -33,10 +43,14 @@ inline DWORD driverStatusError(const SesDriverStatus& info){
 // The native module remains loaded for the process lifetime (the product uses
 // a persistent DllImport resolver); unloading/reloading it is not supported.
 template<class Api=WindowsDriverIo> class BoundedDriverIo {
+public:
+    static constexpr size_t outputCapacity=sizeof(SesDriverDiagnostics)>sizeof(SesDriverStatus)?sizeof(SesDriverDiagnostics):sizeof(SesDriverStatus);
+    static_assert(outputCapacity<=256);
+private:
     struct Request {
         OVERLAPPED overlapped{};
         std::array<unsigned char,sizeof(SesDriverPacket)> input{};
-        std::array<unsigned char,sizeof(SesDriverStatus)> output{};
+        std::array<unsigned char,outputCapacity> output{};
         HANDLE device=INVALID_HANDLE_VALUE;
         HANDLE event=nullptr;
         DWORD issuedBytes=0;

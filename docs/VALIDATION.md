@@ -1,3 +1,76 @@
+# Driver 0.5.2 additive kernel diagnostics — 2026-10-09
+
+Passed: pinned EWDK build, recommended WDK analysis, InfVerif and Inf2Cat with
+no warnings/errors. Seven Release and seven ASan groups passed; the final
+capture change passed its focused Release/ASan fixtures again (75 checks).
+Safe PowerShell tests passed 698 checks, including 362 pure capture-report
+fixtures. Secret scanning found no leaks. Both independent read-only Sol
+reviews passed after fixing stale automatic-query acknowledgement and a
+terminal-query underrun that could otherwise escape the native acceptance gate.
+
+The additive owner-only, fixed 160-byte DIAGNOSTICS request preserves audio
+protocol 1 and ABI 5. It records kernel WRITE arrival gaps and the first steady
+underrun's capture context using interrupt-time 100 ns units, not QPC or audio
+latency. Capture sizes describe individual SesBridgeCapture calls, including
+their bounded chunks; they are not complete position-update/DMA-wrap batches.
+Normal application operation does not issue the extra diagnostic request.
+Instrumented lab runs query on the first underrun and each source session end,
+so their timing may differ from ordinary acceptance. All three terminal records
+must be valid and underrun-free. A failed terminal query retains an earlier
+valid first-event snapshot but never passes acceptance.
+
+Findings: after the mailbox correction, another real product-bridge request
+failed at 6,558 ms (36 checks, nine failures), with one steady underrun, no
+overruns/drops, upstream lateness 2 ms and maximum completed WRITE gap
+15,945 us. The last healthy STATUS publication had 539 queued frames; about
+11.634 ms later the first failing publication reported zero queued frames.
+The publication ages were 24 and 26 us. This is consistent with ordinary
+elapsed consumption; it does not prove a large kernel pull or the reason the
+worker's WRITE arrived late. The mailbox fix did not resolve this failure.
+Evidence: product-mailbox-7s-findings-serial.log and the preserved
+product-mailbox-7s-findings-20261009 snapshot. The VM processes were later
+absent and its disk unlocked; normal shutdown and the reason for that exit
+were not established for this run.
+
+Test-only signing verified SYS/CAT cryptography and catalog membership, fixed
+ZIP contents and deletion of transient private key material. No host trust
+store or security policy changed. These are development checks, not Microsoft
+production signing, active HVCI, an actual hour, physical microphone latency,
+or separate receiving-application acceptance. VB-CABLE remains the daily route.
+
+Passed: driver 0.5.2 installed in the existing isolated BIOS Windows guest
+(DevCon exit 0). With active sole-target Code Integrity Verifier 0x021209bb,
+the first instrumented actual-product run completed 60,036 ms and all 37
+checks (process exit 0). All three valid kernel records had no first steady
+underrun; maximum individual capture calls were 176/166/173 frames. The
+production bridge had zero steady underruns, overruns and queue drops,
+minimum observed queue 485 frames, maximum completed WRITE gap 13,365 us
+and upstream lateness 2 ms. This is synthetic input through the actual
+DriverBridge/kernel with two shared WASAPI clients in one process. Additional
+diagnostic IOCTLs were enabled, so it is separate from normal acceptance.
+It does not explain or resolve the previous intermittent failures. Evidence:
+kernel-trace-60-pass-serial.log and kerneltrace-install.png; actual capture
+tool SHA256 51d4c154c9b36bf7995a28d606426d6b38d4615b1f601ec90a3005e2164dfcd5,
+guest runner 4fe14b67ed951770271aa84b467202c852e776d18a28e3dffb8e87290cc824d0,
+test-signed SYS d39b8cac03e2145e83eed0c723ef82f38e034c36d09853b2c492b5e8f05fbbce.
+
+Findings in the first extended IOCTL test: all malformed diagnostic sizes
+were rejected, but 162 expectations incorrectly required ERROR_BAD_LENGTH
+rather than the actual ERROR_INVALID_USER_BUFFER (1784). The exact rejection
+expectations were corrected and independently re-reviewed. This initial
+269-check run is not counted as Passed; a corrected live rerun is required.
+
+Passed: the same driver then completed a normal, non-instrumented actual
+ProductBridge run in 60,001 ms, all 36 checks with process exit 0. Steady
+underruns/overruns/queue drops were zero; minimum observed queue 479 frames,
+maximum completed WRITE gap 13,547 us and upstream lateness 2 ms. Active
+sole-target Verifier 0x021209bb remained verified. Both short results and
+normal guest shutdown were preserved; both owned process identities were
+absent and an exclusive disk open succeeded before snapshot
+kernel-trace-short-052-pass-20261009. Evidence:
+kernel-trace-normal-60-and-shutdown-serial.log. This does not establish an
+actual hour or a root-cause fix for previous intermittent underruns.
+
 # Production bridge acceptance and bounded cancellation — 2026-10-09
 
 Passed: seven native Release and seven AddressSanitizer test groups. The
