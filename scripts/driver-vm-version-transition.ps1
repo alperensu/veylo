@@ -756,6 +756,7 @@ function Invoke-PairedNativeRollback($Result){
     $script:driverMutationStarted=$true;$script:mutationUncertain=$true
     $process=Invoke-BoundedTool $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$ownPath,
         '-VmId',$VmId.ToString('D'),'-Operation','RollbackNative','-RunId',$RunId.ToString('D')) 'rollback-native.log' 120
+    $Result.nativeRollbackProcess=$process
     $script:mutationUncertain=($process.timedOut -or $process.outputLimited)
     if($process.exitCode -ne 0 -or $process.timedOut -or $process.outputLimited){throw 'Native rollback child failed or exceeded its bounds.'}
     $native=Read-BoundedJson $nativePath $acceptanceRoot
@@ -1039,8 +1040,13 @@ namespace VeyloLab {
                     throw new Win32Exception(Marshal.GetLastWin32Error(), "Open exact device instance failed.");
                 if (info.ClassGuid != media) throw new InvalidOperationException("Exact device class differs.");
                 bool reboot;
-                if (!DiRollbackDriver(set, ref info, IntPtr.Zero, 0, out reboot))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "DiRollbackDriver failed; no forced-install substitute is attempted.");
+                // newdev.h ROLLBACK_FLAG_NO_UI: the isolated, already-authorized
+                // lab operation must not block on interactive rollback dialogs.
+                const uint rollbackFlagNoUi = 0x00000001;
+                if (!DiRollbackDriver(set, ref info, IntPtr.Zero, rollbackFlagNoUi, out reboot)) {
+                    int error = Marshal.GetLastWin32Error();
+                    throw new Win32Exception(error, "DiRollbackDriver failed (Win32 " + error + "); no forced-install substitute is attempted.");
+                }
                 return reboot;
             } finally { SetupDiDestroyDeviceInfoList(set); }
         }

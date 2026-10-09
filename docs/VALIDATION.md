@@ -237,6 +237,28 @@ the detected Int64 settling edge case was fixed and rechecked. No real guest
 Resume success is established by these fixtures. Frozen preparation:
 artifacts/driver-test-signing/version-transition-resume-final-0b8bb97ea57447fb849e89e7339d206e/.
 
+Passed / partial live transition: explicit Resume retained the original legacy
+run and verified current 0.5.1.0 identity plus 20 actual upgrade capture checks.
+The first native rollback attempt displayed Windows' default interactive dialog
+and returned a child failure; apiRollbackVerified/currentRestored remain false.
+Its serial/log screenshot and stopped guest disk are retained before restoring
+the known pre-Resume snapshot for a separate corrected attempt. The laboratory
+native call now uses Microsoft's documented ROLLBACK_FLAG_NO_UI; NeedReboot is
+still returned explicitly, and no automatic restart is added. Failed child process
+metadata and the immediate Win32 error are retained for diagnosis. This correction
+does not turn the failed attempt into success. Exact e79182e push and PR CI passed.
+[Microsoft rollback behavior](https://learn.microsoft.com/en-us/windows/win32/api/newdev/nf-newdev-dirollbackdriver).
+
+Passed / preparation: the corrected NO_UI source adb94eec...43c3 passed 191
+native and 121 Resume inert checks in each PowerShell runtime. The actual C#
+rollback body executes with inert native leaves to verify flags=1, both reboot
+outcomes, immediate error-code reporting and handle cleanup. Real Resume executor
+fixtures verify failed child exit, timeout and output-limit evidence without
+retry, restoration or false success. The previous flags=0 source fails the new
+regression. Independent read-only correctness/security reviews and 303 safe VM
+fixtures passed; no leaks found. Frozen preparation:
+artifacts/driver-test-signing/version-transition-no-ui-final-5308283600784e7bbb88ed6975739fd1/.
+
 Findings: the next requested one-hour run on the rebooted current driver stopped
 at 632,893 ms with one steady underrun and 22 driver silence frames. Native PnP
 reported 0.5.1.0 before capture; active Code Integrity Verifier targeted only
