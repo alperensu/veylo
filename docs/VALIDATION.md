@@ -171,6 +171,23 @@ This is a short synthetic kernel run with two clients in one process; UEFI,
 one-hour, physical microphone and separate-application acceptance remain open.
 Full GitHub push and PR CI passed for exact commit 60fab4b.
 
+Passed: the isolated UEFI guest also completed the updated consumer run under
+active Code Integrity Verifier: 60.005 seconds, 33 checks, zero findings or
+unsupported formats. Maximum consumer drain gap was 9,203 us, write gap
+12,637 us, IOCTL 2,823 us and minimum steady queue 381 frames. Both clients
+had zero position gaps/timestamp errors, recovered waveform and observed two
+fresh-silence transitions; steady underruns and overruns were zero. One total
+underrun from the intentional pause is retained. VBS was 0 and HVCI inactive;
+this run does not establish HVCI. Exact cbabf82 push and PR CI also passed.
+
+Findings: the UEFI HVCI preparation preserved its original registry/BCD baseline
+and persisted all five requested settings without a firmware lock. Cold boot
+then stopped at Windows Recovery with the same 0xc0000189 system-capability
+message seen in the BIOS guest. This is not a driver bugcheck, nor does UEFI
+alone remedy the guest VSM limitation. Active HVCI capture remains unverified;
+the failed UEFI disk and NVRAM are retained before baseline recovery. No daily
+host security or certificate settings were changed.
+
 Findings retained: the first actual historical transition completed old-version
 DevCon update with exit 0 but the immediate installed-version read differed.
 The guarded current restoration returned exit 1 (reboot required); acceptance
@@ -179,6 +196,34 @@ Both logs reported successful installation, and the subsequent read showed
 0.5.1.0/oem0.inf. This does not prove the old version ever bound. The stopped
 guest disk and serial report were preserved before the next reboot.
 
+Findings retained: the next cold preflight hit a five-second CIM timeout before
+any driver or certificate mutation. A warmed retry reached old update, then
+43 bounded observations over 30.497 seconds showed old SYS file identity and
+Running service while Win32_PnPSignedDriver still reported 0.5.1.0. Capture did
+not run; current restoration returned exit 1/NeedsReboot with its process evidence
+preserved. This is a metadata discrepancy requiring native PnP corroboration,
+not an accepted old-version capture or rollback. The second disk state was
+retained as version-settle-needs-reboot-20261009.
+
+Passed: native installed-driver metadata reader preparation passed 185 inert
+checks each under Windows PowerShell 5.1 and PowerShell 7, including pure UTF-16
+parsing, x64 ABI/C# compilation, published INF path limits, request pairing,
+duplicate JSON keys and bounded child timeout. SetupDiGetDevicePropertyW runs
+only in a protected, request-paired read-only guest child with a ten-second
+limit. Installed native version plus published INF/SYS hashes and service state
+drive acceptance; WMI version remains separate diagnostic evidence. This is
+preparation, not proof that the WMI provider was stale on the actual guest.
+
+Passed: the second actual S4 attempt completed prepare/request (exit 0, 50.53 s),
+then resumed the same boot, user authentication ID and session 1. Kernel-Power
+42/record 1527 and Power-Troubleshooter 1/record 1537 paired Target/EffectiveState
+5 from 14:47:03.9646323Z to 14:47:48.2753064Z. HibernateVerify returned Passed
+with resumeVerified=true and post-resume PCM16/PCM32 capture: 22 checks, zero
+findings/unsupported formats, fresh silence after producer close. This is an
+actual hibernate/resume test, not cold-boot substitution. The guest exposes no
+standby state; S3 and full WPF physical microphone/application recovery are
+not established by this result.
+
 Incomplete: the first resumed S4 attempt was interrupted by a later host shutdown
 (User32 1074 at 2026-10-09T13:36:29Z). The guest disk and serial evidence were
 retained before restoring the licensed pre-test snapshot. Its original session
@@ -186,7 +231,7 @@ could not receive final verification; this is not a passed hibernate test or an
 established driver bugcheck.
 
 Not run/completed at this source checkpoint: one-hour acceptance, active HVCI
-capture, supported sleep/hibernate recovery, different-version upgrade/rollback,
+capture, standby/full application recovery, different-version upgrade/rollback,
 separate receiving applications, physical latency and Microsoft production
 signing. The guest exposes hibernate but no standby state; cold boot is not sleep.
 HVCI configuration preserves its first protected registry/BCD baseline and only

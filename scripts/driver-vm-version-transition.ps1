@@ -2,8 +2,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][Guid]$VmId,
-    [ValidateSet('Run','RollbackNative')][string]$Operation='Run',
-    [Guid]$RunId=[Guid]::Empty
+    [ValidateSet('Run','RollbackNative','IdentityNative')][string]$Operation='Run',
+    [Guid]$RunId=[Guid]::Empty,
+    [Guid]$RequestId=[Guid]::Empty
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2.0
@@ -27,7 +28,7 @@ $Mode='VersionTransition'
 $outputNames=@('version-transition.json','transition.lock','old-baseline.log','upgrade.log','restore.log',
     'rollback-native.log','rollback-native.json','old-baseline-capture.json','old-baseline-capture.log',
     'upgrade-capture.json','upgrade-capture.log','rollback-capture.json','rollback-capture.log',
-    'restore-capture.json','restore-capture.log')
+    'restore-capture.json','restore-capture.log','identity-native.json','identity-native.log')
 function Assert-CanonicalPath([string]$Path,[string]$Within,[switch]$MayNotExist){
     $full=[IO.Path]::GetFullPath($Path)
     $root=[IO.Path]::GetFullPath($Within).TrimEnd('\')
@@ -48,11 +49,18 @@ function Assert-CanonicalPath([string]$Path,[string]$Within,[switch]$MayNotExist
     return $full
 }
 
+function Convert-DriverJson([string]$Raw){
+    # PowerShell 7.5+ otherwise converts ISO report strings into DateTime values.
+    # Keep the same strict wire types as Windows PowerShell 5.1.
+    $parameters=@{}
+    if((Get-Command ConvertFrom-Json -CommandType Cmdlet).Parameters.ContainsKey('DateKind')){$parameters.DateKind='String'}
+    return ($Raw | ConvertFrom-Json @parameters)
+}
 function Read-BoundedJson([string]$Path,[string]$Within,[int]$Limit=65536){
     $full=Assert-CanonicalPath $Path $Within
     $file=Get-Item -LiteralPath $full -Force
     if($file.PSIsContainer -or $file.Length -lt 2 -or $file.Length -gt $Limit){throw 'Invalid JSON file size/type.'}
-    return (Get-Content -LiteralPath $full -Raw | ConvertFrom-Json)
+    return (Convert-DriverJson (Get-Content -LiteralPath $full -Raw))
 }
 
 function Assert-TrustedGuestAcl([string]$Path){
@@ -253,19 +261,127 @@ function Test-TransitionCapture($Process,$Evidence){
         $Evidence.unsupported -eq 0 -and $Evidence.verified_endpoints -eq 1 -and
         $Evidence.formats_passed -eq 2 -and $Evidence.self_tests -eq 0)
 }
+function Get-PnpDeviceFilter([string]$Instance){
+    if(!$Instance -or ![regex]::IsMatch($Instance,'\AROOT\\(?:MEDIA|SES_MICROPHONE)\\[0-9]{4}\z',
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [Text.RegularExpressions.RegexOptions]::CultureInvariant)){
+        throw 'PnP query requires the validated exact root audio instance.'
+    }
+    # WQL uses backslash escapes, independent of PowerShell string quoting.
+    $escaped=$Instance.Replace('\','\\').Replace("'","\'")
+    return ("DeviceID='"+$escaped+"'")
+}
+function Test-IdentityParentStage($Parent){
+    if(!$Parent.PSObject.Properties['status'] -or !$Parent.PSObject.Properties['stage']){return $false}
+    return (($Parent.status -ceq 'Running' -and $Parent.stage -cin @('preflight','old-baseline','upgrade','rollback-native','restore')) -or
+        ($Parent.status -ceq 'Findings' -and $Parent.stage -ceq 'failure-restore'))
+}
+function Assert-IdentityRequest($Parent,[Guid]$ExpectedRequest,[string]$ExpectedInstance){
+    $request=$Parent.identityRequest
+    $stamp=[DateTimeOffset]::MinValue
+    if($RunId -eq [Guid]::Empty -or $ExpectedRequest -eq [Guid]::Empty -or
+        $Parent.runId -cne $RunId.ToString('D') -or $Parent.vmId -cne $VmId.ToString('D') -or
+        !(Test-IdentityParentStage $Parent) -or $Parent.instance -ine $ExpectedInstance -or
+        $request.requestId -cne $ExpectedRequest.ToString('D') -or $request.instance -ine $ExpectedInstance -or
+        !$ExpectedInstance -or ![regex]::IsMatch($ExpectedInstance,'\AROOT\\(?:MEDIA|SES_MICROPHONE)\\[0-9]{4}\z',
+            [Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [Text.RegularExpressions.RegexOptions]::CultureInvariant) -or
+        ![DateTimeOffset]::TryParseExact([string]$request.utc,'o',[Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None,[ref]$stamp) -or
+        $stamp -lt [DateTimeOffset]::UtcNow.AddSeconds(-10) -or $stamp -gt [DateTimeOffset]::UtcNow.AddSeconds(1)){
+        throw 'Native identity request is unpaired, foreign, or stale.'
+    }
+    return $stamp
+}
+function Assert-IdentityParentLock{
+    $locked=$false;$probe=$null
+    try{$probe=[IO.File]::Open((Get-OutputPath 'transition.lock'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}
+    catch [IO.IOException]{if(($_.Exception.HResult -band 0xffff) -eq 32){$locked=$true}else{throw}}
+    finally{if($probe){$probe.Dispose()}}
+    if(!$locked){throw 'Native identity parent transition lock is not held.'}
+}
+function Convert-NativeIdentityReport([string]$Raw,[Guid]$ExpectedRequest,[string]$ExpectedInstance,[DateTimeOffset]$NotBefore){
+    # This is a flat fixed report. Reject duplicate or escaped keys before the
+    # Windows PowerShell JSON parser can silently select a duplicate's last value.
+    $names=@('schema','vmId','runId','requestId','instance','api','nativeVersion','nativeInfName','utc','status','testOnly','productionReady')
+    $keys=[regex]::Matches($Raw,'"(?<key>(?:[^"\\]|\\.)*)"\s*:')
+    if($Raw.Length -gt 4096 -or $keys.Count -ne $names.Count){throw 'Native identity report field count differs.'}
+    $seen=@{}
+    foreach($key in $keys){$name=$key.Groups['key'].Value;if($name -cnotin $names -or $seen.ContainsKey($name)){throw 'Native identity duplicate/unknown/escaped report key.'};$seen[$name]=$true}
+    $evidence=Convert-DriverJson $Raw
+    $utc=[DateTimeOffset]::MinValue
+    foreach($name in @('vmId','runId','requestId','instance','api','nativeVersion','nativeInfName','utc','status')){
+        if($evidence.$name -isnot [string]){throw 'Native identity report string field has the wrong type.'}
+    }
+    if(($evidence.schema -isnot [int] -and $evidence.schema -isnot [long]) -or $evidence.schema -ne 1 -or
+        $evidence.vmId -cne $VmId.ToString('D') -or $evidence.runId -cne $RunId.ToString('D') -or
+        $ExpectedRequest -eq [Guid]::Empty -or $evidence.requestId -cne $ExpectedRequest.ToString('D') -or
+        $evidence.instance -ine $ExpectedInstance -or $evidence.api -cne 'SetupDiGetDevicePropertyW' -or $evidence.status -cne 'Passed' -or
+        $evidence.testOnly -isnot [bool] -or !$evidence.testOnly -or $evidence.productionReady -isnot [bool] -or $evidence.productionReady -or
+        ![regex]::IsMatch($evidence.nativeVersion,'\A[0-9]{1,5}(?:\.[0-9]{1,5}){3}\z') -or
+        ![regex]::IsMatch($evidence.nativeInfName,'\Aoem[0-9]{1,4}\.inf\z',[Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [Text.RegularExpressions.RegexOptions]::CultureInvariant) -or
+        ![DateTimeOffset]::TryParseExact($evidence.utc,'o',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$utc) -or
+        $utc -lt $NotBefore -or $utc -gt [DateTimeOffset]::UtcNow.AddSeconds(1) -or $utc -lt [DateTimeOffset]::UtcNow.AddSeconds(-10)){
+        throw 'Unpaired or invalid native identity report.'
+    }
+    foreach($part in $evidence.nativeVersion.Split('.')){if([int]$part -gt 65535){throw 'Native version component exceeds WORD range.'}}
+    return $evidence
+}
+function Read-NativeVersionIdentity([string]$ExpectedInstance){
+    $null=Get-PnpDeviceFilter $ExpectedInstance
+    $parentPath=Get-OutputPath 'version-transition.json'
+    Assert-TrustedGuestAcl $parentPath
+    $parent=Read-BoundedJson $parentPath $acceptanceRoot 1MB
+    if($parent.runId -cne $RunId.ToString('D') -or $parent.vmId -cne $VmId.ToString('D') -or
+        !(Test-IdentityParentStage $parent) -or $parent.instance -ine $ExpectedInstance){throw 'Native identity parent does not describe the original active instance.'}
+    Assert-IdentityParentLock
+    $request=[Guid]::NewGuid();$notBefore=[DateTimeOffset]::UtcNow
+    $parent | Add-Member -MemberType NoteProperty -Name identityRequest -Value ([ordered]@{
+        requestId=$request.ToString('D');instance=$ExpectedInstance;utc=$notBefore.ToString('o')}) -Force
+    Write-Report 'version-transition.json' $parent 'VEYLO_VERSION_IDENTITY_REQUEST'
+    $path=Get-OutputPath 'identity-native.json'
+    if(Test-Path -LiteralPath $path){Remove-Item -LiteralPath $path}
+    $powershell='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    $null=Assert-CanonicalPath $powershell 'C:\Windows\System32'
+    # Never set/clear mutation uncertainty for a strictly read-only child.
+    $process=Invoke-BoundedTool $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$ownPath,
+        '-VmId',$VmId.ToString('D'),'-Operation','IdentityNative','-RunId',$RunId.ToString('D'),'-RequestId',$request.ToString('D')) 'identity-native.log' 10
+    if($process.exitCode -ne 0 -or $process.timedOut -or $process.outputLimited -or $process.elapsedSeconds -ge 10){
+        throw ('Read-only native identity child failed or exceeded its ten-second bound: '+($process | ConvertTo-Json -Compress))
+    }
+    $file=Get-Item -LiteralPath (Assert-CanonicalPath $path $acceptanceRoot) -Force
+    Assert-TrustedGuestAcl $path
+    if($file.PSIsContainer -or $file.Length -lt 2 -or $file.Length -gt 4096){throw 'Native identity report size/type differs.'}
+    $evidence=Convert-NativeIdentityReport ([IO.File]::ReadAllText($path)) $request $ExpectedInstance $notBefore
+    $evidence | Add-Member -MemberType NoteProperty -Name process -Value $process
+    return $evidence
+}
+function Get-InstalledInfHash([string]$InfName){
+    if(!$InfName -or ![regex]::IsMatch($InfName,'\Aoem[0-9]{1,4}\.inf\z',
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [Text.RegularExpressions.RegexOptions]::CultureInvariant)){
+        throw 'Only the exact installed published OEM INF basename is allowed.'
+    }
+    $path=Assert-CanonicalPath (Join-Path 'C:\Windows\INF' $InfName) 'C:\Windows\INF'
+    $file=Get-Item -LiteralPath $path -Force
+    if($file.PSIsContainer -or $file.Length -lt 1 -or $file.Length -gt 16MB){throw 'Installed INF size/type differs.'}
+    return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
 function Read-VersionObservation([string]$ExpectedInstance){
     $device=Assert-OneSesDevice
     if($ExpectedInstance -and $device.DeviceID -ine $ExpectedInstance){
         throw ('Original exact device instance differs; expected '+$ExpectedInstance+'; observed '+$device.DeviceID+'; settling is forbidden.')
     }
-    $rows=@(Get-CimInstance -ClassName Win32_PnPSignedDriver -OperationTimeoutSec 5 | Where-Object {$_.DeviceID -ieq $device.DeviceID})
+    $filter=Get-PnpDeviceFilter ([string]$device.DeviceID)
+    $pnpError=$null
+    try{$rows=@(Get-CimInstance -ClassName Win32_PnPSignedDriver -Filter $filter -OperationTimeoutSec 5)}
+    catch{$rows=@();$pnpError=$_.Exception.Message}
+    foreach($row in $rows){if($row.DeviceID -ine $device.DeviceID){throw 'Filtered PnP provider returned another device identity.'}}
     if($rows.Count -gt 1){throw 'Multiple installed PnP driver rows for the exact instance; settling is forbidden.'}
     $services=@(Get-CimInstance -ClassName Win32_SystemDriver -Filter "Name='SesMicrophone'" -OperationTimeoutSec 5)
     if($services.Count -gt 1 -or ($services.Count -eq 1 -and $services[0].Name -ine 'SesMicrophone')){
         throw 'Service identity is not the sole fixed SesMicrophone service; settling is forbidden.'
     }
     $observation=@{instance=[string]$device.DeviceID;hardwareId='ROOT\SES_MICROPHONE';service='SesMicrophone';
-        deviceStatus=$device.ConfigManagerErrorCode;pnpRowCount=$rows.Count;pnpVersion=$null;
+        deviceStatus=$device.ConfigManagerErrorCode;pnpRowCount=$rows.Count;pnpVersion=$null;pnpDiagnosticError=$pnpError;
+        nativeVersion=$null;nativeInfName=$null;nativeInfSha256=$null;nativeIdentity=$null;
         serviceRowCount=$services.Count;serviceImage=$null;serviceImageSha256=$null;state='Missing';started=$false}
     if($rows.Count -eq 1){$observation.pnpVersion=[string]$rows[0].DriverVersion}
     if($services.Count -eq 1){
@@ -282,12 +398,15 @@ function Read-VersionObservation([string]$ExpectedInstance){
         $observation.serviceImage=$full
         $observation.serviceImageSha256=(Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
     }
+    $native=Read-NativeVersionIdentity ([string]$device.DeviceID)
+    $observation.nativeVersion=$native.nativeVersion;$observation.nativeInfName=$native.nativeInfName
+    $observation.nativeInfSha256=Get-InstalledInfHash $native.nativeInfName;$observation.nativeIdentity=$native
     return $observation
 }
 function Read-VersionIdentity([string]$Name,[string]$ExpectedInstance){
     $spec=Get-VersionSpec $Name
     $observed=Read-VersionObservation $ExpectedInstance
-    if($observed.deviceStatus -ne 0 -or $observed.pnpRowCount -ne 1 -or $observed.pnpVersion -cne $spec.version -or
+    if($observed.deviceStatus -ne 0 -or $observed.nativeVersion -cne $spec.version -or $observed.nativeInfSha256 -cne $spec.inf -or
         $observed.serviceRowCount -ne 1 -or !$observed.started -or $observed.state -cne 'Running' -or
         $observed.serviceImageSha256 -cne $spec.sys){
         $failure=[InvalidOperationException]::new(('Installed identity differs; expected '+$spec.version+'; observed '+($observed | ConvertTo-Json -Compress)))
@@ -303,7 +422,7 @@ function Wait-VersionIdentity([string]$Name,[string]$ExpectedInstance,[ValidateR
     }
     $spec=Get-VersionSpec $Name
     $watch=[Diagnostics.Stopwatch]::StartNew();$consecutive=0
-    $script:lastVersionSettle=@{status='Running';expectedVersion=$spec.version;expectedSysSha256=$spec.sys;
+    $script:lastVersionSettle=@{status='Running';expectedVersion=$spec.version;expectedSysSha256=$spec.sys;expectedInfSha256=$spec.inf;
         instance=$ExpectedInstance;deadlineSeconds=$DeadlineSeconds;attempts=0;elapsedSeconds=0;
         consecutiveMatches=0;observation=$null;error=$null}
     try{
@@ -323,7 +442,7 @@ function Wait-VersionIdentity([string]$Name,[string]$ExpectedInstance,[ValidateR
             }
             $script:lastVersionSettle.elapsedSeconds=[math]::Round($watch.Elapsed.TotalSeconds,3)
             $script:lastVersionSettle.consecutiveMatches=$consecutive
-            # A slow CIM call cannot produce a late success beyond this deadline.
+            # Neither slow CIM nor the ten-second native child may yield a late pass.
             if($watch.Elapsed.TotalSeconds -ge $DeadlineSeconds){break}
             if($consecutive -ge 2){$script:lastVersionSettle.status='Passed';return $script:lastVersionSettle}
             $remaining=[int][math]::Floor(($DeadlineSeconds-$watch.Elapsed.TotalSeconds)*1000)
@@ -408,6 +527,96 @@ function Assert-UpdateCompleted($Process){
     if($Process.exitCode -eq 1){return $false}
     return $true
 }
+function Initialize-NativeIdentity{
+    if('VeyloLab.InstalledIdentity' -as [type]){return}
+    # SDK devpkey.h: a8b865dd-2e3d-4094-ad97-e593a70c75d6,
+    # DriverVersion pid 3; DriverInfPath pid 5. Both DEVPROP_TYPE_STRING (0x12).
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
+namespace VeyloLab {
+    public static class InstalledIdentity {
+        [StructLayout(LayoutKind.Sequential)]
+        public struct DeviceInfo { public uint cbSize; public Guid ClassGuid; public uint DevInst; public UIntPtr Reserved; }
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PropertyKey { public Guid fmtid; public uint pid; }
+        public sealed class Result { public string Version; public string InfName; }
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DllImport("setupapi.dll", ExactSpelling=true, SetLastError=true)]
+        private static extern IntPtr SetupDiCreateDeviceInfoList(ref Guid classGuid, IntPtr parent);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DllImport("setupapi.dll", EntryPoint="SetupDiOpenDeviceInfoW", ExactSpelling=true, CharSet=CharSet.Unicode, SetLastError=true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetupDiOpenDeviceInfo(IntPtr set, string instance, IntPtr parent, uint flags, ref DeviceInfo info);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DllImport("setupapi.dll", EntryPoint="SetupDiGetDevicePropertyW", ExactSpelling=true, SetLastError=true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetupDiGetDeviceProperty(IntPtr set, ref DeviceInfo info, ref PropertyKey key,
+            out uint type, [Out] byte[] buffer, uint bufferSize, out uint requiredSize, uint flags);
+        [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+        [DllImport("setupapi.dll", ExactSpelling=true, SetLastError=true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
+        // Pure parser is public for inert fixture tests; it performs no native IO.
+        public static string DecodeString(byte[] buffer, uint size, uint type) {
+            if (buffer == null || type != 0x12 || size < 4 || size > 1024 || size > buffer.Length || (size & 1) != 0)
+                throw new InvalidOperationException("Native property type or bounded UTF-16 size differs.");
+            int count = checked((int)size);
+            if (buffer[count-2] != 0 || buffer[count-1] != 0)
+                throw new InvalidOperationException("Native property is not terminated.");
+            string value = new UnicodeEncoding(false, false, true).GetString(buffer, 0, count-2);
+            if (value.Length == 0 || value.IndexOf('\0') >= 0)
+                throw new InvalidOperationException("Empty or multi-string native property rejected.");
+            return value;
+        }
+        public static void ValidateValues(string version, string inf) {
+            if (version == null || !Regex.IsMatch(version, @"\A[0-9]{1,5}(?:\.[0-9]{1,5}){3}\z", RegexOptions.CultureInvariant))
+                throw new InvalidOperationException("Native driver version format differs.");
+            foreach (string part in version.Split('.'))
+                if (UInt32.Parse(part, System.Globalization.CultureInfo.InvariantCulture) > 65535)
+                    throw new InvalidOperationException("Native driver version component exceeds WORD range.");
+            if (inf == null || !Regex.IsMatch(inf, @"\Aoem[0-9]{1,4}\.inf\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                throw new InvalidOperationException("Native installed INF is not a bounded published basename.");
+        }
+        private static string ReadProperty(IntPtr set, ref DeviceInfo info, uint pid) {
+            PropertyKey key = new PropertyKey { fmtid = new Guid("a8b865dd-2e3d-4094-ad97-e593a70c75d6"), pid = pid };
+            byte[] buffer = new byte[1024];
+            uint type, size;
+            if (!SetupDiGetDeviceProperty(set, ref info, ref key, out type, buffer, (uint)buffer.Length, out size, 0))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Exact installed driver property read failed.");
+            return DecodeString(buffer, size, type);
+        }
+        public static Result Read(string instance) {
+            if (IntPtr.Size != 8 || Marshal.SizeOf(typeof(DeviceInfo)) != 32 || Marshal.SizeOf(typeof(PropertyKey)) != 20 ||
+                Marshal.OffsetOf(typeof(PropertyKey), "pid").ToInt32() != 16 || Marshal.OffsetOf(typeof(DeviceInfo), "Reserved").ToInt32() != 24)
+                throw new InvalidOperationException("Native x64 device/property ABI mismatch.");
+            if (instance == null || !Regex.IsMatch(instance, @"\AROOT\\(?:MEDIA|SES_MICROPHONE)\\[0-9]{4}\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                throw new ArgumentException("Exact root audio instance required.");
+            Guid media = new Guid("4d36e96c-e325-11ce-bfc1-08002be10318");
+            IntPtr set = SetupDiCreateDeviceInfoList(ref media, IntPtr.Zero);
+            if (set == new IntPtr(-1) || set == IntPtr.Zero)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Create device info list failed.");
+            try {
+                DeviceInfo info = new DeviceInfo { cbSize = 32 };
+                if (!SetupDiOpenDeviceInfo(set, instance, IntPtr.Zero, 0, ref info))
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Open exact device instance failed.");
+                if (info.ClassGuid != media) throw new InvalidOperationException("Exact device MEDIA class differs.");
+                string version = ReadProperty(set, ref info, 3);
+                string inf = ReadProperty(set, ref info, 5);
+                ValidateValues(version, inf);
+                return new Result { Version = version, InfName = inf };
+            } finally {
+                if (!SetupDiDestroyDeviceInfoList(set))
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Destroy read-only device info list failed.");
+            }
+        }
+    }
+}
+'@
+}
 function Initialize-NativeRollback{
     if('VeyloLab.VersionRollback' -as [type]){return}
     Add-Type -TypeDefinition @'
@@ -481,6 +690,28 @@ $seedNames=@('SesMicrophone.inf','SesMicrophone.sys','SesMicrophone.cat','SYSVAD
     'ses_driver_lab_tests.exe','ses_driver_capture_lab_tests.exe','DRIVER.md','DRIVER-LAB.md','LICENSE',
     'README-TEST-SIGNED.txt','test-signing-manifest.json','devcon.exe','guest.ps1')
 Assert-Inventory $seed $seedNames $labRoot
+if($Operation -ceq 'IdentityNative'){
+    $parentPath=Get-OutputPath 'version-transition.json'
+    Assert-TrustedGuestAcl $parentPath
+    $parent=Read-BoundedJson $parentPath $acceptanceRoot 1MB
+    $stamp=Assert-IdentityRequest $parent $RequestId ([string]$parent.instance)
+    Assert-IdentityParentLock
+    $device=Assert-OneSesDevice
+    if($device.DeviceID -ine $parent.instance){throw 'Native identity original device differs.'}
+    Initialize-NativeIdentity
+    $installed=[VeyloLab.InstalledIdentity]::Read([string]$parent.instance)
+    # Re-check the pending request after potentially slow native calls; never
+    # publish a late or replaced request as a successful current identity.
+    $after=Read-BoundedJson $parentPath $acceptanceRoot 1MB
+    $null=Assert-IdentityRequest $after $RequestId ([string]$parent.instance)
+    Assert-IdentityParentLock
+    Write-Report 'identity-native.json' ([ordered]@{schema=1;vmId=$VmId.ToString('D');runId=$RunId.ToString('D');
+        requestId=$RequestId.ToString('D');instance=[string]$parent.instance;api='SetupDiGetDevicePropertyW';
+        nativeVersion=$installed.Version;nativeInfName=$installed.InfName;utc=[DateTimeOffset]::UtcNow.ToString('o');
+        status='Passed';testOnly=$true;productionReady=$false}) 'VEYLO_VERSION_IDENTITY_NATIVE'
+    exit 0
+}
+if($RequestId -ne [Guid]::Empty){throw 'Request identity is valid only for the read-only identity child.'}
 if($Operation -ceq 'RollbackNative'){
     if($RunId -eq [Guid]::Empty){throw 'Native child requires its paired run identity.'}
     $parent=Read-BoundedJson (Get-OutputPath 'version-transition.json') $acceptanceRoot 1MB
@@ -521,6 +752,7 @@ try{
     Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
     try{
         $device=Assert-OneSesDevice;$result.instance=[string]$device.DeviceID
+        Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
         $result.initialIdentity=Read-VersionIdentity 'current' ([string]$result.instance)
         $currentCertificate=Read-PublicCertificate 'current'
         $currentCertificate.Dispose()

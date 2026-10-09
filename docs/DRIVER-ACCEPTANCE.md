@@ -125,8 +125,13 @@ Sıra: eski sürümü zorlayarak baseline hazırlama → güncel sürüme yükse
 Windows `DiRollbackDriver` ile gerçek geri alma → güncel sürümü geri yükleme.
 Her aşamada aynı aygıtın kurulu sürümü, SYS hash'i ve PCM16/PCM32 capture kontrolü
 gerekir. Tamamlanan işlemin ardından en fazla 30 saniyelik salt okunur bekleme,
-aynı instance, sürüm, SYS hash'i ve çalışan hizmet için iki ardışık eşleşme ister;
-geç gelen eşleşme başarı sayılmaz. Zorlanan eski baseline, native geri alma
+aynı instance, sürüm, kurulu INF ve SYS hash'i ile çalışan hizmet için iki
+ardışık eşleşme ister. Kurulu sürüm ve OEM INF adı `SetupDiGetDevicePropertyW`
+üzerinden, en fazla 10 saniyelik ayrı salt okunur çocuk süreçte okunur. WMI
+sürümü ayrıca teşhis olarak saklanır; native kimliğin yerine kullanılmaz;
+geç gelen eşleşme başarı sayılmaz. İstek kimliği, orijinal cihaz ve korumalı
+parent raporu/kilidi eşleşmeden çocuk sonucu kabul edilmez. Zorlanan eski
+baseline, native geri alma
 sonucu olarak sayılmaz. Eski
 paketin yalnız public test sertifikası bu guest'in iki güven deposuna eklenebilir;
 host sertifika depoları değişmez. Yeniden başlatma veya belirsiz devam eden işlem
