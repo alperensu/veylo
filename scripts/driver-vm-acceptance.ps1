@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][Guid]$VmId,
-    [ValidateSet('Diagnostics','CodeIntegrityVerifier','EnableHvciLab','Capture','RemoveReinstall','Shutdown')]
+    [ValidateSet('Diagnostics','CodeIntegrityVerifier','EnableHvciLab','Capture','RemoveReinstall','HibernatePrepare','HibernateVerify','Shutdown')]
     [string]$Mode='Diagnostics',
     [switch]$Extended,
     [ValidateRange(10,3600)][int]$DurationSeconds=60
@@ -27,7 +27,8 @@ $labRoot='C:\VeyloLab'
 $outputNames=@('diagnostics.json','verifier.json','capture-result.json','capture.json','capture.log',
     'reinstall.json','remove.log','install.log','shutdown.json','failure.json','powercfg.log',
     'verifier-settings.log','verifier-query.log','verifier-enable.log','hvci-snapshot.json','hvci.json','hvci-bcd.log',
-    'hvci-bcd-before.log','hvci-vsm.log')
+    'hvci-bcd-before.log','hvci-vsm.log','hibernate-snapshot.json','hibernate-prepare.json','hibernate.json',
+    'hibernate-powercfg.log','hibernate-request.log','hibernate-capture.json','hibernate-capture.log')
 
 function Assert-CanonicalPath([string]$Path,[string]$Within,[switch]$MayNotExist){
     $full=[IO.Path]::GetFullPath($Path)
@@ -341,6 +342,117 @@ function Write-FirstHvciSnapshot($Snapshot){
     }finally{$stream.Dispose()}
     Write-Serial 'VEYLO_ACCEPTANCE_SNAPSHOT' $Snapshot
 }
+function Write-FirstHibernateSnapshot($Snapshot){
+    $path=Get-OutputPath 'hibernate-snapshot.json'
+    $stream=[IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+    try{
+        Assert-TrustedGuestAcl $path
+        $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($Snapshot | ConvertTo-Json -Depth 14))
+        if($bytes.Length -gt 65536){throw 'Hibernate baseline exceeds its bound.'}
+        $stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)
+    }finally{$stream.Dispose()}
+    Write-Serial 'VEYLO_ACCEPTANCE_SNAPSHOT' $Snapshot
+}
+function Get-HibernateSessionEvidence{
+    $identity=[Security.Principal.WindowsIdentity]::GetCurrent()
+    try{
+        $logonSids=@($identity.Groups | ForEach-Object {$_.Value} | Where-Object {$_ -cmatch '^S-1-5-5-[0-9]+-[0-9]+$'})
+        if($logonSids.Count -ne 1){throw 'An exact interactive guest logon SID is required for hibernate continuity.'}
+        $guestOs=Get-CimInstance -ClassName Win32_OperatingSystem
+        return @{bootUtc=$guestOs.LastBootUpTime.ToUniversalTime().ToString('o');
+            userSid=$identity.User.Value;logonSid=$logonSids[0];sessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId}
+    }finally{$identity.Dispose()}
+}
+# Parse invariant XML, never localized event messages. DTDs, duplicated fields,
+# unbounded XML and unknown providers fail closed before decision making.
+function ConvertFrom-HibernateEventXml($Text){
+    if($Text -isnot [string] -or $Text.Length -lt 1 -or $Text.Length -gt 65536){throw 'Hibernate event XML size rejected.'}
+    $settings=[Xml.XmlReaderSettings]::new();$settings.DtdProcessing=[Xml.DtdProcessing]::Prohibit
+    $settings.XmlResolver=$null;$settings.MaxCharactersInDocument=65536
+    $reader=[Xml.XmlReader]::Create([IO.StringReader]::new($Text),$settings)
+    try{$document=[Xml.XmlDocument]::new();$document.XmlResolver=$null;$document.Load($reader)}finally{$reader.Dispose()}
+    $ns=[Xml.XmlNamespaceManager]::new($document.NameTable);$ns.AddNamespace('e','http://schemas.microsoft.com/win/2004/08/events/event')
+    $system=$document.SelectSingleNode('/e:Event/e:System',$ns)
+    if(!$system){throw 'Hibernate event system metadata missing.'}
+    $provider=$system.SelectSingleNode('e:Provider',$ns).GetAttribute('Name')
+    if($provider -cnotin @('Microsoft-Windows-Kernel-Power','Microsoft-Windows-Power-Troubleshooter',
+        'Microsoft-Windows-Kernel-General','Microsoft-Windows-WER-SystemErrorReporting','Microsoft-Windows-Eventlog')){throw 'Hibernate event provider rejected.'}
+    $id=0;$record=[long]0;$utc=[DateTimeOffset]::MinValue
+    if(![int]::TryParse($system.SelectSingleNode('e:EventID',$ns).InnerText,[ref]$id) -or $id -lt 1 -or
+       ![long]::TryParse($system.SelectSingleNode('e:EventRecordID',$ns).InnerText,[ref]$record) -or $record -lt 1 -or
+       ![DateTimeOffset]::TryParseExact($system.SelectSingleNode('e:TimeCreated',$ns).GetAttribute('SystemTime'),
+           'yyyy-MM-ddTHH:mm:ss.FFFFFFFK',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$utc)){
+        throw 'Hibernate event metadata rejected.'
+    }
+    $data=@{};$nodes=@($document.SelectNodes('/e:Event/e:EventData/e:Data',$ns))
+    if($nodes.Count -gt 64){throw 'Hibernate event field count rejected.'}
+    foreach($node in $nodes){
+        $name=$node.GetAttribute('Name')
+        if(!$name -or $name.Length -gt 64 -or $data.ContainsKey($name) -or $node.InnerText.Length -gt 2048){throw 'Hibernate event field rejected.'}
+        $data[$name]=$node.InnerText
+    }
+    return @{provider=$provider;id=$id;recordId=$record;utc=$utc.ToUniversalTime().ToString('o');data=$data}
+}
+function Get-HibernateEvents($Snapshot){
+    $prepared=[DateTimeOffset]::ParseExact([string]$Snapshot.utc,'o',[Globalization.CultureInfo]::InvariantCulture)
+    # At most 128 relevant records. Hitting the cap means evidence is incomplete.
+    $filter=@{LogName='System';StartTime=$prepared.UtcDateTime;Id=@(1,12,41,42,107,1001,104);
+        ProviderName=@('Microsoft-Windows-Kernel-Power','Microsoft-Windows-Power-Troubleshooter',
+            'Microsoft-Windows-Kernel-General','Microsoft-Windows-WER-SystemErrorReporting','Microsoft-Windows-Eventlog')}
+    try{$events=@(Get-WinEvent -FilterHashtable $filter -MaxEvents 128 -ErrorAction Stop)}catch{
+        if($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*'){return @()};throw
+    }
+    if($events.Count -ge 128){throw 'Hibernate event inventory exceeded its bound.'}
+    return @($events | ForEach-Object {ConvertFrom-HibernateEventXml $_.ToXml()})
+}
+function Get-HibernateResumeDecision($Snapshot,$Session,$Events,[string]$ExpectedVmId,[string]$NowUtc){
+    $decision=@{status='Findings';resumeVerified=$false;reason='Missing or invalid hibernate evidence.'}
+    try{
+        $prepared=[DateTimeOffset]::ParseExact([string]$Snapshot.utc,'o',[Globalization.CultureInfo]::InvariantCulture)
+        $now=[DateTimeOffset]::ParseExact($NowUtc,'o',[Globalization.CultureInfo]::InvariantCulture)
+        if($Snapshot.schema -ne 1 -or $Snapshot.mode -cne 'HibernatePrepare' -or $Snapshot.status -cne 'Snapshot' -or
+           $Snapshot.testOnly -isnot [bool] -or !$Snapshot.testOnly -or $Snapshot.vmId -cne $ExpectedVmId -or
+           $Snapshot.eventRecordId -isnot [long] -and $Snapshot.eventRecordId -isnot [int] -or $Snapshot.eventRecordId -lt 1 -or
+           $now -le $prepared -or ($now-$prepared).TotalHours -gt 24){return $decision}
+        foreach($field in @('bootUtc','userSid','logonSid','sessionId')){
+            if($Snapshot.session[$field] -cne $Session[$field]){$decision.reason='Cold boot or guest logon/session continuity mismatch.';return $decision}
+        }
+        $boot=[DateTimeOffset]::ParseExact([string]$Session.bootUtc,'o',[Globalization.CultureInfo]::InvariantCulture)
+        if($boot -gt $prepared -or $Session.userSid -cnotmatch '^S-1-(?:[0-9]+-)+[0-9]+$' -or
+           $Session.logonSid -cnotmatch '^S-1-5-5-[0-9]+-[0-9]+$' -or $Session.sessionId -isnot [int] -or $Session.sessionId -lt 1){return $decision}
+        $inventory=@($Events)
+        if($inventory.Count -lt 2 -or $inventory.Count -ge 128){return $decision}
+        $seen=@{};$sleep=@();$wake=@()
+        foreach($event in $inventory){
+            $time=[DateTimeOffset]::ParseExact([string]$event.utc,'o',[Globalization.CultureInfo]::InvariantCulture)
+            if($event.recordId -le $Snapshot.eventRecordId -or $seen.ContainsKey([string]$event.recordId) -or
+               $time -lt $prepared -or $time -gt $now){return $decision};$seen[[string]$event.recordId]=$true
+            if(($event.provider -ceq 'Microsoft-Windows-Kernel-General' -and $event.id -eq 12) -or
+               ($event.provider -ceq 'Microsoft-Windows-Kernel-Power' -and $event.id -eq 41) -or
+               ($event.provider -ceq 'Microsoft-Windows-WER-SystemErrorReporting' -and $event.id -eq 1001) -or
+               ($event.provider -ceq 'Microsoft-Windows-Eventlog' -and $event.id -eq 104)){
+                $decision.reason='Cold boot, unexpected shutdown, bugcheck or cleared system log after preparation.';return $decision
+            }
+            if($event.provider -ceq 'Microsoft-Windows-Kernel-Power' -and $event.id -eq 42){$sleep+=,$event}
+            if($event.provider -ceq 'Microsoft-Windows-Power-Troubleshooter' -and $event.id -eq 1){$wake+=,$event}
+        }
+        if($sleep.Count -ne 1 -or $wake.Count -ne 1){$decision.reason='Exactly one paired sleep and wake cycle is required.';return $decision}
+        foreach($event in @($sleep[0],$wake[0])){
+            if($event.data.TargetState -cne '5' -or $event.data.EffectiveState -cne '5'){$decision.reason='S4 hibernation was not confirmed by both Windows events.';return $decision}
+        }
+        $sleepTime=[DateTimeOffset]::ParseExact([string]$wake[0].data.SleepTime,'yyyy-MM-ddTHH:mm:ss.FFFFFFFK',[Globalization.CultureInfo]::InvariantCulture)
+        $wakeTime=[DateTimeOffset]::ParseExact([string]$wake[0].data.WakeTime,'yyyy-MM-ddTHH:mm:ss.FFFFFFFK',[Globalization.CultureInfo]::InvariantCulture)
+        $entryTime=[DateTimeOffset]::ParseExact([string]$sleep[0].utc,'o',[Globalization.CultureInfo]::InvariantCulture)
+        $resumeTime=[DateTimeOffset]::ParseExact([string]$wake[0].utc,'o',[Globalization.CultureInfo]::InvariantCulture)
+        if($sleep[0].recordId -ge $wake[0].recordId -or $sleepTime -lt $prepared -or $wakeTime -le $sleepTime -or
+           $wakeTime -gt $now -or [math]::Abs(($entryTime-$sleepTime).TotalSeconds) -gt 30 -or
+           $resumeTime -lt $wakeTime -or ($resumeTime-$wakeTime).TotalSeconds -gt 120){return $decision}
+        $decision.status='Passed';$decision.resumeVerified=$true;$decision.reason='Paired S4 events and original boot/logon session verified.'
+        $decision.sleepRecordId=$sleep[0].recordId;$decision.wakeRecordId=$wake[0].recordId
+        $decision.sleepUtc=$sleepTime.ToUniversalTime().ToString('o');$decision.wakeUtc=$wakeTime.ToUniversalTime().ToString('o')
+    }catch{$decision.reason='Missing, malformed or unsupported Windows resume evidence.'}
+    return $decision
+}
 function Assert-ProtectedRegistryPath([string]$Path){
     $prefix='Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control'
     if($Path -cnotin @($prefix,($prefix+'\DeviceGuard'),($prefix+'\DeviceGuard\Scenarios'),
@@ -533,6 +645,69 @@ try{
             $result.after=@{instanceId=$device.DeviceID;service=$device.Service;configManagerErrorCode=$device.ConfigManagerErrorCode}
             $result.status=if($device.ConfigManagerErrorCode -eq 0){'Passed'}else{'Findings'}
             Write-Report 'reinstall.json' $result
+        }
+        'HibernatePrepare' {
+            $snapshotPath=Get-OutputPath 'hibernate-snapshot.json';$powerLog=Get-OutputPath 'hibernate-powercfg.log'
+            if((Test-Path -LiteralPath $snapshotPath) -or (Test-Path -LiteralPath $powerLog)){
+                throw 'Preserving the first hibernate baseline: do not retry preparation or replace its original evidence.'
+            }
+            $result=New-Result 'Findings';$result.resumeVerified=$false
+            $device=Assert-OneSesDevice
+            if($device.ConfigManagerErrorCode -ne 0){throw 'Guest microphone must be healthy before hibernation.'}
+            $session=Get-HibernateSessionEvidence
+            $result.powercfg=Invoke-BoundedTool (Join-Path $system32 'powercfg.exe') @('/a') 'hibernate-powercfg.log' 30 -CreateNewLog
+            if($result.powercfg.exitCode -ne 0 -or $result.powercfg.timedOut -or $result.powercfg.outputLimited){throw 'Guest power capability query failed.'}
+            Assert-TrustedGuestAcl $powerLog
+            $latest=Get-WinEvent -LogName 'System' -MaxEvents 1 -ErrorAction Stop
+            $snapshot=New-Result 'Snapshot';$snapshot.session=$session;$snapshot.eventRecordId=[long]$latest.RecordId
+            $snapshot.device=@{instanceId=$device.DeviceID;service=$device.Service};$snapshot.powercfgBefore=$result.powercfg
+            $snapshot.powercfgSha256=(Get-FileHash -LiteralPath $powerLog -Algorithm SHA256).Hash.ToLowerInvariant()
+            $snapshot.restoreGuidance='No power policy is changed by this mode. Preserve this first baseline. Resume the same owned disk, then run HibernateVerify in the original interactive guest logon. A cold boot, new logon or absent paired S4 event evidence cannot pass.'
+            Write-FirstHibernateSnapshot $snapshot
+            # Prepared is never acceptance. If /h returns without real S4, the
+            # second mode still requires Windows event and session continuity.
+            $result.status='Prepared';$result.snapshot='hibernate-snapshot.json'
+            Write-Report 'hibernate-prepare.json' $result
+            Assert-Inventory $manifest @('driver-vm-acceptance.ps1','ses_driver_capture_lab_tests.exe') $acceptanceRoot
+            Assert-Inventory $seed $seedNames $labRoot
+            $result.request=Invoke-BoundedTool (Join-Path $system32 'shutdown.exe') @('/h') 'hibernate-request.log' 60
+            $result.status=if($result.request.exitCode -eq 0 -and !$result.request.timedOut -and !$result.request.outputLimited){'Requested'}else{'Findings'}
+            Write-Report 'hibernate-prepare.json' $result
+        }
+        'HibernateVerify' {
+            $result=New-Result 'Findings';$result.syntheticAudioOnly=$true;$result.resumeVerified=$false
+            # Invalidate a previous success before any attempt-specific read.
+            # Write-Report still validates the fixed report path and its ACL.
+            Write-Report 'hibernate.json' $result
+            $snapshotPath=Get-OutputPath 'hibernate-snapshot.json';Assert-TrustedGuestAcl $snapshotPath
+            $snapshot=Read-BoundedJson $snapshotPath $acceptanceRoot
+            # Convert this nested JSON object to the same dictionary shape as
+            # the current session; WinPS 5.1 does not have -AsHashtable.
+            $savedSession=@{};foreach($property in $snapshot.session.PSObject.Properties){$savedSession[$property.Name]=$property.Value}
+            $baseline=@{schema=$snapshot.schema;vmId=$snapshot.vmId;mode=$snapshot.mode;status=$snapshot.status;
+                testOnly=$snapshot.testOnly;utc=$snapshot.utc;eventRecordId=$snapshot.eventRecordId;session=$savedSession}
+            $powerLog=Get-OutputPath 'hibernate-powercfg.log';Assert-TrustedGuestAcl $powerLog
+            if($snapshot.powercfgSha256 -cnotmatch '^[0-9a-f]{64}$' -or
+               (Get-FileHash -LiteralPath $powerLog -Algorithm SHA256).Hash.ToLowerInvariant() -cne $snapshot.powercfgSha256){throw 'Original hibernate capability evidence changed.'}
+            $result.session=Get-HibernateSessionEvidence
+            $result.events=@(Get-HibernateEvents $snapshot)
+            $result.resume=Get-HibernateResumeDecision $baseline $result.session $result.events $VmId.ToString('D') ([DateTime]::UtcNow.ToString('o'))
+            $result.resumeVerified=$result.resume.resumeVerified
+            if(!$result.resumeVerified){Write-Report 'hibernate.json' $result;break}
+            $device=Assert-OneSesDevice
+            if($device.ConfigManagerErrorCode -ne 0 -or $device.DeviceID -cne $snapshot.device.instanceId -or
+               $device.Service -cne $snapshot.device.service){throw 'Original microphone device was not healthy after S4 resume.'}
+            $jsonPath=Get-OutputPath 'hibernate-capture.json'
+            if(Test-Path -LiteralPath $jsonPath){Remove-Item -LiteralPath $jsonPath}
+            Assert-Inventory $manifest @('driver-vm-acceptance.ps1','ses_driver_capture_lab_tests.exe') $acceptanceRoot
+            $result.process=Invoke-BoundedTool (Join-Path $acceptanceRoot 'ses_driver_capture_lab_tests.exe') @('--isolated-lab','--json-report',$jsonPath) 'hibernate-capture.log' 180
+            Assert-TrustedGuestAcl $jsonPath
+            $result.capture=Read-BoundedJson $jsonPath $acceptanceRoot 1MB
+            $capture=$result.capture
+            if($result.process.exitCode -eq 0 -and !$result.process.timedOut -and !$result.process.outputLimited -and
+               $capture.schema -eq 1 -and $capture.checks -gt 0 -and $capture.failures -eq 0 -and $capture.unsupported -eq 0 -and
+               $capture.verified_endpoints -eq 1 -and $capture.formats_passed -eq 2 -and $capture.self_tests -eq 0){$result.status='Passed'}
+            Write-Report 'hibernate.json' $result
         }
         'Shutdown' {
             $result=New-Result 'Requested';$result.shutdownConfirmed=$false

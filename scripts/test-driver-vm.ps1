@@ -448,6 +448,190 @@ try{
         Check ($registryResults.Count -eq 9) 'mocked WinPS registry ACL fixture inventory complete'
         foreach($registryResult in $registryResults){Check $registryResult.passed $registryResult.name}
     }finally{$registryRunspace.Dispose()}
+    # Only isolated helper ASTs and the extracted prepare clause execute here.
+    # Guest/host power tools, CIM, event log access and COM1 are inert mocks.
+    $hibernateHelpers=@('ConvertFrom-HibernateEventXml','Get-HibernateResumeDecision','Get-HibernateEvents','Write-FirstHibernateSnapshot')
+    $hibernateSource=($hibernateHelpers | ForEach-Object {
+        $wanted=$_
+        $definition=$guestAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $wanted},$true)
+        if(!$definition){throw ('Missing hibernate helper '+$wanted)};$definition.Extent.Text
+    }) -join "`r`n"
+    $hibernateClause=@($modeSwitch.Clauses | Where-Object {$_.Item1.Value -ceq 'HibernatePrepare'})[0].Item2.Extent.Text
+    $hibernateBody=$hibernateClause.Substring(1,$hibernateClause.Length-2)
+    $hibernateVerifyClause=@($modeSwitch.Clauses | Where-Object {$_.Item1.Value -ceq 'HibernateVerify'})[0].Item2.Extent.Text
+    $hibernateVerifyBody=$hibernateVerifyClause.Substring(1,$hibernateVerifyClause.Length-2)
+    $hibernateRunspace=[PowerShell]::Create()
+    try{
+        $null=$hibernateRunspace.AddScript({param($source,$body,$verifyBody,$fixtureDirectory)
+            $ErrorActionPreference='Stop';Set-StrictMode -Version 2.0
+            . ([ScriptBlock]::Create($source))
+            function Emit([bool]$Passed,[string]$Name){[pscustomobject]@{passed=$Passed;name=('hibernate '+$Name)}}
+            $vmId='11111111-2222-3333-4444-555555555555'
+            function New-Session {
+                return @{bootUtc='2026-10-09T07:00:00.0000000Z';userSid='S-1-5-21-1-2-3-500';logonSid='S-1-5-5-0-100';sessionId=1}
+            }
+            function New-Baseline {
+                return @{schema=1;vmId=$vmId;mode='HibernatePrepare';status='Snapshot';testOnly=$true;
+                    utc='2026-10-09T08:00:00.0000000Z';eventRecordId=[long]100;session=(New-Session)}
+            }
+            function New-EventXml([string]$Provider,[int]$Id,[long]$Record,[string]$Utc,[string]$Data){
+                return '<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><Provider Name="'+$Provider+'"/><EventID>'+$Id+'</EventID><TimeCreated SystemTime="'+$Utc+'"/><EventRecordID>'+$Record+'</EventRecordID></System><EventData>'+$Data+'</EventData></Event>'
+            }
+            function New-Events {
+                $states='<Data Name="TargetState">5</Data><Data Name="EffectiveState">5</Data>'
+                return @(
+                    (ConvertFrom-HibernateEventXml (New-EventXml 'Microsoft-Windows-Kernel-Power' 42 101 '2026-10-09T08:00:05.0000000Z' $states)),
+                    (ConvertFrom-HibernateEventXml (New-EventXml 'Microsoft-Windows-Power-Troubleshooter' 1 102 '2026-10-09T08:02:01.0000000Z' ($states+'<Data Name="SleepTime">2026-10-09T08:00:05.0000000Z</Data><Data Name="WakeTime">2026-10-09T08:02:00.0000000Z</Data>')))
+                )
+            }
+            $now='2026-10-09T08:03:00.0000000Z'
+            $baseline=New-Baseline;$session=New-Session;$events=New-Events
+            $decision=Get-HibernateResumeDecision $baseline $session $events $vmId $now
+            Emit ($decision.status -ceq 'Passed' -and $decision.resumeVerified -and $decision.sleepRecordId -eq 101 -and $decision.wakeRecordId -eq 102) 'paired S4 XML and original session accepted'
+            Emit ((Get-HibernateResumeDecision $baseline $session @($events[1],$events[0]) $vmId $now).resumeVerified) 'reverse query order still uses record order'
+            Emit (!(Get-HibernateResumeDecision $null $session $events $vmId $now).resumeVerified) 'missing snapshot rejected'
+            Emit (!(Get-HibernateResumeDecision $baseline $session @() $vmId $now).resumeVerified) 'request success without events cannot pass'
+            foreach($field in @('bootUtc','userSid','logonSid','sessionId')){
+                $changed=New-Session;$changed[$field]=if($field -ceq 'sessionId'){2}else{'changed'}
+                Emit (!(Get-HibernateResumeDecision $baseline $changed $events $vmId $now).resumeVerified) ('continuity mismatch rejected '+$field)
+            }
+            foreach($case in @(
+                @{field='vmId';value='foreign'},@{field='schema';value=2},@{field='mode';value='Capture'},
+                @{field='status';value='Requested'},@{field='testOnly';value='true'},@{field='eventRecordId';value='100'},
+                @{field='eventRecordId';value=0},@{field='utc';value='malformed'},@{field='utc';value='2026-10-07T08:00:00.0000000Z'}
+            )){
+                $changed=New-Baseline;$changed[$case.field]=$case.value
+                Emit (!(Get-HibernateResumeDecision $changed $session $events $vmId $now).resumeVerified) ('snapshot field rejected '+$case.field+'='+$case.value)
+            }
+            foreach($case in @(
+                @{provider='Microsoft-Windows-Kernel-General';id=12},@{provider='Microsoft-Windows-Kernel-Power';id=41},
+                @{provider='Microsoft-Windows-WER-SystemErrorReporting';id=1001},@{provider='Microsoft-Windows-Eventlog';id=104}
+            )){
+                $extra=ConvertFrom-HibernateEventXml (New-EventXml $case.provider $case.id 103 '2026-10-09T08:02:02.0000000Z' '')
+                Emit (!(Get-HibernateResumeDecision $baseline $session @($events[0],$events[1],$extra) $vmId $now).resumeVerified) ('boot crash or log-clear rejected '+$case.provider+'/'+$case.id)
+            }
+            foreach($index in @(0,1)){
+                foreach($field in @('TargetState','EffectiveState')){
+                    $changed=New-Events;$changed[$index].data[$field]='4'
+                    Emit (!(Get-HibernateResumeDecision $baseline $session $changed $vmId $now).resumeVerified) ('S3 or fast-startup state rejected event='+$index+' field='+$field)
+                }
+            }
+            foreach($case in @(
+                @{index=0;field='recordId';value=[long]100},@{index=0;field='recordId';value=[long]103},
+                @{index=1;field='recordId';value=[long]101},@{index=0;field='utc';value='2026-10-09T07:59:59.0000000Z'},
+                @{index=1;field='utc';value='2026-10-09T08:04:00.0000000Z'}
+            )){
+                $changed=New-Events;$changed[$case.index][$case.field]=$case.value
+                Emit (!(Get-HibernateResumeDecision $baseline $session $changed $vmId $now).resumeVerified) ('stale future duplicate or inverted record rejected '+$case.index+'/'+$case.field+'/'+$case.value)
+            }
+            foreach($case in @(
+                @{field='SleepTime';value='2026-10-09T07:59:59.0000000Z'},@{field='SleepTime';value='2026-10-09T08:01:00.0000000Z'},
+                @{field='WakeTime';value='2026-10-09T08:00:04.0000000Z'},@{field='WakeTime';value='2026-10-09T08:04:00.0000000Z'},
+                @{field='WakeTime';value='malformed'}
+            )){
+                $changed=New-Events;$changed[1].data[$case.field]=$case.value
+                Emit (!(Get-HibernateResumeDecision $baseline $session $changed $vmId $now).resumeVerified) ('unpaired timestamp rejected '+$case.field+'/'+$case.value)
+            }
+            $changed=New-Events;$changed[1].utc='2026-10-09T08:02:10.0000000Z';$changed[1].data.WakeTime='2026-10-09T08:00:06.0000000Z'
+            Emit (!(Get-HibernateResumeDecision $baseline $session $changed $vmId $now).resumeVerified) 'wake reporting delay over 120 seconds rejected'
+            Emit (!(Get-HibernateResumeDecision $baseline $session @($events[0]) $vmId $now).resumeVerified) 'sleep-only evidence rejected'
+            Emit (!(Get-HibernateResumeDecision $baseline $session @($events[1]) $vmId $now).resumeVerified) 'wake-only evidence rejected'
+            Emit (!(Get-HibernateResumeDecision $baseline $session @($events[0],$events[1],$events[1]) $vmId $now).resumeVerified) 'ambiguous repeated wake rejected'
+            Emit (!(Get-HibernateResumeDecision $baseline $session (@($events[0]) * 128) $vmId $now).resumeVerified) '128 event bound rejects incomplete evidence'
+            Emit (!(Get-HibernateResumeDecision $baseline $session $events $vmId 'malformed').resumeVerified) 'invalid verification timestamp rejected'
+            $validXml=New-EventXml 'Microsoft-Windows-Kernel-Power' 42 101 '2026-10-09T08:00:05.0000000Z' '<Data Name="TargetState">5</Data>'
+            foreach($text in @('broken XML',('x'*65537),($validXml.Replace('</EventData>','<Data Name="TargetState">5</Data></EventData>')),
+                ($validXml.Replace('Microsoft-Windows-Kernel-Power','Foreign-Provider')),($validXml.Replace('<EventRecordID>101</EventRecordID>','<EventRecordID>-1</EventRecordID>')),
+                ('<!DOCTYPE Event [<!ENTITY unsafe "unsafe">]>'+$validXml))){
+                $rejected=$false;try{ConvertFrom-HibernateEventXml $text | Out-Null}catch{$rejected=$true}
+                Emit $rejected 'malformed oversized duplicate foreign negative or DTD XML rejected'
+            }
+            function Get-WinEvent {param($FilterHashtable,$MaxEvents,$ErrorAction)
+                if($MaxEvents -ne 128 -or $FilterHashtable.LogName -cne 'System' -or
+                    $FilterHashtable.ProviderName -notcontains 'Microsoft-Windows-Power-Troubleshooter'){throw 'Unbounded event request.'}
+                return $script:mockEvents
+            }
+            $script:mockEvents=@();Emit (@(Get-HibernateEvents ([pscustomobject](New-Baseline))).Count -eq 0) 'bounded query accepts no evidence without pretending success'
+            $script:mockEvents=@([pscustomobject]@{})*128
+            $rejected=$false;try{Get-HibernateEvents ([pscustomobject](New-Baseline)) | Out-Null}catch{$rejected=$true}
+            Emit $rejected 'event query cap rejected before XML conversion'
+            function Get-OutputPath {param($Name) return $Name}
+            function Test-Path {param($LiteralPath)
+                if($LiteralPath -ceq 'hibernate-snapshot.json'){return $script:existsSnapshot};return $script:existsLog
+            }
+            function New-Result {throw 'Fresh hibernate baseline reached read stage.'}
+            function Assert-OneSesDevice {throw 'Retry must not read devices.'}
+            function Invoke-BoundedTool {throw 'No power tool may execute in inert fixtures.'}
+            foreach($case in @(@{snapshot=$true;log=$false},@{snapshot=$false;log=$true},@{snapshot=$true;log=$true},@{snapshot=$false;log=$false})){
+                $script:existsSnapshot=$case.snapshot;$script:existsLog=$case.log
+                $message='';try{& ([ScriptBlock]::Create($body))}catch{$message=$_.Exception.Message}
+                $expected=if($case.snapshot -or $case.log){'Preserving the first hibernate baseline:*'}else{'Fresh hibernate baseline reached read stage.'}
+                Emit ($message -like $expected) ('inert prepare guard snapshot='+$case.snapshot+' log='+$case.log)
+            }
+            function Get-OutputPath {param($Name) return (Join-Path $fixtureDirectory $Name)}
+            function Assert-TrustedGuestAcl {param($Path)}
+            function Write-Serial {param($Tag,$Value)}
+            $first=New-Baseline;Write-FirstHibernateSnapshot $first
+            $path=Join-Path $fixtureDirectory 'hibernate-snapshot.json';$original=[IO.File]::ReadAllBytes($path)
+            $rejected=$false;try{Write-FirstHibernateSnapshot @{replacement=$true}}catch{$rejected=$true}
+            Emit ($rejected -and [Convert]::ToBase64String($original) -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($path))) 'atomic CreateNew preserves original baseline on retry'
+            # Extracted verify mode with only inert inputs validates wiring:
+            # no resume proof means no capture; proof alone cannot pass capture.
+            $VmId=[Guid]$vmId;$system32='C:\inert-system32';$acceptanceRoot='C:\inert-acceptance';$manifest=@{}
+            $script:mockFailure=''
+            function New-Result {param($Status) return [ordered]@{status=$Status}}
+            function Get-OutputPath {param($Name) return $Name}
+            function Test-Path {param($LiteralPath) return $false}
+            function Assert-TrustedGuestAcl {param($Path)
+                if($script:mockFailure -ceq 'acl' -and $Path -ceq 'hibernate-snapshot.json'){throw 'inert snapshot ACL failure'}
+            }
+            function Get-FileHash {param($LiteralPath,$Algorithm)
+                $hash=if($script:mockFailure -ceq 'hash'){'b'*64}else{'a'*64};return [pscustomobject]@{Hash=$hash}
+            }
+            function Get-HibernateSessionEvidence {return (New-Session)}
+            function Get-HibernateEvents {param($Snapshot)
+                if($script:mockFailure -ceq 'eventquery'){throw 'inert event query failure'};return @()
+            }
+            function Get-HibernateResumeDecision {param($Snapshot,$Session,$Events,$ExpectedVmId,$NowUtc) return @{resumeVerified=$script:mockResume;status='Findings'}}
+            function Assert-OneSesDevice {return [pscustomobject]@{ConfigManagerErrorCode=0;DeviceID='ROOT\MEDIA\0000';Service='SesMicrophone'}}
+            function Assert-Inventory {param($Manifest,$Names,$Root)}
+            function Invoke-BoundedTool {param($Executable,$Arguments,$LogName,$DeadlineSeconds)
+                if($Executable -notlike '*ses_driver_capture_lab_tests.exe' -or $LogName -cne 'hibernate-capture.log'){throw 'Only inert capture is permitted.'}
+                $script:captureCalls++;return @{exitCode=0;timedOut=$false;outputLimited=$false}
+            }
+            function Read-BoundedJson {param($Path,$Within,$Limit)
+                if($Path -ceq 'hibernate-snapshot.json'){
+                    if($script:mockFailure -ceq 'snapshot'){throw 'inert snapshot parsing failure'}
+                    $saved=New-Baseline;$saved.session=[pscustomobject]$saved.session;$saved.powercfgSha256=('a'*64)
+                    $saved.device=@{instanceId='ROOT\MEDIA\0000';service='SesMicrophone'};return [pscustomobject]$saved
+                }
+                if($script:mockFailure -ceq 'capturejson'){throw 'inert missing capture JSON'}
+                return @{schema=1;checks=30;failures=0;unsupported=0;verified_endpoints=1;formats_passed=2;self_tests=$script:mockSelfTests}
+            }
+            function Write-Report {param($Name,$Value)
+                $script:reportWrites++;$script:lastReport=[ordered]@{status=$Value.status;resumeVerified=$Value.resumeVerified}
+            }
+            foreach($case in @(@{resume=$false;selfTests=0;calls=0;status='Findings'},@{resume=$true;selfTests=0;calls=1;status='Passed'},@{resume=$true;selfTests=1;calls=1;status='Findings'})){
+                $script:mockResume=$case.resume;$script:mockSelfTests=$case.selfTests;$script:captureCalls=0;$script:lastReport=$null;$script:reportWrites=0
+                & ([ScriptBlock]::Create("switch ('fixture') { 'fixture' {"+$verifyBody+"} }"))
+                Emit ($script:captureCalls -eq $case.calls -and $script:lastReport.status -ceq $case.status) ('inert verify wiring resume='+$case.resume+' captureSelfTests='+$case.selfTests)
+            }
+            foreach($failure in @('snapshot','acl','hash','eventquery','capturejson')){
+                $script:mockFailure=$failure;$script:mockResume=$true;$script:mockSelfTests=0;$script:captureCalls=0;$script:reportWrites=0
+                $script:lastReport=[ordered]@{status='Passed';resumeVerified=$true};$message=''
+                try{& ([ScriptBlock]::Create("switch ('fixture') { 'fixture' {"+$verifyBody+"} }"))}catch{$message=$_.Exception.Message}
+                $expected=@{snapshot='inert snapshot parsing failure';acl='inert snapshot ACL failure';
+                    hash='Original hibernate capability evidence changed.';eventquery='inert event query failure';capturejson='inert missing capture JSON'}[$failure]
+                $expectedCalls=if($failure -ceq 'capturejson'){1}else{0}
+                Emit ($message -ceq $expected -and $script:reportWrites -eq 1 -and $script:lastReport.status -ceq 'Findings' -and
+                    !$script:lastReport.resumeVerified -and $script:captureCalls -eq $expectedCalls) ('repeat failure resets prior Passed and propagates '+$failure)
+            }
+        }).AddArgument($hibernateSource).AddArgument($hibernateBody).AddArgument($hibernateVerifyBody).AddArgument($fixture)
+        $hibernateResults=@($hibernateRunspace.Invoke())
+        if($hibernateRunspace.Streams.Error.Count -gt 0){throw ('Inert hibernate fixtures failed: '+($hibernateRunspace.Streams.Error | Out-String))}
+        Check ($hibernateResults.Count -eq 62) 'inert hibernate regression fixture inventory complete'
+        foreach($hibernateResult in $hibernateResults){Check $hibernateResult.passed $hibernateResult.name}
+    }finally{$hibernateRunspace.Dispose()}
     Reject {Assert-VmAcceptanceSeed $acceptanceSeed ([Guid]::NewGuid().ToString('D'))} 'acceptance seed for foreign VM rejected'
     [IO.File]::AppendAllText((Join-Path $acceptance 'ses_driver_capture_lab_tests.exe'),'tamper')
     Reject {Assert-VmAcceptanceSeed $acceptanceSeed $identity.id} 'tampered acceptance executable rejected'

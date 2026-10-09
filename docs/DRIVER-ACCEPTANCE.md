@@ -73,8 +73,27 @@ $runner = 'C:\VeyloAcceptance\driver-vm-acceptance.ps1'
   ayrıca doğrulanmalıdır.
 - **RemoveReinstall:** Tam aygıt instance'ını kaldırır, yokluğunu doğrular ve aynı
   doğrulanmış INF'yi yeniden kurar. Farklı sürüme güncelleme/geri alma testi değildir.
+- **HibernatePrepare / HibernateVerify:** Yalnız guest'te iki aşamalı S4 testi.
+  Hazırlık ilk korumalı baseline'ı kaydeder ve `shutdown /h` ister; güç ayarlarını
+  değiştirmez. `Prepared` veya `Requested` sonucu kabul değildir. Aynı sahipli
+  sanal diski tekrar başlatıp ilk kullanıcı oturumunda doğrulama çalıştırılır.
+  Aynı Windows açılışı ve logon oturumu, eşleşen gerçek S4 giriş/uyanma olayları,
+  sağlıklı aynı aygıt ve yeniden yapılan PCM16/PCM32 capture testi birlikte
+  gereklidir. Soğuk açılış, yeni logon, temizlenmiş olay logu veya yalnızca komutun
+  başarılı dönmesi geçiş sağlamaz; eksik platform kanıtı `Findings` olur.
 - **Shutdown:** Yalnız kimliği doğrulanmış guest'in kapanmasını ister. Sürecin
   gerçekten sonlandığını host kontrolüyle ayrıca doğrula.
+
+```powershell
+& $runner -VmId $id -Mode HibernatePrepare
+# Guest durduktan sonra host'ta aynı diski -BootInstalled ile başlat.
+# Guest'in ilk kullanıcı oturumuna dön, ardından:
+& $runner -VmId $id -Mode HibernateVerify
+```
+
+İlk hibernate baseline'ı yeniden hazırlayarak üzerine yazma. Bir tekrar için
+önceki kanıtı koruyan ayrı sahipli laboratuvar/snapshot kullan. Uyku komutu
+desteklenmiyorsa bu araç host veya guest güç politikasını otomatik değiştirmez.
 
 Raporlar `C:\VeyloAcceptance` altındadır; sonuç ve heartbeat COM1 üzerinden VM'nin
 `serial.log` dosyasına gider. Yeni açılış seri logu yenileyebildiğinden sonuçları

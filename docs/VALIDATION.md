@@ -1,7 +1,7 @@
 # Driver acceptance tools / source checkpoint — 2026-10-09
 
 Passed: six native and six AddressSanitizer groups; 44 offline capture checks,
-181 safe VM-control/guest-decision checks, 110 managed checks, offline WPF
+244 safe VM-control/guest-decision checks, 110 managed checks, offline WPF
 persistence/shutdown/smoke, 18 driver-helper checks in a separate output directory,
 and existing package/signing checks. The combined headless command stopped on a
 pre-existing locked helper DLL; its remaining helper and UI checks passed using
@@ -23,6 +23,13 @@ fresh silence on two lifecycle changes and waveform recovery after reconnect.
 One underrun during the intentional producer pause is explicitly retained.
 These are synthetic signals through the actual guest kernel; two receiving
 applications, physical microphone processing and latency are not established.
+
+Passed: after the host reboot, a normal non-elevated guest PowerShell token
+reported ELEVATED=False. The checksum-matched capture executable ran as that
+interactive user and returned zero: 20 checks, zero findings/unsupported formats,
+one verified endpoint and both PCM16/PCM32 formats passed. This verifies the
+interactive user's kernel producer/capture access, not the full WPF microphone
+route or application compatibility. No device ACL or host permission was changed.
 
 Findings retained: the first requested hour stopped at six seconds with one
 steady underrun and 28 ms producer lateness. The test had produced and drained
@@ -58,7 +65,15 @@ Findings fixed: fresh elevated Windows-2022 CI initially rejected newly created
 inert fixture files whose default owner was Administrators. Fixtures now set their
 owner to the current user SID, matching the existing metadata fixture pattern;
 production ACL guards and guest code are unchanged. Local 149 checks and both
-independent reviews passed; the subsequent CI result must be recorded separately.
+independent reviews passed. Full GitHub CI passed for df9aee2 and fe8590a; the
+latest UEFI source checkpoint also passed all 181 safe VM fixtures locally.
+
+Incomplete: the subsequent hour attempt last recorded a heartbeat at 3,491
+seconds and did not publish a terminal acceptance result. The daily host later
+rebooted (current LastBootUpTime 2026-10-09T11:21:57Z); its former QEMU and
+supervisor processes no longer existed. The serial record was preserved before
+restarting the guest. This is not a completed hour or a demonstrated driver
+bugcheck. A new uninterrupted run is still required.
 
 Findings: guest HVCI configuration persisted the five requested registry values
 and both BCD launch settings, with its first baseline preserved. The subsequent
@@ -77,7 +92,20 @@ mutable NVRAM paths, with pinned firmware hashes verified against selective
 extraction from the checksum-pinned QEMU installer. BIOS remains default; three
 existing BIOS metadata records passed read-only compatibility checks. Inert
 expansion of the actual unattended XML verified EFI300/MSR16/Windows partition3
-and unchanged BIOS layout. Real UEFI boot/HVCI is not established by these tests.
+and unchanged BIOS layout. The new UEFI guest subsequently installed Windows
+and reached the identity-checked pre-driver preparation phase. Its before-driver
+disk snapshot was created after both owned processes stopped. The DVD boot needed
+the installation media's key prompt; choosing the DVD and immediately sending
+Space reached the installer without firmware or host policy changes. Real HVCI
+remains unverified; UEFI boot alone is not its proof.
+
+Passed: the new two-stage hibernate runner's 62 inert fixtures also passed under
+Windows PowerShell 5.1. It requires the original boot/logon/session, paired real
+S4 events, healthy original device and post-resume PCM16/PCM32 capture. Both
+independent read-only reviews passed after fixing a P2 stale-success report:
+verification now invalidates the previous result before attempt-specific reads.
+Five regression fixtures retain Findings when snapshot/ACL/hash/event/capture
+reads throw. Real S4 acceptance has not yet been established.
 
 Not run/completed at this source checkpoint: one-hour acceptance, active HVCI
 capture, supported sleep/hibernate recovery, different-version upgrade/rollback,
@@ -91,7 +119,9 @@ remains false; the daily host security settings and saved user state are preserv
 
 Evidence: artifacts/driver-acceptance/{capture-ci-60-dedicated-producer-serial.log,
 capture-hour-ci-first-failed-serial.log,activation-verifier-sleep-serial.log,
-vm-fixtures-uefi-final.log,native-tests-final.log,asan-final-tests.log,
+vm-fixtures-uefi-final.log,vm-fixtures-hibernate-reviewed.log,
+standard-user-pcm-capture-serial.log,capture-hour-host-reboot-incomplete-serial.log,
+uefi-pre-driver-serial.log,ci-fe8590a-passed.log,native-tests-final.log,asan-final-tests.log,
 security-final.log,core-after-timer.log,hvci-configured-and-registry-serial.log,
 hvci-boot-lock.png,recovered-desktop.png}. See [DRIVER-ACCEPTANCE.md](DRIVER-ACCEPTANCE.md).
 
