@@ -41,6 +41,28 @@ struct ExtendedClientEvidence {
     uint64_t packets=0, frames=0, discontinuities=0, timestampErrors=0, gaps=0;
     unsigned windows[3]{}, silenceChecks=0, reconnects=0;
 };
+struct ProducerStatusObservation {
+    uint64_t sample=0,elapsed100ns=0,due100ns=0,lateness100ns=0,statusDuration100ns=0;
+    uint64_t lastWriteGap100ns=0,sinceWrite100ns=0,received=0,silence=0;
+    uint32_t queued=0,underruns=0,overruns=0;
+    int32_t drift=0;
+    unsigned phase=0;
+    bool steady=false;
+};
+// Retain the failure-near history without allocating or logging on the audio worker.
+// Readers receive this storage through the existing publication snapshot.
+struct ProducerStatusHistory {
+    static constexpr size_t capacity=64;
+    std::array<ProducerStatusObservation,capacity> observations{};
+    size_t count=0,next=0;
+    void append(const ProducerStatusObservation& observation) {
+        observations[next]=observation;next=(next+1)%capacity;
+        if(count<capacity)++count;
+    }
+    const ProducerStatusObservation& oldest(size_t index)const {
+        return observations[(next+capacity-count+index)%capacity];
+    }
+};
 struct ExtendedEvidence {
     bool requested=false, ran=false;
     unsigned requestedSeconds=0;
@@ -51,6 +73,7 @@ struct ExtendedEvidence {
     unsigned statusSamples=0, producerReconnects=0;
     uint64_t driverReceivedFrames=0, driverSilenceFrames=0;
     uint32_t driverUnderruns=0, driverOverruns=0, steadyUnderruns=0;
+    ProducerStatusHistory statusHistory;
     ExtendedClientEvidence clients[2];
 };
 struct Report {
@@ -98,7 +121,22 @@ struct Report {
                 static_cast<unsigned long long>(c.discontinuities),static_cast<unsigned long long>(c.timestampErrors),
                 static_cast<unsigned long long>(c.gaps),c.windows[0],c.windows[1],c.windows[2],c.silenceChecks,c.reconnects)>0&&ok;
         }
-        ok=std::fprintf(file,"]}}\n")>0&&ok;
+        ok=std::fprintf(file,"],\"producer_status_history\":{\"capacity\":%zu,\"count\":%zu,"
+            "\"time_origin\":\"producer_measured_QPC_begin\",\"observations\":[",
+            ProducerStatusHistory::capacity,e.statusHistory.count)>0&&ok;
+        for(size_t i=0;i<e.statusHistory.count;++i) {
+            const auto& o=e.statusHistory.oldest(i);
+            ok=std::fprintf(file,"%s{\"sample\":%llu,\"elapsed_us\":%llu,\"due_us\":%llu,\"lateness_us\":%llu,"
+                "\"status_duration_us\":%llu,\"last_write_completion_gap_us\":%llu,\"since_last_write_completion_us\":%llu,"
+                "\"phase\":%u,\"steady\":%s,\"queued_frames\":%u,\"drift_ppm\":%d,"
+                "\"driver_received_frames\":%llu,\"driver_silence_frames\":%llu,\"driver_underruns\":%u,\"driver_overruns\":%u}",
+                i?",":"",static_cast<unsigned long long>(o.sample),static_cast<unsigned long long>(o.elapsed100ns/10),
+                static_cast<unsigned long long>(o.due100ns/10),static_cast<unsigned long long>(o.lateness100ns/10),
+                static_cast<unsigned long long>(o.statusDuration100ns/10),static_cast<unsigned long long>(o.lastWriteGap100ns/10),
+                static_cast<unsigned long long>(o.sinceWrite100ns/10),o.phase,o.steady?"true":"false",o.queued,o.drift,
+                static_cast<unsigned long long>(o.received),static_cast<unsigned long long>(o.silence),o.underruns,o.overruns)>0&&ok;
+        }
+        ok=std::fprintf(file,"]}}}\n")>0&&ok;
         return std::fclose(file)==0&&ok;
     }
 };
@@ -631,7 +669,7 @@ struct ExtendedProducer {
         ProducerPublication state{};auto& e=state.evidence;
         Handle driver,timer;MmcssAudio mmcss;e.mmcss=mmcss.ready;
         SesDriverStatus status{},baseline{},previous{};DWORD bytes=0;
-        uint64_t sequence=0,lastCompletion=0;bool haveSteadyStatus=false;
+        uint64_t sequence=0,lastCompletion=0,lastWriteGap=0;bool haveSteadyStatus=false;
         std::array<std::array<int32_t,SES_DRIVER_FRAMES>,4> pcm{};
         for(unsigned p=0;p<4;++p)for(unsigned i=0;i<SES_DRIVER_FRAMES;++i)pcm[p][i]=pcm32(p*SES_DRIVER_FRAMES+i);
         auto call=[&](DWORD code,void* input,DWORD inputBytes,void* output,DWORD outputBytes) {
@@ -651,16 +689,30 @@ struct ExtendedProducer {
             std::memcpy(packet.pcm,pcm[sequence%4].data(),sizeof(packet.pcm));
             if(e.writes>=seconds*100ULL+16||!call(SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0))return false;
             const uint64_t completed=qpc100ns();
-            if(measureGap&&lastCompletion)e.maxWriteGap100ns=std::max(e.maxWriteGap100ns,completed-lastCompletion);
+            lastWriteGap=measureGap&&lastCompletion?completed-lastCompletion:0;
+            if(measureGap&&lastCompletion)e.maxWriteGap100ns=std::max(e.maxWriteGap100ns,lastWriteGap);
             lastCompletion=completed;++sequence;++e.writes;return true;
         };
-        auto readStatus=[&](bool steady) {
+        auto readStatus=[&](bool steady,uint64_t began,uint64_t due,unsigned phase) {
+            const uint64_t started=qpc100ns();
             if(!call(SES_IOCTL_STATUS,nullptr,0,&status,sizeof(status))||!statusValid(status,bytes)||status.connected!=1||
                 status.received_frames<previous.received_frames||status.silence_frames<previous.silence_frames||
                 status.underruns<previous.underruns||status.overruns<previous.overruns)return false;
             ++e.statusSamples;e.driverReceivedFrames=status.received_frames-baseline.received_frames;
             e.driverSilenceFrames=status.silence_frames-baseline.silence_frames;
             e.driverUnderruns=status.underruns-baseline.underruns;e.driverOverruns=status.overruns-baseline.overruns;
+            const uint64_t completed=qpc100ns();
+            ProducerStatusObservation observation{};
+            observation.sample=e.statusSamples;observation.elapsed100ns=completed>=began?completed-began:0;
+            observation.due100ns=due>=began?due-began:0;observation.lateness100ns=started>=due?started-due:0;
+            observation.statusDuration100ns=completed>=started?completed-started:0;
+            observation.lastWriteGap100ns=lastWriteGap;
+            observation.sinceWrite100ns=lastCompletion&&completed>=lastCompletion?completed-lastCompletion:0;
+            observation.phase=phase;observation.steady=steady;observation.queued=status.queued_frames;
+            observation.drift=status.drift_ppm;observation.received=e.driverReceivedFrames;observation.silence=e.driverSilenceFrames;
+            observation.underruns=e.driverUnderruns;observation.overruns=e.driverOverruns;
+            // Append before the counter gate, so the rejected observation survives fail().
+            e.statusHistory.append(observation);
             if(steady) {
                 e.minimumQueuedSteady=std::min(e.minimumQueuedSteady,status.queued_frames);
                 if(haveSteadyStatus)e.steadyUnderruns+=status.underruns-previous.underruns;
@@ -687,12 +739,12 @@ struct ExtendedProducer {
                     // deadline, including time spent reading its final status.
                     if(schedule.schedulerExpired(now)){fail("producer scheduler exceeds existing 50 ms deadline before lifecycle");break;}
                     if(schedule.pauseAllowed(now)) {
-                        if(!readStatus(true)){fail("driver counters before lifecycle change");break;}
+                        if(!readStatus(true,schedule.began,schedule.nextWrite,schedule.phase)){fail("driver counters before lifecycle change");break;}
                         now=qpc100ns();
                         if(now>=schedule.nextWrite)e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
                         if(schedule.schedulerExpired(now)){fail("producer lifecycle STATUS consumes existing 50 ms scheduler deadline");break;}
                         if(schedule.phase==2)driver.close();
-                        schedule.pause(qpc100ns());haveSteadyStatus=false;lastCompletion=0;
+                        schedule.pause(qpc100ns());haveSteadyStatus=false;lastCompletion=0;lastWriteGap=0;
                         state.phase=schedule.phase;state.phaseEpoch=schedule.phaseEpoch;publish(state);
                     }
                     now=qpc100ns();
@@ -711,7 +763,7 @@ struct ExtendedProducer {
                     if(!schedule.paused()&&now>=schedule.nextWrite) {
                         e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
                         if(schedule.schedulerExpired(now)){fail("producer scheduler exceeds existing 50 ms deadline");break;}
-                        if(!readStatus(now-schedule.phaseEpoch>=2500000)){fail("periodic driver counters, overruns or steady underruns");break;}
+                        if(!readStatus(now-schedule.phaseEpoch>=2500000,schedule.began,schedule.nextWrite,schedule.phase)){fail("periodic driver counters, overruns or steady underruns");break;}
                         // STATUS itself can consume the deadline; check again
                         // immediately before the write instead of hiding it.
                         now=qpc100ns();e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
@@ -728,7 +780,8 @@ struct ExtendedProducer {
                         }
                     }
                 }
-                if(!state.failure&&driver.h!=INVALID_HANDLE_VALUE&&!readStatus(!schedule.paused()&&qpc100ns()-schedule.phaseEpoch>=2500000))
+                if(!state.failure&&driver.h!=INVALID_HANDLE_VALUE&&!readStatus(!schedule.paused()&&qpc100ns()-schedule.phaseEpoch>=2500000,
+                    schedule.began,schedule.nextWrite,schedule.phase))
                     fail("final driver counters, overruns or steady underruns");
             }
         }
@@ -909,6 +962,32 @@ bool parseOptions(int argc,char** argv,Options& options) {
 }
 void extendedSelfTest(Report& r) {
     auto check=[&](bool ok,const char* label){++r.selfTests;r.check(ok,label);};
+    ProducerStatusHistory history;
+    check(history.count==0&&history.next==0&&history.observations.size()==64,
+        "producer telemetry starts empty with exactly 64 fixed observations");
+    for(uint64_t sample=1;sample<=80;++sample) {
+        ProducerStatusObservation observation{};
+        observation.sample=sample;observation.elapsed100ns=sample*100000;
+        observation.due100ns=sample*100000-1;observation.queued=static_cast<uint32_t>(sample);
+        observation.drift=-static_cast<int32_t>(sample);observation.received=sample*480;
+        observation.silence=sample==80?22:0;observation.underruns=sample==80?1:0;
+        history.append(observation);
+    }
+    bool chronological=history.count==64&&history.next==16;
+    for(size_t i=0;i<history.count;++i) {
+        const auto& observation=history.oldest(i);
+        chronological=chronological&&observation.sample==i+17&&observation.elapsed100ns==(i+17)*100000&&
+            observation.queued==i+17&&observation.drift==-static_cast<int32_t>(i+17)&&observation.received==(i+17)*480;
+    }
+    check(chronological,"producer telemetry wraps in bounded storage and retains chronological field values");
+    ProducerPublication telemetrySnapshot{};telemetrySnapshot.evidence.statusHistory=history;
+    const auto& failureObservation=telemetrySnapshot.evidence.statusHistory.oldest(63);
+    check(failureObservation.sample==80&&failureObservation.silence==22&&failureObservation.underruns==1,
+        "producer publication retains the final counter-failure observation");
+    ProducerStatusObservation nextObservation{};nextObservation.sample=81;history.append(nextObservation);
+    check(history.count==64&&history.oldest(0).sample==18&&history.oldest(63).sample==81&&
+        telemetrySnapshot.evidence.statusHistory.oldest(0).sample==17&&failureObservation.sample==80,
+        "producer telemetry publication is an independent consistent snapshot after wrap");
     ProducerSchedule schedule(10000000,12);
     check(!schedule.schedulerExpired(schedule.nextWrite+500000)&&schedule.schedulerExpired(schedule.nextWrite+500001),
         "producer schedule retains exact 50 ms boundary without rounding away a violation");

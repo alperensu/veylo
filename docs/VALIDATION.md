@@ -212,7 +212,63 @@ duplicate JSON keys and bounded child timeout. SetupDiGetDevicePropertyW runs
 only in a protected, request-paired read-only guest child with a ten-second
 limit. Installed native version plus published INF/SYS hashes and service state
 drive acceptance; WMI version remains separate diagnostic evidence. This is
-preparation, not proof that the WMI provider was stale on the actual guest.
+preparation. The following real guest comparison supplies that proof separately.
+
+Passed: run d430ff7c-56a1-4ae4-b729-f32ea93baac7 verified the genuine historical
+0.5.0 baseline through SetupAPI, published INF hash e9096173..., SYS hash
+0b065b41... and the original Running device, then passed 20 PCM16/PCM32 capture
+checks. WMI still reported 0.5.1.0 during that actual comparison; the provider
+metadata was stale. Current-version DevCon upgrade returned exit 1/NeedsReboot,
+so no upgrade capture, native rollback or final restoration was accepted yet.
+The immutable pending report and stopped disk state were preserved before
+booting to apply the upgrade. Exact 6126243 push and PR CI passed.
+
+Passed / preparation: explicit Resume preserves immutable raw-byte checkpoints
+for upgrade, native rollback and final restoration that require reboot. It binds
+the original VM/run/instance, frozen source, actual later boot and historical
+capture files; four ordered real captures and actual DiRollbackDriver evidence
+are required for final success. The single approved legacy upgrade report has an
+exact run/hash migration; other old reports are rejected. Both PowerShell 5.1
+and 7 passed 185 native regression and 106 Resume inert checks. Whole-number JSON
+elapsed-time portability, nonfinite/type/boundary rejection, the three-reboot
+executor chain and byte-identical checkpoint preservation are covered. Independent
+read-only correctness and security reviews passed on source fc5e5170...03333;
+the detected Int64 settling edge case was fixed and rechecked. No real guest
+Resume success is established by these fixtures. Frozen preparation:
+artifacts/driver-test-signing/version-transition-resume-final-0b8bb97ea57447fb849e89e7339d206e/.
+
+Findings: the next requested one-hour run on the rebooted current driver stopped
+at 632,893 ms with one steady underrun and 22 driver silence frames. Native PnP
+reported 0.5.1.0 before capture; active Code Integrity Verifier targeted only
+SesMicrophone.sys. Producer and consumer MMCSS registrations succeeded. Maximum
+producer lateness was 10 ms, write completion gap 14,751 us, IOCTL duration
+3,613 us and consumer drain gap 12,109 us. Both clients had zero timestamp errors
+and position gaps; minimum observed queue reached zero. The final report has
+seven findings and exit 1, so this is not a completed hour. Its serial result
+and native-version screenshot are preserved. Aggregate timing does not identify
+the underrun's root cause; fixed test pacing and occupancy compensation need
+event-correlated investigation. No gate, reserve or driver package was changed.
+
+Passed: diagnostic-only capture-tool revision adds a fixed 64-observation STATUS
+history with relative QPC/deadline, write timing, queue/drift and driver counters.
+The rejected counter observation is retained before publishing failure. Existing
+10 ms pacing, priming, lifecycle and zero steady-underrun gates remain unchanged.
+Release build and all 48 offline analyzer checks passed, including four history
+capacity/wrap/failure-retention/snapshot checks; the changed analyzer's
+AddressSanitizer test passed. Independent read-only correctness and security
+reviews passed on source SHA256 c47602d1..., with no concrete findings.
+This preparation neither explains the earlier underrun nor proves a new real
+capture run. Evidence: analyzer-telemetry.{log,json}, telemetry-build.log,
+telemetry-asan-test.log and hour-current-ci-633s-underrun-serial.log.
+
+Passed / inert only: a separate ignored diagnostic harness used the actual
+PcmRing/PCM-clock headers for ten invented scheduling profiles, each advancing
+3,600 simulated seconds. All completed with exact received/capture frame counters
+and zero silence/underruns/overruns. The 14,751 us producer-gap and 8/15 ms callback
+catch-up models did not reproduce the live failure. This was about three seconds
+of host execution, not ten actual hours or observed VM scheduling. Neither these
+models nor controller correction values establish physical clock drift. Evidence:
+diagnostic-inert-sim.{cpp,jsonl} and diagnostic-inert-sim-notes.md.
 
 Passed: the second actual S4 attempt completed prepare/request (exit 0, 50.53 s),
 then resumed the same boot, user authentication ID and session 1. Kernel-Power

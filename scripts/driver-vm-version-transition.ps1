@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)][Guid]$VmId,
-    [ValidateSet('Run','RollbackNative','IdentityNative')][string]$Operation='Run',
+    [ValidateSet('Run','Resume','RollbackNative','IdentityNative')][string]$Operation='Run',
     [Guid]$RunId=[Guid]::Empty,
     [Guid]$RequestId=[Guid]::Empty
 )
@@ -28,7 +28,8 @@ $Mode='VersionTransition'
 $outputNames=@('version-transition.json','transition.lock','old-baseline.log','upgrade.log','restore.log',
     'rollback-native.log','rollback-native.json','old-baseline-capture.json','old-baseline-capture.log',
     'upgrade-capture.json','upgrade-capture.log','rollback-capture.json','rollback-capture.log',
-    'restore-capture.json','restore-capture.log','identity-native.json','identity-native.log')
+    'restore-capture.json','restore-capture.log','identity-native.json','identity-native.log',
+    'resume-upgrade-checkpoint.json','resume-rollback-checkpoint.json','resume-restore-checkpoint.json')
 function Assert-CanonicalPath([string]$Path,[string]$Within,[switch]$MayNotExist){
     $full=[IO.Path]::GetFullPath($Path)
     $root=[IO.Path]::GetFullPath($Within).TrimEnd('\')
@@ -254,7 +255,7 @@ function Test-TransitionCapture($Process,$Evidence){
         $property=$Evidence.PSObject.Properties[$name]
         if(!$property -or ($property.Value -isnot [int] -and $property.Value -isnot [long])){return $false}
     }
-    return ($Process.exitCode -is [int] -and $Process.exitCode -eq 0 -and
+    return (($Process.exitCode -is [int] -or $Process.exitCode -is [long]) -and $Process.exitCode -eq 0 -and
         $Process.timedOut -is [bool] -and !$Process.timedOut -and
         $Process.outputLimited -is [bool] -and !$Process.outputLimited -and
         $Evidence.schema -eq 1 -and $Evidence.checks -gt 0 -and $Evidence.failures -eq 0 -and
@@ -342,10 +343,13 @@ function Read-NativeVersionIdentity([string]$ExpectedInstance){
     $powershell='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
     $null=Assert-CanonicalPath $powershell 'C:\Windows\System32'
     # Never set/clear mutation uncertainty for a strictly read-only child.
-    $process=Invoke-BoundedTool $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$ownPath,
-        '-VmId',$VmId.ToString('D'),'-Operation','IdentityNative','-RunId',$RunId.ToString('D'),'-RequestId',$request.ToString('D')) 'identity-native.log' 10
+    try{
+        $process=Invoke-BoundedTool $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$ownPath,
+            '-VmId',$VmId.ToString('D'),'-Operation','IdentityNative','-RunId',$RunId.ToString('D'),'-RequestId',$request.ToString('D')) 'identity-native.log' 10
+    }catch{$_.Exception.Data['VeyloIdentityChildUncertain']=$true;throw}
     if($process.exitCode -ne 0 -or $process.timedOut -or $process.outputLimited -or $process.elapsedSeconds -ge 10){
-        throw ('Read-only native identity child failed or exceeded its ten-second bound: '+($process | ConvertTo-Json -Compress))
+        $failure=[InvalidOperationException]::new(('Read-only native identity child failed or exceeded its ten-second bound: '+($process | ConvertTo-Json -Compress)))
+        $failure.Data['VeyloIdentityChildUncertain']=$true;throw $failure
     }
     $file=Get-Item -LiteralPath (Assert-CanonicalPath $path $acceptanceRoot) -Force
     Assert-TrustedGuestAcl $path
@@ -380,7 +384,7 @@ function Read-VersionObservation([string]$ExpectedInstance){
         throw 'Service identity is not the sole fixed SesMicrophone service; settling is forbidden.'
     }
     $observation=@{instance=[string]$device.DeviceID;hardwareId='ROOT\SES_MICROPHONE';service='SesMicrophone';
-        deviceStatus=$device.ConfigManagerErrorCode;pnpRowCount=$rows.Count;pnpVersion=$null;pnpDiagnosticError=$pnpError;
+        deviceStatus=[int]$device.ConfigManagerErrorCode;pnpRowCount=$rows.Count;pnpVersion=$null;pnpDiagnosticError=$pnpError;
         nativeVersion=$null;nativeInfName=$null;nativeInfSha256=$null;nativeIdentity=$null;
         serviceRowCount=$services.Count;serviceImage=$null;serviceImageSha256=$null;state='Missing';started=$false}
     if($rows.Count -eq 1){$observation.pnpVersion=[string]$rows[0].DriverVersion}
@@ -389,7 +393,8 @@ function Read-VersionObservation([string]$ExpectedInstance){
         $image=[string]$services[0].PathName
         if($image.StartsWith('\??\',[StringComparison]::Ordinal)){$image=$image.Substring(4)}
         if($image.StartsWith('\SystemRoot\',[StringComparison]::OrdinalIgnoreCase)){$image='C:\Windows\'+$image.Substring(12)}
-        if($image -cnotmatch '(?i)^C:\\Windows\\System32\\(?:drivers\\SesMicrophone\.sys|DriverStore\\FileRepository\\sesmicrophone\.inf_[a-z0-9_]+\\SesMicrophone\.sys)$'){
+        if(![regex]::IsMatch($image,'\AC:\\Windows\\System32\\(?:drivers\\SesMicrophone\.sys|DriverStore\\FileRepository\\sesmicrophone\.inf_[a-z0-9_]+\\SesMicrophone\.sys)\z',
+            [Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [Text.RegularExpressions.RegexOptions]::CultureInvariant)){
             throw 'Service image is outside the fixed installed driver locations.'
         }
         $full=Assert-CanonicalPath $image 'C:\Windows\System32'
@@ -467,7 +472,8 @@ function Invoke-VersionCapture([string]$Stage,[string]$Name,[string]$Instance){
     $evidence=Read-BoundedJson $json $acceptanceRoot 1MB
     if(!(Test-TransitionCapture $process $evidence)){throw ('Actual capture failed at '+$Stage)}
     $after=Read-VersionIdentity $Name $Instance
-    return @{status='Passed';settle=$settle;identityBefore=$before;identityAfter=$after;process=$process;capture=$evidence}
+    return @{status='Passed';settle=$settle;identityBefore=$before;identityAfter=$after;process=$process;capture=$evidence;
+        jsonSha256=(Get-FileHash -LiteralPath $json -Algorithm SHA256).Hash.ToLowerInvariant();toolSha256=(Get-VersionSpec $Name).capture}
 }
 function Get-CertificateStoreInventory([string]$StoreName){
     if($StoreName -cnotin @('Root','TrustedPublisher')){throw 'Unapproved guest certificate store.'}
@@ -526,6 +532,383 @@ function Assert-UpdateCompleted($Process){
     if($Process.timedOut -or $Process.outputLimited -or $Process.exitCode -notin @(0,1)){throw 'Fixed driver update failed or exceeded its bounds.'}
     if($Process.exitCode -eq 1){return $false}
     return $true
+}
+function Get-RecordedField($Object,[string]$Name,[type]$Type=$null){
+    if($Object -is [Collections.IDictionary]){
+        if(!$Object.Contains($Name)){throw ('Missing protected evidence field: '+$Name)};$value=$Object[$Name]
+    }else{
+        $property=$Object.PSObject.Properties[$Name]
+        if(!$property){throw ('Missing protected evidence field: '+$Name)};$value=$property.Value
+    }
+    if($Type -eq [int] -and $value -is [long] -and $value -ge [int]::MinValue -and $value -le [int]::MaxValue){return [int]$value}
+    if($Type -and !($value -is $Type)){throw ('Protected evidence field type differs: '+$Name)}
+    return $value
+}
+function Convert-RecordedUtc($Value){
+    $stamp=[DateTimeOffset]::MinValue
+    if($Value -isnot [string] -or ![DateTimeOffset]::TryParseExact($Value,'o',[Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::None,[ref]$stamp) -or $stamp -gt [DateTimeOffset]::UtcNow.AddSeconds(1)){
+        throw 'Protected evidence UTC has an invalid type, format, or future value.'
+    }
+    return $stamp
+}
+function Get-GuestBootUtc{
+    $rows=@(Get-CimInstance -ClassName Win32_OperatingSystem -OperationTimeoutSec 5)
+    if($rows.Count -ne 1 -or $rows[0].LastBootUpTime -isnot [DateTime]){throw 'Exact guest boot-time evidence is unavailable.'}
+    return $rows[0].LastBootUpTime.ToUniversalTime().ToString('o')
+}
+function Get-RebootCheckpointName([string]$Stage){
+    switch -CaseSensitive ($Stage){
+        'upgrade' {return 'resume-upgrade-checkpoint.json'}
+        'rollback-native' {return 'resume-rollback-checkpoint.json'}
+        'restore' {return 'resume-restore-checkpoint.json'}
+        default {throw 'Only upgrade, native rollback, or final restore reboot checkpoints can resume.'}
+    }
+}
+function Assert-RecordedProcess($Process,[string]$Log,[int]$Deadline,[int]$Exit){
+    if((Get-RecordedField $Process 'exitCode' ([int])) -ne $Exit -or
+        (Get-RecordedField $Process 'timedOut' ([bool])) -or (Get-RecordedField $Process 'outputLimited' ([bool])) -or
+        (Get-RecordedField $Process 'deadlineSeconds' ([int])) -ne $Deadline -or
+        (Get-RecordedField $Process 'log' ([string])) -cne $Log){throw 'Protected process evidence is not the completed bounded exact operation.'}
+    $elapsed=Get-RecordedField $Process 'elapsedSeconds';$bytes=Get-RecordedField $Process 'bytes'
+    if(($elapsed -isnot [int] -and $elapsed -isnot [long] -and $elapsed -isnot [double] -and $elapsed -isnot [decimal]) -or
+        [double]::IsNaN([double]$elapsed) -or [double]::IsInfinity([double]$elapsed) -or
+        $elapsed -lt 0 -or $elapsed -ge $Deadline -or ($bytes -isnot [int] -and $bytes -isnot [long]) -or $bytes -lt 0 -or $bytes -gt 1MB){
+        throw 'Protected process elapsed/output bounds differ.'
+    }
+}
+function Assert-RecordedIdentity($Identity,[string]$Name,$Report){
+    $spec=Get-VersionSpec $Name
+    if((Get-RecordedField $Identity 'instance' ([string])) -ine $Report.instance -or
+        (Get-RecordedField $Identity 'hardwareId' ([string])) -cne 'ROOT\SES_MICROPHONE' -or
+        (Get-RecordedField $Identity 'service' ([string])) -cne 'SesMicrophone' -or
+        (Get-RecordedField $Identity 'deviceStatus' ([int])) -ne 0 -or
+        (Get-RecordedField $Identity 'serviceRowCount' ([int])) -ne 1 -or
+        !(Get-RecordedField $Identity 'started' ([bool])) -or (Get-RecordedField $Identity 'state' ([string])) -cne 'Running' -or
+        (Get-RecordedField $Identity 'nativeVersion' ([string])) -cne $spec.version -or
+        (Get-RecordedField $Identity 'nativeInfSha256' ([string])) -cne $spec.inf -or
+        (Get-RecordedField $Identity 'serviceImageSha256' ([string])) -cne $spec.sys){throw 'Protected historical identity does not match the pinned running version.'}
+    $image=Get-RecordedField $Identity 'serviceImage' ([string])
+    if(![regex]::IsMatch($image,'\AC:\\Windows\\System32\\(?:drivers\\SesMicrophone\.sys|DriverStore\\FileRepository\\sesmicrophone\.inf_[a-z0-9_]+\\SesMicrophone\.sys)\z',
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [Text.RegularExpressions.RegexOptions]::CultureInvariant)){
+        throw 'Protected historical SYS path differs.'
+    }
+    $native=Get-RecordedField $Identity 'nativeIdentity';$request=[Guid]::Empty
+    if((Get-RecordedField $native 'schema' ([int])) -ne 1 -or
+        (Get-RecordedField $native 'runId' ([string])) -cne $Report.runId -or (Get-RecordedField $native 'vmId' ([string])) -cne $Report.vmId -or
+        (Get-RecordedField $native 'api' ([string])) -cne 'SetupDiGetDevicePropertyW' -or
+        (Get-RecordedField $native 'instance' ([string])) -ine $Report.instance -or
+        (Get-RecordedField $native 'nativeVersion' ([string])) -cne $spec.version -or
+        (Get-RecordedField $native 'nativeInfName' ([string])) -cne (Get-RecordedField $Identity 'nativeInfName' ([string])) -or
+        ![regex]::IsMatch($native.nativeInfName,'\Aoem[0-9]{1,4}\.inf\z',[Text.RegularExpressions.RegexOptions]::IgnoreCase -bor [Text.RegularExpressions.RegexOptions]::CultureInvariant) -or
+        (Get-RecordedField $native 'status' ([string])) -cne 'Passed' -or
+        !(Get-RecordedField $native 'testOnly' ([bool])) -or (Get-RecordedField $native 'productionReady' ([bool])) -or
+        ![Guid]::TryParseExact((Get-RecordedField $native 'requestId' ([string])),'D',[ref]$request) -or $request -eq [Guid]::Empty){
+        throw 'Protected native identity evidence is unpaired or invalid.'
+    }
+    $stamp=Convert-RecordedUtc (Get-RecordedField $native 'utc' ([string]))
+    if($stamp -gt (Convert-RecordedUtc $Report.utc)){throw 'Historical native identity occurs after its pending report.'}
+    Assert-RecordedProcess (Get-RecordedField $native 'process') 'identity-native.log' 10 0
+}
+function Assert-RecordedCapture($Entry,[string]$Stage,[string]$Name,$Report,[bool]$Legacy){
+    $spec=Get-VersionSpec $Name
+    if((Get-RecordedField $Entry 'stage' ([string])) -cne $Stage -or (Get-RecordedField $Entry 'status' ([string])) -cne 'Passed' -or
+        (Get-RecordedField $Entry 'expectedVersion' ([string])) -cne $spec.version){throw 'Protected capture stage/order/version differs.'}
+    $capture=Get-RecordedField $Entry 'capture'
+    if((Get-RecordedField $capture 'status' ([string])) -cne 'Passed'){throw 'Protected phase capture is incomplete.'}
+    $process=Get-RecordedField $capture 'process';$evidence=Get-RecordedField $capture 'capture'
+    Assert-RecordedProcess $process ($Stage+'-capture.log') 180 0
+    if(!(Test-TransitionCapture $process $evidence) -or $evidence.checks -lt 20){throw 'Protected capture lacks the real minimum twenty checks and both PCM formats.'}
+    $settle=Get-RecordedField $capture 'settle'
+    if((Get-RecordedField $settle 'status' ([string])) -cne 'Passed' -or
+        (Get-RecordedField $settle 'expectedVersion' ([string])) -cne $spec.version -or
+        (Get-RecordedField $settle 'expectedInfSha256' ([string])) -cne $spec.inf -or
+        (Get-RecordedField $settle 'expectedSysSha256' ([string])) -cne $spec.sys -or
+        (Get-RecordedField $settle 'instance' ([string])) -ine $Report.instance -or
+        (Get-RecordedField $settle 'deadlineSeconds' ([int])) -ne 30 -or
+        (Get-RecordedField $settle 'consecutiveMatches' ([int])) -lt 2 -or (Get-RecordedField $settle 'attempts' ([int])) -lt 2){throw 'Protected capture settling is incomplete.'}
+    $elapsed=Get-RecordedField $settle 'elapsedSeconds'
+    if(($elapsed -isnot [int] -and $elapsed -isnot [long] -and $elapsed -isnot [double] -and $elapsed -isnot [decimal]) -or
+        [double]::IsNaN([double]$elapsed) -or [double]::IsInfinity([double]$elapsed) -or $elapsed -lt 0 -or $elapsed -ge 30){throw 'Protected settling evidence is late or malformed.'}
+    foreach($identity in @($capture.identityBefore,$capture.identityAfter,$settle.observation)){Assert-RecordedIdentity $identity $Name $Report}
+    $path=Get-OutputPath ($Stage+'-capture.json');Assert-TrustedGuestAcl $path
+    $actual=Read-BoundedJson $path $acceptanceRoot 1MB
+    if(($actual | ConvertTo-Json -Depth 14 -Compress) -cne ($evidence | ConvertTo-Json -Depth 14 -Compress)){
+        throw 'Protected actual capture file and recorded capture differ.'
+    }
+    $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if(!$Legacy -and ((Get-RecordedField $capture 'jsonSha256' ([string])) -cne $hash -or
+        (Get-RecordedField $capture 'toolSha256' ([string])) -cne $spec.capture)){throw 'Protected capture file/tool hashes differ.'}
+    return $hash
+}
+function Assert-RecordedRollback($Report){
+    $native=Get-RecordedField $Report 'nativeRollback'
+    if((Get-RecordedField $native 'schema' ([int])) -ne 1 -or (Get-RecordedField $native 'vmId' ([string])) -cne $Report.vmId -or
+        (Get-RecordedField $native 'runId' ([string])) -cne $Report.runId -or (Get-RecordedField $native 'instance' ([string])) -ine $Report.instance -or
+        (Get-RecordedField $native 'api' ([string])) -cne 'DiRollbackDriver' -or !(Get-RecordedField $native 'testOnly' ([bool])) -or
+        (Get-RecordedField $native 'productionReady' ([bool]))){throw 'Protected actual rollback API evidence is unpaired.'}
+    $reboot=Get-RecordedField $native 'rebootRequired' ([bool])
+    if((Get-RecordedField $native 'status' ([string])) -cne $(if($reboot){'NeedsReboot'}else{'Passed'})){throw 'Native rollback reboot outcome differs.'}
+    if((Convert-RecordedUtc (Get-RecordedField $native 'utc' ([string]))) -gt (Convert-RecordedUtc $Report.utc)){
+        throw 'Actual native rollback occurs after its pending parent report.'
+    }
+    Assert-RecordedProcess (Get-RecordedField $native 'process') 'rollback-native.log' 120 0
+    $path=Get-OutputPath 'rollback-native.json';Assert-TrustedGuestAcl $path
+    if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne (Get-RecordedField $native 'jsonSha256' ([string]))){throw 'Protected native rollback file hash differs.'}
+    $actual=Read-BoundedJson $path $acceptanceRoot
+    foreach($field in @('schema','vmId','runId','instance','api','testOnly','productionReady','rebootRequired','status','utc')){
+        if((Get-RecordedField $actual $field) -cne (Get-RecordedField $native $field)){throw 'Actual native rollback file and parent evidence differ.'}
+    }
+}
+function Assert-ResumePending($Report,[string]$RawHash){
+    $id=[Guid]::Empty
+    if((Get-RecordedField $Report 'schema' ([int])) -ne 1 -or (Get-RecordedField $Report 'vmId' ([string])) -cne $VmId.ToString('D') -or
+        !(Get-RecordedField $Report 'testOnly' ([bool])) -or (Get-RecordedField $Report 'productionReady' ([bool])) -or
+        (Get-RecordedField $Report 'status' ([string])) -cne 'NeedsReboot' -or !(Get-RecordedField $Report 'rebootRequired' ([bool])) -or
+        (Get-RecordedField $Report 'driverMutationUncertain' ([bool])) -or (Get-RecordedField $Report 'baselineIsRollback' ([bool])) -or
+        (Get-RecordedField $Report 'currentRestored' ([bool])) -or
+        ![Guid]::TryParseExact((Get-RecordedField $Report 'runId' ([string])),'D',[ref]$id) -or $id -eq [Guid]::Empty){throw 'Resume requires the original protected determinate NeedsReboot run.'}
+    $null=Get-PnpDeviceFilter (Get-RecordedField $Report 'instance' ([string]))
+    $null=Get-RebootCheckpointName (Get-RecordedField $Report 'stage' ([string]))
+    $null=Convert-RecordedUtc (Get-RecordedField $Report 'utc' ([string]))
+    $legacy=(!$Report.PSObject.Properties['sourceRunnerSha256'] -and $Report -isnot [Collections.IDictionary])
+    if($Report -is [Collections.IDictionary]){$legacy=!$Report.Contains('sourceRunnerSha256')}
+    if($legacy){
+        if($Report.runId -cne 'd430ff7c-56a1-4ae4-b729-f32ea93baac7' -or $Report.stage -cne 'upgrade' -or
+            $RawHash -cne 'a99ec400c4892df17521896181bf9f753f6f08f9b3f1ff12c958b6962845886a'){
+            throw 'Legacy Resume is limited to the approved exact ff1d upgrade report hash and original run.'
+        }
+    }else{
+        if((Get-RecordedField $Report 'sourceRunnerSha256' ([string])) -cne $manifest.files.'driver-vm-version-transition.ps1' -or
+            (Get-RecordedField $Report 'resumeProtocol' ([int])) -ne 1 -or (Get-RecordedField $Report 'oldVersion' ([string])) -cne '0.5.0.0' -or
+            (Get-RecordedField $Report 'currentVersion' ([string])) -cne '0.5.1.0'){throw 'Resume source/protocol/version binding differs.'}
+        $null=Convert-RecordedUtc (Get-RecordedField $Report 'bootUtc' ([string]))
+    }
+    $items=@(Get-RecordedField $Report 'stages')
+    $count=switch -CaseSensitive ($Report.stage){'upgrade'{3};'rollback-native'{4};'restore'{6}}
+    if($items.Count -ne $count){throw 'Resume stage prefix has missing, duplicate, or future evidence.'}
+    $null=Assert-RecordedCapture $items[1] 'old-baseline' 'old' $Report $legacy
+    Assert-RecordedUpdate $items[0] 'old-baseline' $items[1] $Report
+    if($Report.stage -ceq 'upgrade'){
+        Assert-RecordedUpdate $items[2] 'upgrade' $null $Report
+        if((Get-RecordedField $Report 'apiRollbackVerified' ([bool]))){throw 'Upgrade checkpoint cannot claim a rollback.'}
+    }else{
+        $null=Assert-RecordedCapture $items[3] 'upgrade' 'current' $Report $false
+        Assert-RecordedUpdate $items[2] 'upgrade' $items[3] $Report
+        Assert-RecordedRollback $Report
+        if($Report.stage -ceq 'rollback-native'){
+            if((Get-RecordedField $Report 'apiRollbackVerified' ([bool])) -or !$Report.nativeRollback.rebootRequired){throw 'Native rollback checkpoint must await its reboot and capture.'}
+        }else{
+            $null=Assert-RecordedCapture $items[4] 'rollback' 'old' $Report $false
+            Assert-RecordedUpdate $items[5] 'restore' $null $Report
+            if(!(Get-RecordedField $Report 'apiRollbackVerified' ([bool]))){throw 'Final restore checkpoint lacks actual verified rollback capture.'}
+        }
+    }
+    Assert-RecordedIdentity (Get-RecordedField $Report 'initialIdentity') 'current' $Report
+    return $legacy
+}
+function Assert-RecordedUpdate($Entry,[string]$Stage,$Capture,$Report){
+    if((Get-RecordedField $Entry 'stage' ([string])) -cne $Stage -or
+        (Get-RecordedField $Entry 'operation' ([string])) -cne 'DevCon update exact hardware'){throw 'Protected update stage/order/operation differs.'}
+    $completed=Get-RecordedField $Entry 'completed' ([bool])
+    $exit=if($completed){0}else{1}
+    Assert-RecordedProcess (Get-RecordedField $Entry 'process') ($Stage+'.log') 90 $exit
+    if(!$Capture){if($completed){throw 'Resume pending update must be completed with explicit reboot exit 1.'};return}
+    if(!$completed){
+        $name=Get-RebootCheckpointName $Stage;$path=Get-OutputPath $name;Assert-TrustedGuestAcl $path
+        $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if($hash -cne (Get-RecordedField $Capture 'resumeCheckpointSha256' ([string]))){throw 'Previously rebooted update capture lacks its immutable checkpoint.'}
+        $pending=Read-BoundedJson $path $acceptanceRoot 1MB
+        if($pending.runId -cne $Report.runId -or $pending.instance -ine $Report.instance -or $pending.stage -cne $Stage){throw 'Previously rebooted update checkpoint is foreign.'}
+        $null=Assert-ResumePending $pending $hash
+        if((Convert-RecordedUtc (Get-RecordedField $Capture 'resumeBootUtc' ([string]))) -le (Convert-RecordedUtc $pending.utc)){
+            throw 'Previously rebooted update capture lacks a later actual boot.'
+        }
+    }
+}
+function New-RebootCheckpoint($Report,[string]$ExpectedHash){
+    $source=Get-OutputPath 'version-transition.json';Assert-TrustedGuestAcl $source
+    $current=Read-BoundedJson $source $acceptanceRoot 1MB
+    if($Report.status -cne 'NeedsReboot' -or $current.status -cne 'NeedsReboot' -or $current.runId -cne $Report.runId -or
+        $current.stage -cne $Report.stage -or $ExpectedHash -cnotmatch '\A[0-9a-f]{64}\z'){
+        throw 'Checkpoint creation requires the exact validated protected pending report.'
+    }
+    $bytes=[IO.File]::ReadAllBytes($source)
+    if($bytes.Length -lt 2 -or $bytes.Length -gt 1MB){throw 'Pending checkpoint report size differs.'}
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try{$hash=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+    if($hash -cne $ExpectedHash){throw 'Protected pending report changed before immutable checkpoint creation.'}
+    $name=Get-RebootCheckpointName $Report.stage;$path=Get-OutputPath $name
+    $stream=[IO.File]::Open($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+    try{$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()}
+    Assert-TrustedGuestAcl $path
+    if((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash){throw 'Immutable checkpoint copy hash differs.'}
+    return @{name=$name;sha256=$hash;stage=$Report.stage}
+}
+function Invoke-PairedNativeRollback($Result){
+    $script:lastVersionSettle=$null
+    $Result.stage='rollback-native';$Result.utc=[DateTime]::UtcNow.ToString('o')
+    Write-Report 'version-transition.json' $Result 'VEYLO_VERSION_TRANSITION_RESULT'
+    $nativePath=Get-OutputPath 'rollback-native.json'
+    if(Test-Path -LiteralPath $nativePath){Remove-Item -LiteralPath $nativePath}
+    $powershell='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    $null=Assert-CanonicalPath $powershell 'C:\Windows\System32'
+    $script:driverMutationStarted=$true;$script:mutationUncertain=$true
+    $process=Invoke-BoundedTool $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$ownPath,
+        '-VmId',$VmId.ToString('D'),'-Operation','RollbackNative','-RunId',$RunId.ToString('D')) 'rollback-native.log' 120
+    $script:mutationUncertain=($process.timedOut -or $process.outputLimited)
+    if($process.exitCode -ne 0 -or $process.timedOut -or $process.outputLimited){throw 'Native rollback child failed or exceeded its bounds.'}
+    $native=Read-BoundedJson $nativePath $acceptanceRoot
+    Assert-TrustedGuestAcl $nativePath
+    $native | Add-Member -MemberType NoteProperty -Name process -Value $process
+    $native | Add-Member -MemberType NoteProperty -Name jsonSha256 -Value ((Get-FileHash -LiteralPath $nativePath -Algorithm SHA256).Hash.ToLowerInvariant())
+    $Result.nativeRollback=$native
+    # The child's actual completion UTC necessarily follows its launch report.
+    $Result.utc=[DateTime]::UtcNow.ToString('o')
+    Write-Report 'version-transition.json' $Result 'VEYLO_VERSION_TRANSITION_RESULT'
+    Assert-RecordedRollback $Result
+    if($native.rebootRequired){$Result.rebootRequired=$true;$Result.status='NeedsReboot';return $false}
+    return $true
+}
+function Assert-ResumeBoot($Pending,[string]$BootUtc,[bool]$Legacy){
+    $boot=Convert-RecordedUtc $BootUtc;$pendingUtc=Convert-RecordedUtc $Pending.utc
+    if($boot -le $pendingUtc){throw 'Resume requires an actual boot after the pending reboot report.'}
+    if(!$Legacy -and $boot -le (Convert-RecordedUtc (Get-RecordedField $Pending 'bootUtc' ([string])))){
+        throw 'Resume requires a changed actual boot identity.'
+    }
+}
+function Convert-TransitionResult($Report){
+    $copy=[ordered]@{}
+    foreach($property in $Report.PSObject.Properties){$copy[$property.Name]=$property.Value}
+    return $copy
+}
+function Invoke-ResumeTransition{
+    $lockPath=Get-OutputPath 'transition.lock'
+    $lock=[IO.File]::Open($lockPath,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    try{
+        Assert-TrustedGuestAcl $lockPath
+        $path=Get-OutputPath 'version-transition.json';Assert-TrustedGuestAcl $path
+        $active=Read-BoundedJson $path $acceptanceRoot 1MB
+        $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if($active.status -ceq 'NeedsReboot'){
+            $legacy=Assert-ResumePending $active $hash
+            $name=Get-RebootCheckpointName $active.stage;$checkpointPath=Get-OutputPath $name
+            if($legacy){
+                if(!(Test-Path -LiteralPath $checkpointPath)){
+                    $null=New-RebootCheckpoint $active $hash
+                }
+                $reference=@{name=$name;sha256=$hash;stage=$active.stage}
+            }else{$reference=Get-RecordedField $active 'checkpoint'}
+        }elseif($active.status -ceq 'Findings' -and (Get-RecordedField $active 'resumePreflightRetryAllowed' ([bool])) -and
+            (Get-RecordedField $active 'resumePhase' ([string])) -ceq 'preflight' -and
+            !(Get-RecordedField $active 'driverMutationUncertain' ([bool])) -and
+            (Get-RecordedField $active 'sourceRunnerSha256' ([string])) -ceq $manifest.files.'driver-vm-version-transition.ps1'){
+            $reference=Get-RecordedField $active 'resumeCheckpoint'
+            $name=Get-RebootCheckpointName (Get-RecordedField $reference 'stage' ([string]));$checkpointPath=Get-OutputPath $name
+        }else{throw 'Resume accepts only pending reboot or the defined read-only preflight retry; no uncertain mutation recovery.'}
+        if((Get-RecordedField $reference 'name' ([string])) -cne $name -or
+            (Get-RecordedField $reference 'sha256' ([string])) -cnotmatch '\A[0-9a-f]{64}\z'){throw 'Resume checkpoint reference differs.'}
+        Assert-TrustedGuestAcl $checkpointPath
+        $checkpointHash=(Get-FileHash -LiteralPath $checkpointPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if($checkpointHash -cne $reference.sha256){throw 'Immutable resume checkpoint hash differs.'}
+        $pending=Read-BoundedJson $checkpointPath $acceptanceRoot 1MB
+        if($pending.runId -cne $active.runId -or $pending.vmId -cne $active.vmId -or $pending.instance -ine $active.instance -or
+            $pending.stage -cne $reference.stage){throw 'Resume checkpoint belongs to another run, instance, or stage.'}
+        $legacy=Assert-ResumePending $pending $checkpointHash
+        $script:RunId=[Guid]$pending.runId
+        $result=Convert-TransitionResult $pending
+        # Normalize only the approved legacy evidence after pinning its raw report.
+        # The immutable ff1d checkpoint remains byte-identical to its approved hash.
+        if($legacy){
+            $old=$result.stages[1].capture
+            $old | Add-Member -MemberType NoteProperty -Name jsonSha256 -Value ((Get-FileHash -LiteralPath (Get-OutputPath 'old-baseline-capture.json') -Algorithm SHA256).Hash.ToLowerInvariant())
+            $old | Add-Member -MemberType NoteProperty -Name toolSha256 -Value ((Get-VersionSpec 'old').capture)
+            $result.legacySourceRunnerSha256='ff1d28016084bee3ff315529068b65edcfe04a3969abdf0c07dc9f9d6ddc0240'
+        }
+        $result.sourceRunnerSha256=$manifest.files.'driver-vm-version-transition.ps1';$result.resumeProtocol=1
+        $result.oldVersion='0.5.0.0';$result.currentVersion='0.5.1.0'
+        $result.resumeCheckpoint=$reference;$result.resumePhase='preflight';$result.resumePreflightRetryAllowed=$true
+        $script:driverMutationStarted=$false;$script:mutationUncertain=$false;$script:lastVersionSettle=$null
+        try{
+            $bootUtc=Get-GuestBootUtc;Assert-ResumeBoot $pending $bootUtc $legacy
+            $result.bootUtc=$bootUtc;$result.status='Running';$result.utc=[DateTime]::UtcNow.ToString('o')
+            Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
+            $device=Assert-OneSesDevice
+            if($device.DeviceID -ine $result.instance){throw 'Resume original exact instance differs.'}
+            foreach($version in @('old','current')){
+                $cert=Read-PublicCertificate $version
+                try{foreach($store in @('Root','TrustedPublisher')){if((Get-VersionSpec $version).thumb -cnotin @(Get-CertificateStoreInventory $store)){throw 'Resume pinned certificates are not already trusted.'}}}
+                finally{$cert.Dispose()}
+            }
+            $phase=if($pending.stage -ceq 'rollback-native'){'rollback'}else{$pending.stage}
+            $version=if($phase -ceq 'rollback'){'old'}else{'current'}
+            $null=Wait-VersionIdentity $version ([string]$result.instance)
+            $result.rebootRequired=$false;$result.resumePhase='capture';$result.resumePreflightRetryAllowed=$false
+            $result.stage=if($phase -ceq 'rollback'){'rollback-native'}else{$phase};$result.utc=[DateTime]::UtcNow.ToString('o')
+            Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
+            $capture=Invoke-VersionCapture $phase $version ([string]$result.instance)
+            $result.stages+=@{stage=$phase;expectedVersion=(Get-VersionSpec $version).version;status='Passed';capture=$capture;
+                resumeCheckpointSha256=$checkpointHash;resumeBootUtc=$bootUtc}
+            if($phase -ceq 'rollback'){$result.apiRollbackVerified=$true}
+            if($phase -ceq 'restore'){$result.currentRestored=$true}
+            $result.resumePhase='continuation'
+            foreach($next in @($(if($phase -ceq 'upgrade'){'rollback'}),$(if($phase -cne 'restore'){'restore'})) | Where-Object {$_}){
+                $script:lastVersionSettle=$null;$result.stage=$next;$result.utc=[DateTime]::UtcNow.ToString('o')
+                Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
+                if($next -ceq 'rollback'){
+                    if(!(Invoke-PairedNativeRollback $result)){break};$name='old'
+                }else{
+                    $name='current';$process=Invoke-FixedUpdate 'current' 'restore.log'
+                    $completed=Assert-UpdateCompleted $process
+                    $result.stages+=@{stage='restore';operation='DevCon update exact hardware';process=$process;completed=$completed}
+                    if(!$completed){$result.rebootRequired=$true;$result.status='NeedsReboot';break}
+                }
+                $capture=Invoke-VersionCapture $next $name ([string]$result.instance)
+                $result.stages+=@{stage=$next;expectedVersion=(Get-VersionSpec $name).version;status='Passed';capture=$capture}
+                if($next -ceq 'rollback'){$result.apiRollbackVerified=$true}
+                if($next -ceq 'restore'){$result.currentRestored=$true}
+            }
+            if($result.status -ceq 'Running'){
+                $result.utc=[DateTime]::UtcNow.ToString('o');$result.driverMutationUncertain=$script:mutationUncertain
+                Assert-FullTransitionEvidence $result
+                $result.stage='complete';$result.status='Passed';$result.resumePhase='complete'
+            }
+        }catch{
+            $result.status='Findings';$result.error=$_.Exception.Message
+            if($_.Exception.Data.Contains('VeyloIdentityChildUncertain')){$result.resumePreflightRetryAllowed=$false}
+            if($script:lastVersionSettle){$result.failedSettle=$script:lastVersionSettle}
+            $result.restoreSkipped='Resume preserves its checkpoint and performs no automatic recovery after a failed preflight, capture, or continuation.'
+        }
+        $result.driverMutationUncertain=$script:mutationUncertain;$result.utc=[DateTime]::UtcNow.ToString('o')
+        if($result.status -ceq 'NeedsReboot'){
+            Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
+            $result.checkpoint=New-RebootCheckpoint $result ((Get-FileHash -LiteralPath (Get-OutputPath 'version-transition.json') -Algorithm SHA256).Hash.ToLowerInvariant())
+        }
+        Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
+        if($result.status -ceq 'NeedsReboot'){return 2};if($result.status -cne 'Passed'){return 1};return 0
+    }finally{$lock.Dispose()}
+}
+function Assert-FullTransitionEvidence($Report){
+    if(!(Get-RecordedField $Report 'apiRollbackVerified' ([bool])) -or !(Get-RecordedField $Report 'currentRestored' ([bool])) -or
+        (Get-RecordedField $Report 'rebootRequired' ([bool])) -or (Get-RecordedField $Report 'driverMutationUncertain' ([bool]))){throw 'Incomplete transition evidence.'}
+    $items=@(Get-RecordedField $Report 'stages')
+    if($items.Count -ne 7){throw 'Passed requires exactly the four ordered actual phase captures and three fixed updates.'}
+    foreach($entry in @(@(0,1,'old-baseline','old'),@(2,3,'upgrade','current'),@(5,6,'restore','current'))){
+        $null=Assert-RecordedCapture $items[$entry[1]] $entry[2] $entry[3] $Report $false
+        Assert-RecordedUpdate $items[$entry[0]] $entry[2] $items[$entry[1]] $Report
+    }
+    $null=Assert-RecordedCapture $items[4] 'rollback' 'old' $Report $false
+    Assert-RecordedRollback $Report
+    if($Report.nativeRollback.rebootRequired){
+        $path=Get-OutputPath 'resume-rollback-checkpoint.json';Assert-TrustedGuestAcl $path
+        $hash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if($hash -cne (Get-RecordedField $items[4] 'resumeCheckpointSha256' ([string]))){throw 'Actual rebooting rollback requires its preserved checkpoint.'}
+        $pending=Read-BoundedJson $path $acceptanceRoot 1MB
+        $null=Assert-ResumePending $pending $hash
+        if($pending.runId -cne $Report.runId -or (Convert-RecordedUtc (Get-RecordedField $items[4] 'resumeBootUtc' ([string]))) -le (Convert-RecordedUtc $pending.utc)){
+            throw 'Actual rebooting rollback capture is unpaired or precedes its new boot.'
+        }
+    }
 }
 function Initialize-NativeIdentity{
     if('VeyloLab.InstalledIdentity' -as [type]){return}
@@ -738,19 +1121,30 @@ if($Operation -ceq 'RollbackNative'){
     exit 0
 }
 if($RunId -ne [Guid]::Empty){throw 'Run identity is generated internally for the full transition.'}
+if($Operation -ceq 'Resume'){exit (Invoke-ResumeTransition)}
 $lockPath=Get-OutputPath 'transition.lock'
 $lock=[IO.File]::Open($lockPath,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
 try{
     Assert-TrustedGuestAcl $lockPath
+    foreach($checkpointName in @('resume-upgrade-checkpoint.json','resume-rollback-checkpoint.json','resume-restore-checkpoint.json')){
+        if(Test-Path -LiteralPath (Get-OutputPath $checkpointName)){throw 'A preserved checkpoint forbids starting a replacement run; inspect or explicitly resume the original run.'}
+    }
+    $previousPath=Get-OutputPath 'version-transition.json'
+    if(Test-Path -LiteralPath $previousPath){
+        $previous=Read-BoundedJson $previousPath $acceptanceRoot 1MB
+        if($previous.status -ceq 'NeedsReboot'){throw 'The protected pending reboot run requires explicit Resume; it must not restart the historical baseline.'}
+    }
     $RunId=[Guid]::NewGuid()
     $script:driverMutationStarted=$false;$script:mutationUncertain=$false;$script:lastVersionSettle=$null;$restoreAttempted=$false
     $result=[ordered]@{schema=1;vmId=$VmId.ToString('D');runId=$RunId.ToString('D');testOnly=$true;
         productionReady=$false;status='Running';stage='preflight';utc=[DateTime]::UtcNow.ToString('o');
         rebootRequired=$false;baselineIsRollback=$false;apiRollbackVerified=$false;currentRestored=$false;
-        driverMutationUncertain=$false;certificateStores=@();stages=@()}
+        driverMutationUncertain=$false;certificateStores=@();stages=@();bootUtc=$null;resumeProtocol=1;
+        sourceRunnerSha256=$manifest.files.'driver-vm-version-transition.ps1';oldVersion='0.5.0.0';currentVersion='0.5.1.0'}
     # Immediately invalidate any stale Passed summary, before certificate/driver changes.
     Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
     try{
+        $result.bootUtc=Get-GuestBootUtc
         $device=Assert-OneSesDevice;$result.instance=[string]$device.DeviceID
         Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
         $result.initialIdentity=Read-VersionIdentity 'current' ([string]$result.instance)
@@ -762,25 +1156,7 @@ try{
             $result.stage=$stage;$result.utc=[DateTime]::UtcNow.ToString('o')
             Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
             if($stage -ceq 'rollback'){
-                $result.stage='rollback-native'
-                Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
-                $nativePath=Get-OutputPath 'rollback-native.json'
-                if(Test-Path -LiteralPath $nativePath){Remove-Item -LiteralPath $nativePath}
-                $powershell='C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-                $null=Assert-CanonicalPath $powershell 'C:\Windows\System32'
-                $script:mutationUncertain=$true
-                $process=Invoke-BoundedTool $powershell @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$ownPath,'-VmId',$VmId.ToString('D'),'-Operation','RollbackNative','-RunId',$RunId.ToString('D')) 'rollback-native.log' 120
-                $script:mutationUncertain=($process.timedOut -or $process.outputLimited)
-                if($process.exitCode -ne 0 -or $process.timedOut -or $process.outputLimited){throw 'Native rollback child failed or exceeded its bounds.'}
-                $native=Read-BoundedJson $nativePath $acceptanceRoot
-                Assert-TrustedGuestAcl $nativePath
-                if($native.schema -ne 1 -or $native.vmId -cne $VmId.ToString('D') -or $native.runId -cne $RunId.ToString('D') -or
-                    $native.api -cne 'DiRollbackDriver' -or $native.instance -ine $result.instance -or
-                    $native.testOnly -isnot [bool] -or !$native.testOnly -or $native.productionReady -isnot [bool] -or $native.productionReady -or
-                    $native.rebootRequired -isnot [bool] -or $native.status -cnotin @('Passed','NeedsReboot')){throw 'Unpaired or invalid native rollback report.'}
-                $result.nativeRollback=$native
-                if($native.rebootRequired){$result.rebootRequired=$true;$result.status='NeedsReboot';break}
-                if($native.status -cne 'Passed'){throw 'Native rollback did not complete.'}
+                if(!(Invoke-PairedNativeRollback $result)){break}
                 $name='old'
             }else{
                 if($stage -ceq 'restore'){$restoreAttempted=$true}
@@ -799,6 +1175,8 @@ try{
         }
         if($result.status -ceq 'Running'){
             if(!$result.apiRollbackVerified -or !$result.currentRestored -or @($result.stages | Where-Object {$_.ContainsKey('status') -and $_.status -ceq 'Passed'}).Count -ne 4){throw 'Incomplete transition evidence.'}
+            $result.utc=[DateTime]::UtcNow.ToString('o');$result.driverMutationUncertain=$script:mutationUncertain
+            Assert-FullTransitionEvidence $result
             $result.stage='complete';$result.status='Passed'
         }
     }catch{
@@ -831,6 +1209,10 @@ try{
     }
     $result.driverMutationUncertain=$script:mutationUncertain
     $result.utc=[DateTime]::UtcNow.ToString('o')
+    if($result.status -ceq 'NeedsReboot' -and $result.stage -cin @('upgrade','rollback-native','restore')){
+        Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
+        $result.checkpoint=New-RebootCheckpoint $result ((Get-FileHash -LiteralPath (Get-OutputPath 'version-transition.json') -Algorithm SHA256).Hash.ToLowerInvariant())
+    }
     Write-Report 'version-transition.json' $result 'VEYLO_VERSION_TRANSITION_RESULT'
     if($result.status -ceq 'NeedsReboot'){exit 2}
     if($result.status -cne 'Passed'){exit 1}

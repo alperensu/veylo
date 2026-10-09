@@ -137,6 +137,25 @@ paketin yalnız public test sertifikası bu guest'in iki güven deposuna ekleneb
 host sertifika depoları değişmez. Yeniden başlatma veya belirsiz devam eden işlem
 `NeedsReboot`/`Findings` olur; ardından otomatik başka sürücü işlemi başlatılmaz.
 
+Yükseltme, native geri alma veya son geri yükleme `NeedsReboot` verirse raporu ve
+seri kaydı koru, guest'i normal kapatıp aynı diski yeniden aç. Korumalı, değişmez
+checkpoint aynı run, cihaz, kaynak hash'i ve tamamlanan gerçek capture kayıtlarına
+bağlıdır. Yeni açılış doğrulandıktan sonra aynı yürütücüyle açıkça devam et:
+
+```powershell
+& 'C:\VeyloVersionTransition\driver-vm-version-transition.ps1' -VmId $id -Operation Resume
+```
+
+`Resume` eski baseline'ı yeniden oluşturmaz; bekleyen aşamanın kurulu kimliğini
+ve PCM16/PCM32 capture'ını doğrular, ardından kalan gerçek işlemleri yürütür.
+Sadece belirli salt okunur preflight hataları aynı checkpoint ile yeniden
+denenebilir. Belirsiz mutasyon, başarısız capture, aynı açılış, değişmiş kaynak
+ve eksik/değişmiş kanıt kabul edilmez. Otomatik yeniden başlatma yapılmaz.
+Eski yürütücüden geçiş yalnız laboratuvarda korunmuş tek 0.5.0 → 0.5.1 yükseltme
+run'ının sabitlenmiş rapor hash'i için desteklenir; genel eski rapor içe aktarımı
+değildir. Tam başarı dört gerçek faz capture'ı, `DiRollbackDriver` kanıtı ve
+güncel sürüme doğrulanmış dönüş gerektirir.
+
 Raporlar `C:\VeyloAcceptance` altındadır; sonuç ve heartbeat COM1 üzerinden VM'nin
 `serial.log` dosyasına gider. Yeni açılış seri logu yenileyebildiğinden sonuçları
 yeniden başlatmadan önce sahipli proje artifact dizinine kopyala. Çocuk süreç
