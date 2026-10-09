@@ -1,3 +1,4 @@
+#Requires -Version 7.2
 # Creates only a new, owned virtual disk and seed. Never configures the host OS.
 param([switch]$AcceptEvaluationLicense,[string]$TestSignedPackage,[ValidateSet('whpx','tcg')][string]$Accelerator='whpx',[switch]$Start,[string]$EwdkRoot)
 $ErrorActionPreference='Stop'

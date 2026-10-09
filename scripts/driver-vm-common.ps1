@@ -57,6 +57,12 @@ function Write-VmJson([string]$Directory,[string]$Name,$Value) {
     $temporary=Assert-LabPath (Join-Path $Directory ('write-'+[Guid]::NewGuid().ToString('N')+'.tmp')) $Directory -MayNotExist
     try{
         [IO.File]::WriteAllText($temporary,($Value | ConvertTo-Json -Depth 8 -Compress),[Text.UTF8Encoding]::new($false))
+        # Elevated Windows tokens can default a new file's owner to Administrators.
+        # Explicitly own only this newly created private temporary file; do not
+        # weaken the ownership checks on existing paths or foreign files.
+        $acl=Get-Acl -LiteralPath $temporary
+        $acl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User)
+        Set-Acl -LiteralPath $temporary -AclObject $acl
         Assert-VmPrivateAcl $temporary $Directory | Out-Null;[IO.File]::Move($temporary,$path,$true)
     }finally{if(Test-Path -LiteralPath $temporary){Remove-Item -LiteralPath $temporary}}
 }
@@ -74,7 +80,7 @@ function Get-VmArguments([string]$Vm,$State,[switch]$BootInstalled) {
     $diskBoot=$BootInstalled -or $State.installed
     if(!$diskBoot -and (Test-Path -LiteralPath (Join-Path $Vm 'process.json'))){throw 'Initial ISO boot is allowed once; use -BootInstalled to resume the owned disk'}
     foreach($path in @($State.disk,$State.iso,$State.seed,$Vm)){if($path.Contains(',') -or $path.Contains('"')){throw 'Unsupported VM path delimiter'}}
-    $arguments=@('-machine','q35','-accel',$State.accelerator,'-cpu','max','-smp','2','-m','6144','-display','none','-nic','none','-monitor','none','-qmp','stdio',
+    $arguments=@('-machine','q35','-accel',$State.accelerator,'-cpu','max','-smp','2','-m','6144','-display','none','-nic','none','-monitor','none','-qmp','stdio','-no-reboot',
         '-serial',('file:'+(Join-Path $Vm 'serial.log')),'-smbios',('type=1,manufacturer=QEMU,product=VeyloDriverLab,uuid='+$State.id),
         '-drive',('file='+$State.disk+',format=qcow2,if=ide,index=0'))
     if(!$diskBoot){$arguments+=@('-drive',('file='+$State.iso+',media=cdrom,if=ide,index=2,readonly=on'))}

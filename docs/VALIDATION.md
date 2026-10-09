@@ -9,7 +9,7 @@ This self-signed lab certificate is deliberately rejected by the normal helper.
 
 Passed: six CTest groups and six AddressSanitizer groups, including 24 offline
 capture-analyzer checks; 110 managed checks, offline WPF/persistence/shutdown,
-18 driver helper checks, eight unsigned-manifest regressions and 32 offline VM
+18 driver helper checks, eight unsigned-manifest regressions and 33 offline VM
 control regressions. The existing locked helper test output was avoided with a
 separate output directory. Secret/dependency/static checks and latest-all lab
 helper analyzers passed. No UI design changed in this checkpoint.

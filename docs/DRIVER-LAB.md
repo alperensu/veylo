@@ -103,6 +103,13 @@ kurulumu ilk açılışta gerçekleşir. `guest.ps1`, QEMU üretici/model bilgis
 **yalnız guest içinde** açık test sertifikasını Root/TrustedPublisher deposuna
 ekler ve guest test-signing'i açar. Ardından sürücüyü kurmadan kapanır.
 
+QEMU `-no-reboot` ile çalışır: Windows yeniden başlatma istediğinde süreç
+kapanır. Aynı sanal diskte kuruluma `start-driver-vm.ps1 -VmDirectory $vm
+-BootInstalled` ile devam edilir; bu yol ISO'yu bağlamaz ve diski yeniden
+biçimlendirmez. WHPX'nin sıcak reset hatası böylece izole edilir. Windows'un
+kurulum yeniden başlatması, aşağıdaki sürücü öncesi hazırlık mesajıyla aynı
+şey değildir; mesaj gelmeden hazırlık tamamlandı veya snapshot alındı denmez.
+
 QMP, özel supervisor sürecinin `stdio` kanalındadır; ağ dinleyicisi açılmaz.
 Kontrol istekleri aynı VM'nin owner/SYSTEM-only klasöründe, sabit komutlar ve
 oturum kimliğiyle işlenir. Çalışan VM'nin durumunu ve ekranını görmek için:

@@ -20,8 +20,12 @@ try{
     Set-Acl -LiteralPath $vm -AclObject (Get-Acl -LiteralPath $fixture)
     $metadata=Join-Path $vm 'vm.json';$disk=Join-Path $vm 'windows.qcow2'
     [IO.File]::WriteAllText($disk,'owned fixture; not a disk')
+    $diskAcl=Get-Acl -LiteralPath $disk;$diskAcl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $disk -AclObject $diskAcl
     $identity=[ordered]@{schema=1;id=[Guid]::NewGuid().ToString('D');ownedBy='Veylo isolated driver lab';disk=$disk;iso=(Join-Path $base 'Windows11-IoT-LTSC-2024-eval.iso');seed=(Join-Path $fixture 'artifacts/driver-test-signing/seed');accelerator='tcg';hostSecurityChanged=$false;installed=$false}
-    function Save-Identity { [IO.File]::WriteAllText($metadata,($identity | ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false)) }
+    function Save-Identity {
+        [IO.File]::WriteAllText($metadata,($identity | ConvertTo-Json -Compress),[Text.UTF8Encoding]::new($false))
+        $fileAcl=Get-Acl -LiteralPath $metadata;$fileAcl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $metadata -AclObject $fileAcl
+    }
     Save-Identity
     Check ((Get-OwnedVm $vm).state.id -ceq $identity.id) 'owned canonical metadata accepted without launching'
     $old=$identity.id;$identity.id='invalid';Save-Identity;Reject {Get-OwnedVm $vm} 'malformed UUID rejected';$identity.id=$old
@@ -37,6 +41,7 @@ try{
     $args=Get-VmArguments $vm ([pscustomobject]$identity)
     Check (($args -contains 'stdio') -and !($args -match 'tcp:') -and ($args -contains 'usb-storage,drive=seed,removable=on')) 'launcher has no TCP and uses removable private seed'
     Check ($args -contains 'order=c,once=d') 'fresh initial ISO boot allowed'
+    Check ($args -contains '-no-reboot') 'guest reset exits for explicit cold disk resume'
     Write-VmJson $vm 'process.json' @{schema=2;phase='exited'}
     Reject {Get-VmArguments $vm ([pscustomobject]$identity)} 'repeat initial ISO boot rejected to prevent disk wipe'
     $args=Get-VmArguments $vm ([pscustomobject]$identity) -BootInstalled
