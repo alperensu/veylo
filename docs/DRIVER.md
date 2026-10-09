@@ -82,6 +82,16 @@ standart, özel havuz, IRQL, I/O, deadlock, security ve code integrity kontrolle
 VM sorununda snapshot'a dön. HVCI açık ortamda ayrıca doğrula; NX/integer kod
 ve başarılı derleme tek başına HVCI uyumluluğu kanıtı değildir.
 
+Kullanıcı alanındaki aktarım worker'ı özel zamanlayıcı ve MMCSS Pro Audio
+kullanır; ses callback'i sürücü çağrısı yapmaz. Overlapped I/O için normal
+bekleme 30 ms, iptal tamamlanması için ek bekleme en fazla 250 ms'dir.
+İptal isteği tamamlanmazsa OVERLAPPED, giriş/çıkış belleği ve iki özel handle
+tek karantina slotunda süreç kapanana kadar korunur. Uygulama kapanışı bu
+isteği sonsuza kadar beklemez; hata durumu korunur ve aynı süreçte yeni
+sürücü bağlantısı reddedilir. Yeniden denemek için uygulamayı yeniden açmak
+gerekir. Bu sınır native modülün süreç boyunca yüklü kalmasını gerektirir;
+mevcut uygulama native DLL'yi boşaltıp yeniden yüklemez.
+
 Kabul matrisi: açılış/gizli açılış, eski ayarlar, iki mikrofon, çıkar/tak,
 uyku/uyanma, üretici kapat/çökert, kur/güncelle/geri al/kaldır/reboot; PCM16/32;
 gerçek bir saatlik saat/tampon testi; starvation/bağlantı kopunca sessizlik,

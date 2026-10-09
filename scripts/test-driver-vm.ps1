@@ -198,6 +198,73 @@ try{
     Set-Acl -LiteralPath $versionManifest -AclObject (Get-Acl -LiteralPath (Join-Path $versionDirectory 'driver-vm-version-transition.ps1'))
     # Extract only the pure ACL guard; never execute the guest runner on host.
     $guestAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'driver-vm-acceptance.ps1'),[ref]$null,[ref]$null)
+    # Only the pure report decision enters this runspace; no guest runner,
+    # driver, device, certificate, registry or host audio is accessed.
+    $captureDefinition=$guestAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Test-CaptureReport'},$true)
+    if(!$captureDefinition){throw 'Missing capture report decision.'}
+    $captureRunspace=[PowerShell]::Create()
+    try{
+        $null=$captureRunspace.AddScript({param($helper)
+            $ErrorActionPreference='Stop';Set-StrictMode -Version 2.0
+            . ([ScriptBlock]::Create($helper))
+            function New-InertCapture {
+                return @{schema=1;checks=33;failures=0;unsupported=0;verified_endpoints=1;formats_passed=2;self_tests=0;
+                    extended_kernel_capture=@{requested=$true;ran=$true;mode='production_driver_bridge';requested_seconds=60;elapsed_ms=60000;
+                        product_bridge=@{requested=$true;ran=$true;source='native/src/driver_bridge.hpp';worker_mmcss_pro_audio=$true;
+                            queue_drops=0;submitted_packets=5896;source_sessions=3;last_observed_status=2;last_observed_error=0}}}
+            }
+            function Emit-Capture([bool]$Passed,[string]$Name){[pscustomobject]@{passed=$Passed;name=$Name}}
+            Emit-Capture (Test-CaptureReport (New-InertCapture) $true 60 $true) 'product bridge complete report accepted'
+            $strict=New-InertCapture;$strict.extended_kernel_capture.mode='strict_synthetic_producer'
+            Emit-Capture (Test-CaptureReport $strict $true 60 $false) 'strict producer complete report accepted'
+            Emit-Capture (!(Test-CaptureReport $strict $true 60 $true)) 'strict report cannot satisfy product request'
+            Emit-Capture (!(Test-CaptureReport (New-InertCapture) $true 60 $false)) 'product report cannot satisfy strict request'
+            Emit-Capture (Test-CaptureReport (New-InertCapture) $false 60 $false) 'ordinary capture base evidence accepted'
+            Emit-Capture (!(Test-CaptureReport (New-InertCapture) $false 60 $true)) 'product without extended rejected'
+            Emit-Capture (!(Test-CaptureReport $null $true 60 $true)) 'missing report rejected'
+            foreach($field in @('schema','checks','failures','unsupported','verified_endpoints','formats_passed','self_tests')){
+                $report=New-InertCapture;$report[$field]=99
+                if($field -ceq 'checks'){$report[$field]=0}
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) ('invalid base '+$field)
+            }
+            foreach($change in @(@{key='requested';value=$false},@{key='ran';value=$false},@{key='mode';value='other'},
+                @{key='requested_seconds';value=59},@{key='elapsed_ms';value=59999},@{key='elapsed_ms';value=61001})){
+                $report=New-InertCapture;$report.extended_kernel_capture[$change.key]=$change.value
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) ('invalid extended '+$change.key+'='+$change.value)
+            }
+            foreach($change in @(@{key='requested';value=$false},@{key='ran';value=$false},@{key='source';value='copy'},
+                @{key='worker_mmcss_pro_audio';value=$false},@{key='queue_drops';value=1},@{key='submitted_packets';value=0},
+                @{key='source_sessions';value=2},@{key='last_observed_status';value=6},@{key='last_observed_error';value=1460})){
+                $report=New-InertCapture;$report.extended_kernel_capture.product_bridge[$change.key]=$change.value
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) ('invalid bridge '+$change.key)
+            }
+            foreach($field in @('requested','ran','source','worker_mmcss_pro_audio','queue_drops','submitted_packets','source_sessions','last_observed_status','last_observed_error')){
+                $report=New-InertCapture;$report.extended_kernel_capture.product_bridge.Remove($field)
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) ('missing bridge '+$field)
+            }
+            foreach($value in @(@(0,0),'0',0.0,-1,$null,$true)){
+                foreach($field in @('failures','checks')){
+                    $report=New-InertCapture;$report[$field]=$value
+                    Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) ('malformed base scalar '+$field)
+                }
+                foreach($field in @('queue_drops','submitted_packets','source_sessions')){
+                    $report=New-InertCapture;$report.extended_kernel_capture.product_bridge[$field]=$value
+                    Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) ('malformed bridge scalar '+$field)
+                }
+                $report=New-InertCapture;$report.extended_kernel_capture.elapsed_ms=$value
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) 'malformed measured duration scalar'
+            }
+            foreach($value in @('true',1,@($true,$true),$null)){
+                $report=New-InertCapture;$report.extended_kernel_capture.product_bridge.worker_mmcss_pro_audio=$value
+                Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) 'malformed MMCSS boolean'
+            }
+            $report=New-InertCapture;$report.extended_kernel_capture.product_bridge.source_sessions=99
+            Emit-Capture (!(Test-CaptureReport $report $true 60 $true)) 'extra owner sessions cannot satisfy exact lifecycle'
+        }).AddArgument($captureDefinition.Extent.Text)
+        $captureResults=@($captureRunspace.Invoke())
+        if($captureRunspace.Streams.Error.Count -gt 0 -or $captureResults.Count -ne 79){throw 'Capture report fixtures failed.'}
+        foreach($captureResult in $captureResults){Check $captureResult.passed ('inert capture report '+$captureResult.name)}
+    }finally{$captureRunspace.Dispose()}
     $stopDefinition=$guestAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Stop-BoundedGuestChild'},$true)
     if(!$stopDefinition){throw 'Missing bounded child stop helper.'}
     $stopRunspace=[PowerShell]::Create()

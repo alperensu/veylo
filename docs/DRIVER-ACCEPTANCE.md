@@ -45,6 +45,9 @@ $runner = 'C:\VeyloAcceptance\driver-vm-acceptance.ps1'
 & $runner -VmId $id -Mode Diagnostics
 & $runner -VmId $id -Mode Capture -Extended -DurationSeconds 60
 & $runner -VmId $id -Mode Capture -Extended -DurationSeconds 3600
+# Uygulamanın gerçek kullanıcı alanı aktarım yolunu ayrıca doğrula:
+& $runner -VmId $id -Mode Capture -Extended -ProductBridge -DurationSeconds 60
+& $runner -VmId $id -Mode Capture -Extended -ProductBridge -DurationSeconds 3600
 ```
 
 - **Diagnostics:** Anahtarları kaydetmeden lisans durumu, DeviceGuard/VBS, CPU
@@ -61,6 +64,17 @@ $runner = 'C:\VeyloAcceptance\driver-vm-acceptance.ps1'
   IOCTL süresi ve en düşük kuyruk doluluğu ayrı raporlanır. 50 ms üretici
   gecikmesi dış sınırdır; tamponun 50 ms kesintiyi karşılayacağı iddiası değildir.
   Sürekli akışta tek underrun bile koşuyu başarısız yapar.
+  **ProductBridge:** 480 float frame/10 ms örnekleri doğrudan uygulamanın
+  `DriverBridge` sınıfına verir. Gerçek dört blokluk TransferQueue, PCM32
+  dönüşümü, özel 2 ms worker zamanlayıcısı ve sürücü IOCTL yolu kullanılır.
+  Worker da MMCSS Pro Audio ile çalışmalıdır. Her callback'in başarılı WRITE
+  ve ayrı gözlenen kernel received sayacına ulaşması, sıfır kuyruk kaybı ve
+  üç gerçek üretici oturumu zorunludur. Oturum kapanışındaki 150 ms flush
+  sınırı aşılırsa test başarısız olur. Rapor bu modu açıkça ayırır; atomik
+  worker örneklerini doğrudan STATUS çağrısı süresi gibi sunmaz. Bu mod da
+  fiziksel mikrofon/DSP veya iki ayrı alıcı uygulama kabulü değildir.
+  ProductBridge yalnız Extended/Capture ile kullanılabilir. Varsayılan
+  sentetik üretici testi ve onun başarısızlık kayıtları korunur.
 - **CodeIntegrityVerifier:** Yalnız `SesMicrophone.sys` için `0x021209bb` bayraklarını
   ayarlar. Yeniden başlatmak gerekir; yeniden açılışta logdan gerçekten etkin
   olduğunu doğrula. Bu kontrol, HVCI açık testin yerine geçmez.

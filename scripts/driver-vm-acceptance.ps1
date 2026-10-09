@@ -5,6 +5,7 @@ param(
     [ValidateSet('Diagnostics','CodeIntegrityVerifier','EnableHvciLab','Capture','RemoveReinstall','HibernatePrepare','HibernateVerify','Shutdown')]
     [string]$Mode='Diagnostics',
     [switch]$Extended,
+    [switch]$ProductBridge,
     [ValidateRange(10,3600)][int]$DurationSeconds=60
 )
 $ErrorActionPreference='Stop'
@@ -18,10 +19,11 @@ if($VmId -eq [Guid]::Empty -or $system.Manufacturer -cne 'QEMU' -or
    ![Guid]::TryParse([string]$product.UUID,[ref]$hardwareId) -or $hardwareId -ne $VmId){
     throw 'Guest identity rejected: this runner requires its exact isolated Veylo VM UUID.'
 }
-if(($Extended -or $PSBoundParameters.ContainsKey('DurationSeconds')) -and $Mode -cne 'Capture'){
+if(($Extended -or $ProductBridge -or $PSBoundParameters.ContainsKey('DurationSeconds')) -and $Mode -cne 'Capture'){
     throw 'Capture options are valid only in Capture mode.'
 }
 if($PSBoundParameters.ContainsKey('DurationSeconds') -and !$Extended){throw 'DurationSeconds requires Extended.'}
+if($ProductBridge -and !$Extended){throw 'ProductBridge requires Extended.'}
 $acceptanceRoot='C:\VeyloAcceptance'
 $labRoot='C:\VeyloLab'
 $outputNames=@('diagnostics.json','verifier.json','capture-result.json','capture.json','capture.log',
@@ -132,6 +134,42 @@ function Write-Report([string]$Name,$Value,[string]$Tag='VEYLO_ACCEPTANCE_RESULT
 function New-Result([string]$Status){
     return [ordered]@{schema=1;vmId=$VmId.ToString('D');mode=$Mode;status=$Status;
         utc=[DateTime]::UtcNow.ToString('o');testOnly=$true;productionReady=$false}
+}
+function Test-CaptureReport($Evidence,[bool]$ExtendedRequested,[int]$Seconds,[bool]$ProductBridgeRequested){
+    # A missing or malformed report never turns a tool success into acceptance.
+    try{
+        function Test-ReportInteger($Value){
+            return (($Value -is [int] -or $Value -is [long] -or $Value -is [uint32] -or $Value -is [uint64]) -and $Value -ge 0)
+        }
+        if($ProductBridgeRequested -and !$ExtendedRequested){return $false}
+        foreach($name in @('schema','checks','failures','unsupported','verified_endpoints','formats_passed','self_tests')){
+            if(!(Test-ReportInteger $Evidence.$name)){return $false}
+        }
+        if($Evidence.schema -ne 1 -or $Evidence.checks -le 0 -or $Evidence.failures -ne 0 -or
+           $Evidence.unsupported -ne 0 -or $Evidence.verified_endpoints -ne 1 -or
+           $Evidence.formats_passed -ne 2 -or $Evidence.self_tests -ne 0){return $false}
+        if(!$ExtendedRequested){return $true}
+        $extended=$Evidence.extended_kernel_capture
+        if($extended.requested -isnot [bool] -or $extended.ran -isnot [bool] -or $extended.mode -isnot [string] -or
+           !(Test-ReportInteger $extended.requested_seconds) -or !(Test-ReportInteger $extended.elapsed_ms)){return $false}
+        $expectedMode=if($ProductBridgeRequested){'production_driver_bridge'}else{'strict_synthetic_producer'}
+        if($extended.requested -cne $true -or $extended.ran -cne $true -or $extended.mode -cne $expectedMode -or
+           $extended.requested_seconds -ne $Seconds -or $extended.elapsed_ms -lt $Seconds*1000 -or
+           $extended.elapsed_ms -gt ($Seconds*1000+1000)){return $false}
+        if($ProductBridgeRequested){
+            $bridge=$extended.product_bridge
+            if($bridge.requested -isnot [bool] -or $bridge.ran -isnot [bool] -or
+               $bridge.worker_mmcss_pro_audio -isnot [bool] -or $bridge.source -isnot [string]){return $false}
+            foreach($name in @('queue_drops','submitted_packets','source_sessions','last_observed_status','last_observed_error')){
+                if(!(Test-ReportInteger $bridge.$name)){return $false}
+            }
+            if($bridge.requested -cne $true -or $bridge.ran -cne $true -or
+               $bridge.source -cne 'native/src/driver_bridge.hpp' -or $bridge.worker_mmcss_pro_audio -cne $true -or
+               $bridge.queue_drops -ne 0 -or $bridge.submitted_packets -le 0 -or $bridge.source_sessions -ne 3 -or
+               $bridge.last_observed_status -ne 2 -or $bridge.last_observed_error -ne 0){return $false}
+        }
+        return $true
+    }catch{return $false}
 }
 # Child output is drained asynchronously, bounded to 1 MiB per invocation, and
 # killed on a deadline or output flood. No shell or user supplied arguments.
@@ -726,6 +764,7 @@ try{
             if(Test-Path -LiteralPath $jsonPath){Remove-Item -LiteralPath $jsonPath}
             $arguments=@('--isolated-lab','--json-report',$jsonPath)
             if($Extended){$arguments+=@('--extended','--duration-seconds',[string]$DurationSeconds)}
+            if($ProductBridge){$arguments+='--product-bridge'}
             $deadline=180;if($Extended){$deadline+=$DurationSeconds}
             $result.process=Invoke-BoundedTool (Join-Path $acceptanceRoot 'ses_driver_capture_lab_tests.exe') $arguments 'capture.log' $deadline
             try{
@@ -738,14 +777,7 @@ try{
             }
             $evidence=$result.capture
             $passed=($result.process.exitCode -eq 0 -and !$result.process.timedOut -and !$result.process.outputLimited -and
-                $evidence.schema -eq 1 -and $evidence.checks -gt 0 -and $evidence.failures -eq 0 -and $evidence.unsupported -eq 0 -and
-                $evidence.verified_endpoints -eq 1 -and $evidence.formats_passed -eq 2 -and $evidence.self_tests -eq 0)
-            if($Extended){
-                $extendedEvidence=$evidence.extended_kernel_capture
-                $passed=$passed -and $extendedEvidence.requested -eq $true -and $extendedEvidence.ran -eq $true -and
-                    $extendedEvidence.requested_seconds -eq $DurationSeconds -and $extendedEvidence.elapsed_ms -ge $DurationSeconds*1000 -and
-                    $extendedEvidence.elapsed_ms -le ($DurationSeconds*1000+1000)
-            }
+                (Test-CaptureReport $evidence $Extended.IsPresent $DurationSeconds $ProductBridge.IsPresent))
             $result.status=if($passed){'Passed'}else{'Findings'}
             Write-Report 'capture-result.json' $result
         }

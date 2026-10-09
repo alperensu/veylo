@@ -29,6 +29,7 @@
 #include <thread>
 #include "../../driver/shared/ses_driver_protocol.h"
 #include "../../driver/shared/pcm_ring.h"
+#include "../src/driver_bridge.hpp"
 
 namespace {
 constexpr double pi = 3.14159265358979323846;
@@ -65,6 +66,9 @@ struct ProducerStatusHistory {
 };
 struct ExtendedEvidence {
     bool requested=false, ran=false;
+    bool product=false,workerMmcss=false;
+    uint64_t submittedPackets=0;
+    uint32_t queueDrops=0,sourceSessions=0,bridgeStatus=0,bridgeLastError=0;
     unsigned requestedSeconds=0;
     uint64_t elapsedMs=0, writes=0, maxLatenessMs=0, maxWriteGap100ns=0, maxIoctl100ns=0;
     uint32_t minimumQueuedSteady=std::numeric_limits<uint32_t>::max();
@@ -97,6 +101,7 @@ struct Report {
         bool ok=n>0;
         const auto& e=extended;
         ok=std::fprintf(file,"\"extended_kernel_capture\":{\"requested\":%s,\"ran\":%s,"
+            "\"mode\":\"%s\","
             "\"scope\":\"two_shared_WASAPI_clients_one_process_PCM32_not_two_applications\","
             "\"requested_seconds\":%u,\"elapsed_ms\":%llu,\"writes\":%llu,\"maximum_producer_lateness_ms\":%llu,"
             "\"maximum_steady_write_completion_gap_us\":%llu,\"maximum_ioctl_duration_us\":%llu,"
@@ -104,7 +109,7 @@ struct Report {
             "\"consumer_mmcss_pro_audio\":%s,\"max_consumer_drain_gap_us\":%llu,"
             "\"status_samples\":%u,\"producer_reconnects\":%u,\"driver_received_frames\":%llu,"
             "\"driver_silence_frames\":%llu,\"driver_underruns\":%u,\"driver_overruns\":%u,\"steady_underruns\":%u,\"clients\":[",
-            e.requested?"true":"false",e.ran?"true":"false",e.requestedSeconds,
+            e.requested?"true":"false",e.ran?"true":"false",e.product?"production_driver_bridge":"strict_synthetic_producer",e.requestedSeconds,
             static_cast<unsigned long long>(e.elapsedMs),static_cast<unsigned long long>(e.writes),
             static_cast<unsigned long long>(e.maxLatenessMs),static_cast<unsigned long long>(e.maxWriteGap100ns/10),
             static_cast<unsigned long long>(e.maxIoctl100ns/10),
@@ -122,8 +127,9 @@ struct Report {
                 static_cast<unsigned long long>(c.gaps),c.windows[0],c.windows[1],c.windows[2],c.silenceChecks,c.reconnects)>0&&ok;
         }
         ok=std::fprintf(file,"],\"producer_status_history\":{\"capacity\":%zu,\"count\":%zu,"
-            "\"time_origin\":\"producer_measured_QPC_begin\",\"observations\":[",
-            ProducerStatusHistory::capacity,e.statusHistory.count)>0&&ok;
+            "\"time_origin\":\"producer_measured_QPC_begin\",\"source\":\"%s\",\"status_duration_available\":%s,\"observations\":[",
+            ProducerStatusHistory::capacity,e.statusHistory.count,e.product?"bridge_worker_atomic_snapshot":"strict_producer_STATUS_ioctl",
+            e.product?"false":"true")>0&&ok;
         for(size_t i=0;i<e.statusHistory.count;++i) {
             const auto& o=e.statusHistory.oldest(i);
             ok=std::fprintf(file,"%s{\"sample\":%llu,\"elapsed_us\":%llu,\"due_us\":%llu,\"lateness_us\":%llu,"
@@ -136,7 +142,15 @@ struct Report {
                 static_cast<unsigned long long>(o.sinceWrite100ns/10),o.phase,o.steady?"true":"false",o.queued,o.drift,
                 static_cast<unsigned long long>(o.received),static_cast<unsigned long long>(o.silence),o.underruns,o.overruns)>0&&ok;
         }
-        ok=std::fprintf(file,"]}}}\n")>0&&ok;
+        ok=std::fprintf(file,"]},\"product_bridge\":{\"requested\":%s,\"ran\":%s,"
+            "\"source\":\"native/src/driver_bridge.hpp\",\"upstream_packet_frames\":480,\"upstream_packet_period_us\":10000,"
+            "\"transfer_queue_capacity_packets\":4,\"worker_period_us\":2000,\"driver_write_threshold_frames\":961,"
+            "\"worker_mmcss_pro_audio\":%s,\"queue_drops\":%u,\"submitted_packets\":%llu,\"source_sessions\":%u,"
+            "\"last_observed_status\":%u,\"last_observed_error\":%u,"
+            "\"driver_counter_scope\":\"sum_of_connected_source_session_deltas_excludes_disconnected_holds\","
+            "\"bounded_flush_deadline_ms\":150}}}\n",e.product&&e.requested?"true":"false",e.product&&e.ran?"true":"false",
+            e.workerMmcss?"true":"false",e.queueDrops,static_cast<unsigned long long>(e.submittedPackets),e.sourceSessions,
+            e.bridgeStatus,e.bridgeLastError)>0&&ok;
         return std::fclose(file)==0&&ok;
     }
 };
@@ -644,6 +658,18 @@ struct ProducerPublication {
     bool ready=false,done=false;
     const char* failure=nullptr;
 };
+bool productDeliveryComplete(uint64_t submitted,uint64_t sent,uint64_t received,uint64_t baseline) {
+    return submitted<=std::numeric_limits<uint64_t>::max()/SES_DRIVER_FRAMES&&received>=baseline&&
+        sent==submitted*SES_DRIVER_FRAMES&&received-baseline==sent;
+}
+bool productFlushComplete(uint64_t submitted,uint64_t sent,uint64_t received,uint64_t baseline,
+    uint64_t now,uint64_t deadline) {
+    return now<=deadline&&productDeliveryComplete(submitted,sent,received,baseline);
+}
+bool productTelemetryHealthy(uint32_t status,uint32_t protocol,bool workerMmcss,uint32_t queueDrops,
+    uint32_t overruns,uint32_t steadyUnderruns) {
+    return status==2&&protocol==SES_DRIVER_PROTOCOL&&workerMmcss&&queueDrops==0&&overruns==0&&steadyUnderruns==0;
+}
 struct ExtendedProducer {
     std::mutex mutex;
     ProducerPublication publication;
@@ -788,7 +814,158 @@ struct ExtendedProducer {
         driver.close();state.done=true;publish(state);finished=true;
     }
 };
-bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
+// This producer only supplies the application's 480-frame upstream callback.
+// The actual DriverBridge owns TransferQueue, PCM conversion, IOCTLs and its
+// private 2 ms cadence; no lab implementation substitutes for that worker.
+struct ProductBridgeProducer {
+    std::mutex mutex;
+    ProducerPublication publication;
+    std::atomic<bool> stop{false},finished{false};
+    std::atomic<unsigned> resumePermit{0};
+    std::thread worker;
+    ProductBridgeProducer(unsigned seconds):worker([this,seconds]{run(seconds);}){}
+    ProducerPublication snapshot(){std::lock_guard<std::mutex> lock(mutex);return publication;}
+    void publish(const ProducerPublication& state){std::lock_guard<std::mutex> lock(mutex);publication=state;}
+    void finish() {
+        stop=true;
+        if(worker.joinable()) {
+            const uint64_t deadline=GetTickCount64()+1000;
+            while(!finished&&GetTickCount64()<deadline)Sleep(1);
+            if(!finished){std::puts("Findings product producer shutdown deadline exceeded; process terminates.");std::fflush(stdout);ExitProcess(5);}
+            worker.join();
+        }
+    }
+    ~ProductBridgeProducer(){finish();}
+    void run(unsigned seconds) {
+        ProducerPublication state{};auto& e=state.evidence;e.product=true;e.workerMmcss=true;
+        ses::DriverBridge bridge;Handle timer;MmcssAudio mmcss;e.mmcss=mmcss.ready;
+        uint64_t baselineReceived=0,baselineSilence=0,sessionSubmitted=0;
+        uint64_t previousReceived=0,previousSilence=0;
+        uint32_t baselineUnderruns=0,baselineOverruns=0,previousUnderruns=0,previousOverruns=0;
+        uint64_t totalReceived=0,totalSilence=0,totalSent=0;
+        uint32_t totalUnderruns=0,totalOverruns=0,totalDrops=0;
+        bool sessionOpen=false,haveSteady=false;
+        std::array<std::array<float,SES_DRIVER_FRAMES>,4> pcm{};
+        for(unsigned p=0;p<4;++p)for(unsigned i=0;i<SES_DRIVER_FRAMES;++i)
+            pcm[p][i]=static_cast<float>(waveform(p*SES_DRIVER_FRAMES+i));
+        auto fail=[&](const char* reason){state.failure=reason;publish(state);};
+        auto connect=[&]() {
+            bridge.start();const uint64_t deadline=qpc100ns()+2000000;
+            while(!stop&&bridge.status!=2&&bridge.status!=6&&qpc100ns()<deadline)Sleep(1);
+            e.bridgeStatus=bridge.status.load();e.bridgeLastError=bridge.lastError.load();
+            if(stop||bridge.status!=2||bridge.protocol!=SES_DRIVER_PROTOCOL||!bridge.workerMmcss||bridge.queued!=0)return false;
+            baselineReceived=previousReceived=bridge.received.load();baselineSilence=previousSilence=bridge.silence.load();
+            baselineUnderruns=previousUnderruns=bridge.underruns.load();baselineOverruns=previousOverruns=bridge.overruns.load();
+            sessionSubmitted=0;haveSteady=false;sessionOpen=true;++e.sourceSessions;return true;
+        };
+        auto readStatus=[&](bool steady,uint64_t began,uint64_t due,unsigned phase) {
+            const uint64_t sampled=qpc100ns();
+            const uint64_t received=bridge.received.load(),quiet=bridge.silence.load(),sent=bridge.sent.load();
+            const uint32_t underruns=bridge.underruns.load(),overruns=bridge.overruns.load(),drops=bridge.queueDrops.load();
+            const uint32_t queued=bridge.queued.load();const int32_t drift=bridge.drift.load();
+            e.workerMmcss=e.workerMmcss&&bridge.workerMmcss.load();
+            e.bridgeStatus=bridge.status.load();e.bridgeLastError=bridge.lastError.load();
+            const bool valid=e.bridgeStatus==2&&bridge.protocol==SES_DRIVER_PROTOCOL&&e.workerMmcss&&queued<=SES_DRIVER_CAPACITY&&
+                drift>=-5005&&drift<=5005&&received>=previousReceived&&quiet>=previousSilence&&
+                underruns>=previousUnderruns&&overruns>=previousOverruns&&sent%SES_DRIVER_FRAMES==0;
+            if(received<baselineReceived||quiet<baselineSilence||underruns<baselineUnderruns||overruns<baselineOverruns)return false;
+            e.writes=(totalSent+sent)/SES_DRIVER_FRAMES;e.queueDrops=totalDrops+drops;
+            e.driverReceivedFrames=totalReceived+received-baselineReceived;
+            e.driverSilenceFrames=totalSilence+quiet-baselineSilence;
+            e.driverUnderruns=totalUnderruns+underruns-baselineUnderruns;
+            e.driverOverruns=totalOverruns+overruns-baselineOverruns;
+            e.maxWriteGap100ns=std::max(e.maxWriteGap100ns,bridge.maxWriteGap100ns.load());
+            e.maxIoctl100ns=std::max(e.maxIoctl100ns,bridge.maxIoctl100ns.load());
+            ProducerStatusObservation observation{};observation.sample=++e.statusSamples;
+            observation.elapsed100ns=sampled>=began?sampled-began:0;observation.due100ns=due>=began?due-began:0;
+            observation.lateness100ns=sampled>=due?sampled-due:0;
+            // STATUS timings are unavailable as an isolated operation: this
+            // history samples genuine worker counters, with no lab STATUS call.
+            const uint64_t completion=bridge.lastWriteCompletion100ns.load();
+            observation.lastWriteGap100ns=bridge.lastWriteGap100ns.load();
+            observation.sinceWrite100ns=completion&&sampled>=completion?sampled-completion:0;
+            observation.phase=phase;observation.steady=steady;observation.queued=queued;observation.drift=drift;
+            observation.received=e.driverReceivedFrames;observation.silence=e.driverSilenceFrames;
+            observation.underruns=e.driverUnderruns;observation.overruns=e.driverOverruns;
+            e.statusHistory.append(observation);
+            if(steady){e.minimumQueuedSteady=std::min(e.minimumQueuedSteady,queued);
+                if(haveSteady)e.steadyUnderruns+=underruns-previousUnderruns;}
+            previousReceived=received;previousSilence=quiet;previousUnderruns=underruns;previousOverruns=overruns;haveSteady=steady;
+            return valid&&productTelemetryHealthy(e.bridgeStatus,bridge.protocol.load(),e.workerMmcss,
+                e.queueDrops,e.driverOverruns,e.steadyUnderruns);
+        };
+        auto closeSession=[&](bool steady,uint64_t began,uint64_t due,unsigned phase) {
+            // Every accepted callback must reach a successful production WRITE
+            // and a later independently observed kernel received counter.
+            const uint64_t deadline=qpc100ns()+1500000;
+            while(bridge.status==2&&qpc100ns()<deadline&&
+                !productDeliveryComplete(sessionSubmitted,bridge.sent.load(),bridge.received.load(),baselineReceived))Sleep(1);
+            const bool flushed=productFlushComplete(sessionSubmitted,bridge.sent.load(),bridge.received.load(),baselineReceived,
+                qpc100ns(),deadline);
+            const bool observed=readStatus(steady,began,due,phase);
+            const bool ok=flushed&&observed;
+            totalSent=e.writes*SES_DRIVER_FRAMES;
+            totalReceived=e.driverReceivedFrames;totalSilence=e.driverSilenceFrames;
+            totalUnderruns=e.driverUnderruns;totalOverruns=e.driverOverruns;totalDrops=e.queueDrops;
+            bridge.stop();sessionOpen=false;return ok;
+        };
+        timer.h=CreateWaitableTimerExW(nullptr,nullptr,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_MODIFY_STATE|SYNCHRONIZE);
+        if(!timer.h||!mmcss.ready)fail("product upstream private high-resolution timer or MMCSS Pro Audio registration");
+        else if(!connect())fail("real DriverBridge initial connection, ownership, protocol or worker MMCSS");
+        else {
+            ProducerSchedule schedule(qpc100ns(),seconds);state.began=schedule.began;state.ready=true;
+            state.phaseEpoch=schedule.phaseEpoch;publish(state);
+            while(!stop&&!state.failure&&qpc100ns()<schedule.end) {
+                uint64_t now=qpc100ns();
+                if(!schedule.paused()&&now>=schedule.nextWrite)e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
+                if(schedule.schedulerExpired(now)){fail("product upstream exceeds existing 50 ms scheduler deadline");break;}
+                if(schedule.pauseAllowed(now)) {
+                    if(!closeSession(true,schedule.began,schedule.nextWrite,schedule.phase)){fail("product lifecycle flush, queue drops or real driver counters");break;}
+                    now=qpc100ns();
+                    if(schedule.schedulerExpired(now)){fail("product lifecycle flush consumes existing 50 ms scheduler deadline");break;}
+                    schedule.pause(now);state.phase=schedule.phase;state.phaseEpoch=schedule.phaseEpoch;publish(state);
+                }
+                now=qpc100ns();
+                if(schedule.lifecycleExpired(now)){fail("product consumer silence/reconnect lifecycle acknowledgement deadline");break;}
+                if(schedule.resumeDue(now,resumePermit.load())) {
+                    if(!connect()){fail("real DriverBridge reconnect, ownership, protocol or worker MMCSS");break;}
+                    if(schedule.lifecycleExpired(qpc100ns())){fail("product bridge reconnect exceeds existing lifecycle deadline");break;}
+                    if(schedule.phase==3)++e.producerReconnects;
+                    schedule.resume(qpc100ns());state.phase=schedule.phase;state.phaseEpoch=schedule.phaseEpoch;publish(state);
+                }
+                now=qpc100ns();
+                if(!schedule.paused()&&now>=schedule.nextWrite) {
+                    e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
+                    if(schedule.schedulerExpired(now)){fail("product upstream deadline before TransferQueue callback");break;}
+                    if(!readStatus(now-schedule.phaseEpoch>=2500000,schedule.began,schedule.nextWrite,schedule.phase)) {
+                        fail("real DriverBridge counters, worker MMCSS, queue drops or steady underruns");break;}
+                    if(e.submittedPackets>=seconds*100ULL+16){fail("product upstream packet count bound");break;}
+                    // Counter sampling or preemption must not consume the
+                    // callback's deadline and then enqueue expired audio.
+                    now=qpc100ns();e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
+                    if(schedule.schedulerExpired(now)){fail("product counter sampling consumes existing 50 ms scheduler deadline");break;}
+                    bridge.push(pcm[sessionSubmitted%4].data());++sessionSubmitted;++e.submittedPackets;
+                    schedule.nextWrite+=ProducerSchedule::packetPeriod;publish(state);
+                }
+                now=qpc100ns();const uint64_t next=schedule.paused()?now+10000:std::min(schedule.nextWrite,schedule.end);
+                if(next>now) {
+                    LARGE_INTEGER due{};due.QuadPart=-static_cast<LONGLONG>(next-now);
+                    if(!SetWaitableTimerEx(timer.h,&due,0,nullptr,nullptr,nullptr,0)||WaitForSingleObject(timer.h,200)!=WAIT_OBJECT_0) {
+                        fail("product bounded private upstream timer wait");break;}
+                }
+            }
+            if(sessionOpen&&!state.failure&&!closeSession(!schedule.paused()&&qpc100ns()-schedule.phaseEpoch>=2500000,
+                schedule.began,schedule.nextWrite,schedule.phase))fail("product final flush or real driver counters");
+        }
+        if(sessionOpen) {
+            // Failure evidence must retain actual worker values, including any
+            // rejected queue/counter sample, before stop clears live state.
+            readStatus(false,state.began,qpc100ns(),state.phase);bridge.stop();
+        }
+        state.done=true;publish(state);finished=true;
+    }
+};
+template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
     auto& e=r.extended;e.ran=true;
     const unsigned before=r.failures;
     std::printf("Extended real kernel capture: %u seconds, two PCM32 shared clients in one process.\n",seconds);
@@ -803,7 +980,7 @@ bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
     timer.h=CreateWaitableTimerExW(nullptr,nullptr,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_MODIFY_STATE|SYNCHRONIZE);
     if(!timer.h){r.check(false,"extended private high-resolution consumer timer");return false;}
     StreamingAnalyzer analyzer;
-    ExtendedProducer producer(seconds);
+    Producer producer(seconds);
     const uint64_t startupDeadline=GetTickCount64()+1000;
     ProducerPublication state=producer.snapshot();
     while(!state.ready&&!state.done&&GetTickCount64()<startupDeadline){Sleep(1);state=producer.snapshot();}
@@ -927,6 +1104,11 @@ bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
         static_cast<unsigned long long>(e.maxConsumerDrainGap100ns/10),e.consumerMmcss?"Pro Audio":"failed");
     r.check(e.driverReceivedFrames==e.writes*SES_DRIVER_FRAMES,
         "driver received-frame counter matches every successful producer packet");
+    if(e.product) {
+        r.check(e.workerMmcss,"real DriverBridge worker registers MMCSS Pro Audio in every source session");
+        r.check(e.queueDrops==0&&e.writes==e.submittedPackets,"every real upstream callback reaches DriverBridge without TransferQueue drops");
+        r.check(e.sourceSessions==3,"real DriverBridge stop/start clears stale audio across both lifecycle changes");
+    }
     for(auto& consumer:consumers)consumer.close();analyzer.finish();
     r.check(ok&&!analyzer.failed,"extended capture keeps bounded memory, packet integrity, waveform fidelity and driver counters");
     r.check(e.elapsedMs>=seconds*1000ULL&&e.elapsedMs<=seconds*1000ULL+1000,"extended capture completes requested measured duration within bounded shutdown guard");
@@ -942,13 +1124,14 @@ bool runExtended(IMMDevice* device,unsigned seconds,Report& r) {
     return r.failures==before;
 }
 
-struct Options {bool offline=false,lab=false,extended=false;unsigned seconds=60;const char* reportPath=nullptr;};
+struct Options {bool offline=false,lab=false,extended=false,product=false;unsigned seconds=60;const char* reportPath=nullptr;};
 bool parseOptions(int argc,char** argv,Options& options) {
     bool durationSet=false;
     for(int i=1;i<argc;++i) {
         if(!std::strcmp(argv[i],"--self-test")&&!options.offline)options.offline=true;
         else if(!std::strcmp(argv[i],"--isolated-lab")&&!options.lab)options.lab=true;
         else if(!std::strcmp(argv[i],"--extended")&&!options.extended)options.extended=true;
+        else if(!std::strcmp(argv[i],"--product-bridge")&&!options.product)options.product=true;
         else if(!std::strcmp(argv[i],"--json-report")&&i+1<argc&&!options.reportPath&&argv[i+1][0]&&argv[i+1][0]!='-')options.reportPath=argv[++i];
         else if(!std::strcmp(argv[i],"--duration-seconds")&&i+1<argc&&!durationSet) {
             const char* value=argv[++i];unsigned seconds=0;
@@ -958,7 +1141,8 @@ bool parseOptions(int argc,char** argv,Options& options) {
             options.seconds=seconds;durationSet=true;
         } else return false;
     }
-    return options.offline!=options.lab&&(!options.extended||options.lab)&&(!durationSet||options.extended);
+    return options.offline!=options.lab&&(!options.extended||options.lab)&&(!durationSet||options.extended)&&
+        (!options.product||(options.lab&&options.extended&&durationSet));
 }
 void extendedSelfTest(Report& r) {
     auto check=[&](bool ok,const char* label){++r.selfTests;r.check(ok,label);};
@@ -1058,6 +1242,34 @@ void extendedSelfTest(Report& r) {
     optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","10junk"},false,"CLI rejects partially numeric duration");
     optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","9"},false,"CLI rejects too-short lifecycle observation");
     optionsCheck({"test","--self-test","--self-test"},false,"CLI rejects duplicate mode flags");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--product-bridge"},true,
+        "CLI permits explicit production DriverBridge with bounded extended lab duration");
+    optionsCheck({"test","--isolated-lab","--extended","--product-bridge"},false,
+        "CLI requires explicit measured duration for production DriverBridge acceptance");
+    optionsCheck({"test","--isolated-lab","--product-bridge","--duration-seconds","60"},false,
+        "CLI rejects production DriverBridge without extended capture");
+    optionsCheck({"test","--self-test","--product-bridge"},false,
+        "CLI never activates production DriverBridge on offline self-test");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--product-bridge","--product-bridge"},false,
+        "CLI rejects duplicate production DriverBridge flags");
+    check(productDeliveryComplete(3,1440,4800,3360)&&!productDeliveryComplete(3,960,4320,3360)&&
+        !productDeliveryComplete(3,1440,4320,3360)&&!productDeliveryComplete(3,1440,5280,3360),
+        "product terminal gate requires every callback and independent owner-session received-frame delta exactly");
+    check(!productDeliveryComplete(1,480,479,480)&&!productDeliveryComplete(1,481,961,480)&&
+        !productDeliveryComplete(std::numeric_limits<uint64_t>::max(),480,960,480),
+        "product terminal gate rejects counter rollback, partial packets and multiplication overflow");
+    check(productFlushComplete(1,480,960,480,1500000,1500000)&&
+        !productFlushComplete(1,480,960,480,1500001,1500000)&&
+        !productFlushComplete(1,0,480,480,1499999,1500000),
+        "product flush rejects late completion past exact 150 ms deadline and pending packets before it");
+    check(productTelemetryHealthy(2,SES_DRIVER_PROTOCOL,true,0,0,0)&&
+        !productTelemetryHealthy(6,SES_DRIVER_PROTOCOL,true,0,0,0)&&
+        !productTelemetryHealthy(2,SES_DRIVER_PROTOCOL+1,true,0,0,0)&&
+        !productTelemetryHealthy(2,SES_DRIVER_PROTOCOL,false,0,0,0)&&
+        !productTelemetryHealthy(2,SES_DRIVER_PROTOCOL,true,1,0,0)&&
+        !productTelemetryHealthy(2,SES_DRIVER_PROTOCOL,true,0,1,0)&&
+        !productTelemetryHealthy(2,SES_DRIVER_PROTOCOL,true,0,0,1),
+        "product telemetry fails closed for real worker failures, protocol, MMCSS, any queue drop, overrun or steady underrun");
     StreamingAnalyzer analyzer;std::vector<double> first(StreamingAnalyzer::blockFrames),late(first.size());
     for(size_t i=0;i<first.size();++i)first[i]=late[i]=waveform(i+37);
     late[late.size()/2]=std::numeric_limits<double>::quiet_NaN();
@@ -1070,10 +1282,11 @@ void extendedSelfTest(Report& r) {
 int main(int argc,char** argv) {
     Options options;
     if(!parseOptions(argc,argv,options)) {
-        std::puts("Usage: ses_driver_capture_lab_tests (--self-test | --isolated-lab [--extended [--duration-seconds 10..3600]]) [--json-report path]");return 2;
+        std::puts("Usage: ses_driver_capture_lab_tests (--self-test | --isolated-lab [--extended [--duration-seconds 10..3600] [--product-bridge]]) [--json-report path]; --product-bridge requires explicit --extended and --duration-seconds.");return 2;
     }
     Report report;
     report.extended.requested=options.extended;report.extended.requestedSeconds=options.extended?options.seconds:0;
+    report.extended.product=options.product;
     if(options.offline){selfTest(report);extendedSelfTest(report);}
     else {
         std::puts("--isolated-lab is an acknowledgement, not isolation. Run only in a dedicated lab.");
@@ -1084,7 +1297,10 @@ int main(int argc,char** argv) {
             const bool found=findDevice(selected,report);
             report.check(found,"exactly one capture endpoint maps to ROOT\\SES_MICROPHONE and service SesMicrophone");
             if(found){runFormat(selected.p,16,report);runFormat(selected.p,32,report);
-                if(options.extended&&report.failures==0&&report.unsupported==0)runExtended(selected.p,options.seconds,report);}
+                if(options.extended&&report.failures==0&&report.unsupported==0) {
+                    if(options.product)runExtended<ProductBridgeProducer>(selected.p,options.seconds,report);
+                    else runExtended<ExtendedProducer>(selected.p,options.seconds,report);
+                }}
         }
     }
     std::printf("%u checks, %u findings, %u unsupported formats; %u capture formats passed.\n",

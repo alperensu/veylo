@@ -1,3 +1,34 @@
+# Production bridge acceptance and bounded cancellation — 2026-10-09
+
+Passed: seven native Release and seven AddressSanitizer test groups. The
+offline-only driver I/O suite passed 557 checks, including a worker whose
+cancellation never completes: stop/join finished within the one-second fixture
+guard after the 250 ms cancellation grace. A late fake completion safely wrote
+the retained request after the caller/worker was destroyed. One request and two
+private handles remain quarantined; 100 rejected restarts allocated no new
+storage or handles. This tests injected OS leaves, not a faulty live kernel.
+The native module remains loaded for the application process lifetime.
+
+Passed: 57 offline capture analyzer/CLI/flush/counter checks, and 415 safe VM
+fixtures including 79 capture-report decisions. Two independent read-only Sol
+reviews found and verified fixes for the missing post-snapshot 50 ms deadline
+check, exact three-session acceptance, and malformed scalar/array report fields.
+Secret scanning found no leaks; Clang analysis had only the two previously
+reviewed upstream miniaudio dead initial stores.
+
+The optional ProductBridge mode feeds the real application DriverBridge instead
+of replacing it with the strict synthetic producer. Both paths retain the
+existing underrun, waveform, timestamp and lifecycle acceptance gates. The
+production worker now registers MMCSS Pro Audio/HIGH and bounds cancellation
+without freeing pending I/O storage. Kernel source, protocol 1, ABI 5 and the
+normal VB-CABLE route are unchanged. Active product-bridge capture is not yet
+established at this source checkpoint; the older hour failures below remain.
+
+Evidence: artifacts/driver-acceptance/{product-native-release.log,
+product-native-asan.log,product-capture-final-release.log,
+product-capture-final-asan.log,product-bridge-vm-fixtures.log,
+product-clang-analysis.log,product-secrets.log}.
+
 # Driver acceptance tools / source checkpoint — 2026-10-09
 
 Passed: six native and six AddressSanitizer groups; 44 offline capture checks,
@@ -385,8 +416,9 @@ physical latency and Microsoft production signing. The guest exposes hibernate
 but no standby state; cold boot is not sleep.
 HVCI configuration preserves its first protected registry/BCD baseline and only
 reports reboot required until actual VBS/running-service evidence is collected.
-The pre-existing production bridge wait after CancelIoEx remains unbounded for
-a faulty kernel driver that never completes cancellation. Daily-use readiness
+The production bridge wait after CancelIoEx was unbounded at this older
+checkpoint; the bounded-cancellation section above records its replacement.
+Daily-use readiness
 remains false; the daily host security settings and saved user state are preserved.
 
 Evidence: artifacts/driver-acceptance/{capture-ci-60-dedicated-producer-serial.log,
