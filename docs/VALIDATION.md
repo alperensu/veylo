@@ -288,7 +288,15 @@ checks passed in both Windows PowerShell 5.1 and PowerShell 7. The full host
 fixture suite uses a pre-existing .NET-only QMP transport and does not compile
 under Windows PowerShell 5.1; only the isolated guest diagnostics are claimed
 compatible there. No host CIM, event-log, registry or driver query was made by
-these inert checks. Two independent read-only correctness/security reviews passed; actual guest collection is pending.
+these inert checks. Two independent read-only correctness/security reviews passed.
+The actual restored BIOS guest collection returned Diagnostics Passed with
+VBS=0, configured/running services=[0], available properties=[7] and required
+properties=[0]; both fixed warning/error event queries were empty. CPU firmware
+virtualization, monitor extensions and SLAT still reported true. HVCI is Not run,
+not Passed. This preserved baseline has HVCI disabled and does not contain the
+failed boot's live DeviceGuard state; empty warning/error queries cannot explain
+or clear the earlier 0xc0000189 loader failure. Evidence:
+artifacts/driver-acceptance/hvci-diagnostics-actual-serial.log.
 Evidence: artifacts/driver-acceptance/hvci-diagnostics-pwsh.log,
 hvci-diagnostics-winps-focused.log and hvci-diagnostics-pwsh-focused.log.
 Passed / diagnostic telemetry capture: the frozen BD7F8877...B3A1D5 tool
