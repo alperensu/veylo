@@ -277,6 +277,51 @@ An independent read-only audit matched this final evidence. Exact f074d78
 push CI 37971061744 and PR CI 37971066834 passed. Evidence:
 artifacts/driver-acceptance/version-transition-final-pass-serial.log.
 
+Passed / read-only HVCI diagnostics preparation: DeviceGuard queries now use
+a five-second operation timeout and retain typed, bounded available/required
+security capabilities with explicit unavailable or malformed states. Fixed
+Hyper-V-Hypervisor/System and DeviceGuard/Operational queries retain at most
+32 warning/error events and 512 characters per message; log-query errors remain
+Findings. Active HVCI still requires VBS status 2 and running service 2.
+All 336 safe VM fixtures passed in PowerShell 7; the 33 focused inert diagnostic
+checks passed in both Windows PowerShell 5.1 and PowerShell 7. The full host
+fixture suite uses a pre-existing .NET-only QMP transport and does not compile
+under Windows PowerShell 5.1; only the isolated guest diagnostics are claimed
+compatible there. No host CIM, event-log, registry or driver query was made by
+these inert checks. Two independent read-only correctness/security reviews passed; actual guest collection is pending.
+Evidence: artifacts/driver-acceptance/hvci-diagnostics-pwsh.log,
+hvci-diagnostics-winps-focused.log and hvci-diagnostics-pwsh-focused.log.
+Passed / diagnostic telemetry capture: the frozen BD7F8877...B3A1D5 tool
+completed 60.001 seconds in the same isolated BIOS guest with active Code
+Integrity Verifier. All 33 checks passed with two shared PCM32 clients,
+PCM16/PCM32 format checks, producer/client reconnects and fresh-silence checks.
+Steady underruns/overruns, timestamp errors and position gaps were zero.
+The minimum steady queue was 158 frames; maximum write completion gap was
+18,069 us, producer lateness 8 ms, IOCTL duration 3,363 us and consumer drain gap
+8,831 us. The fixed 64-observation producer history was present. The one total
+underrun occurred during the intentional lifecycle pause, not steady capture.
+This short result does not resolve the retained 633-second failure or establish
+one-hour acceptance. Evidence:
+artifacts/driver-acceptance/telemetry-ci-60-result-serial.log.
+Findings / actual diagnostic hour attempt: the same frozen telemetry tool
+stopped at 503,706 ms with 33 checks, seven failures and process exit 1
+(507.32 seconds). Both MMCSS registrations succeeded; steady underruns=1,
+driver silence=173 frames, overruns=0, minimum steady queue=0. Maximum producer
+lateness was 14 ms, completed write gap 17,934 us, IOCTL duration 7,355 us and
+consumer drain gap 12,119 us. Both clients retained zero timestamp/position
+gaps, but each reported one discontinuity; no planned lifecycle phase had yet
+been reached. The final STATUS followed the last successful write by 21,331 us.
+Its preceding STATUS had queue=407, then one 480-frame write: at most 887 source
+frames (about 18.48 ms nominal) were available. The next STATUS observed
+queue=0, underruns=1 and silence=173; its own duration was only 276 us. This
+supports starvation during a late pending write and explains why the maximum
+completed-write gap alone did not describe the failure. Exact kernel pull sizes
+and the cause of scheduling delay remain unmeasured; no kernel fix, relaxed
+acceptance gate or completed-hour pass is claimed. Terminal serial and stopped
+disk snapshot telemetry-hour-503s-findings-20261009 were preserved after normal
+guest shutdown. An independent read-only evidence audit matched the timing and
+counter sequence. Evidence:
+artifacts/driver-acceptance/telemetry-hour-terminal-serial.log.
 Findings retained: the earlier requested one-hour run on the rebooted current
 driver stopped at 632,893 ms with one steady underrun and 22 driver silence frames. Native PnP
 reported 0.5.1.0 before capture; active Code Integrity Verifier targeted only

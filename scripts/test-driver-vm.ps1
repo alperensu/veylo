@@ -316,6 +316,94 @@ try{
     }finally{$aclRunspace.Dispose()}
     # Only these pure function ASTs enter the fixture runspace. The guest
     # top-level script and its registry/verifier callers are never executed.
+    # Execute only diagnostics helpers/branch extracted from actual guest source.
+    # CIM, event logs, registry and process leaves are inert; no host query occurs.
+    $diagnosticHelpers=@('Get-DeviceGuardArrayEvidence','Get-DeviceGuardEvidence','Get-BoundedEvents','Get-HvciDiagnosticEvents')
+    $diagnosticSource=($diagnosticHelpers | ForEach-Object {
+        $wanted=$_;$definition=$guestAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $wanted},$true)
+        if(!$definition){throw ('Missing diagnostics helper '+$wanted)};$definition.Extent.Text
+    }) -join "`r`n"
+    $diagnosticSwitch=$guestAst.Find({param($node) $node -is [Management.Automation.Language.SwitchStatementAst] -and $node.Condition.Extent.Text -ceq '$Mode'},$true)
+    $diagnosticClause=@($diagnosticSwitch.Clauses | Where-Object {$_.Item1.Value -ceq 'Diagnostics'})[0].Item2.Extent.Text
+    $diagnosticRunspace=[PowerShell]::Create()
+    try{
+        $null=$diagnosticRunspace.AddScript({param($helpers,$clause)
+            $ErrorActionPreference='Stop';Set-StrictMode -Version 2.0
+            . ([ScriptBlock]::Create($helpers))
+            function Emit-Fixture([bool]$Value,[string]$Name){[pscustomobject]@{passed=$Value;name=$Name}}
+            function GuardRow{return [pscustomobject]@{VirtualizationBasedSecurityStatus=[uint32]2;SecurityServicesConfigured=@([uint32]2);SecurityServicesRunning=@([uint32]2);AvailableSecurityProperties=@([uint32]1,[uint32]2,[uint32]7);RequiredSecurityProperties=@([uint32]1)}}
+            function Get-CimInstance {param($Namespace,$ClassName,$OperationTimeoutSec,$ErrorAction)
+                if($ClassName -ceq 'Win32_Processor'){return [pscustomobject]@{Name='inert';VirtualizationFirmwareEnabled=$false;VMMonitorModeExtensions=$false;SecondLevelAddressTranslationExtensions=$false}}
+                if($ClassName -cne 'Win32_DeviceGuard'){throw 'Host CIM access forbidden in diagnostics fixtures.'}
+                $script:cimCall=@{namespace=$Namespace;class=$ClassName;timeout=$OperationTimeoutSec;errorAction=$ErrorAction}
+                if($script:cimError){throw $script:cimError};return $script:rows
+            }
+            $script:cimError='';$script:rows=@(GuardRow);$e=Get-DeviceGuardEvidence
+            Emit-Fixture ($script:cimCall.namespace -ceq 'root/Microsoft/Windows/DeviceGuard' -and $script:cimCall.class -ceq 'Win32_DeviceGuard' -and $script:cimCall.timeout -eq 5 -and $script:cimCall.errorAction -ceq 'Stop') 'DeviceGuard query uses fixed namespace/class and five-second terminating-error bound'
+            Emit-Fixture ($e.AvailableSecurityPropertiesQuery -ceq 'Passed' -and $e.RequiredSecurityPropertiesQuery -ceq 'Passed' -and $e.AvailableSecurityProperties.Count -eq 3 -and $e.AvailableSecurityProperties[0] -is [int]) 'DeviceGuard capability arrays retain bounded typed numeric evidence'
+            Emit-Fixture ($e.hvci -ceq 'Passed') 'HVCI evidence requires actual VBS running plus running service two'
+            $script:rows[0].SecurityServicesRunning=@();Emit-Fixture ((Get-DeviceGuardEvidence).hvci -ceq 'Not run') 'configured-only HVCI cannot pass'
+            $script:rows[0].SecurityServicesRunning=@(2);$script:rows[0].VirtualizationBasedSecurityStatus=1;Emit-Fixture ((Get-DeviceGuardEvidence).hvci -ceq 'Not run') 'running service alone cannot override inactive VBS'
+            $script:rows[0].SecurityServicesRunning=@();Emit-Fixture ((Get-DeviceGuardEvidence).hvci -ceq 'Not run') 'available and required capabilities cannot imply active HVCI'
+            $script:rows=@(GuardRow);$script:rows[0].PSObject.Properties.Remove('AvailableSecurityProperties');$script:rows[0].PSObject.Properties.Remove('RequiredSecurityProperties');$e=Get-DeviceGuardEvidence
+            Emit-Fixture ($e.AvailableSecurityPropertiesQuery -ceq 'NotAvailable' -and $null -eq $e.AvailableSecurityProperties -and $e.RequiredSecurityPropertiesQuery -ceq 'NotAvailable' -and $null -eq $e.RequiredSecurityProperties) 'missing capability fields remain explicitly NotAvailable rather than invented empty arrays'
+            $script:rows=@(GuardRow);$script:rows[0].AvailableSecurityProperties=@();$e=Get-DeviceGuardEvidence
+            Emit-Fixture ($e.AvailableSecurityPropertiesQuery -ceq 'Passed' -and $e.AvailableSecurityProperties.Count -eq 0) 'reported empty capability array differs from unavailable evidence'
+            foreach($value in @(@{v=@(1)*33},@{v=@('2')},@{v=@(-1)},@{v=@([decimal]2)},@{v=@($true)},@{v='2'},@{v=@([long]2147483648)})){
+                $script:rows=@(GuardRow);$script:rows[0].AvailableSecurityProperties=$value.v;$e=Get-DeviceGuardEvidence
+                Emit-Fixture ($e.AvailableSecurityPropertiesQuery -ceq 'Findings' -and $null -eq $e.AvailableSecurityProperties) 'malformed or oversized DeviceGuard capability array remains a finding'
+            }
+            $script:rows=@(GuardRow);$script:rows[0].PSObject.Properties.Remove('SecurityServicesRunning');$e=Get-DeviceGuardEvidence
+            Emit-Fixture ($e.query -ceq 'Findings' -and $e.hvci -ceq 'Not run') 'missing running evidence cannot pass HVCI'
+            $script:rows=@(GuardRow);$script:rows[0].VirtualizationBasedSecurityStatus='2';$e=Get-DeviceGuardEvidence
+            Emit-Fixture ($e.query -ceq 'Findings' -and $e.hvci -ceq 'Not run') 'stringified VBS status cannot pass HVCI'
+            $script:cimError='x'*700;$e=Get-DeviceGuardEvidence
+            Emit-Fixture ($e.query -ceq 'Findings' -and $e.hvci -ceq 'Not run' -and $e.error.Length -eq 512 -and $null -eq $e.AvailableSecurityProperties) 'CIM failure remains visible bounded evidence without fabricated capabilities'
+            $script:cimError='';$script:rows=@();Emit-Fixture ((Get-DeviceGuardEvidence).query -ceq 'Findings') 'empty DeviceGuard query is not success'
+            $script:rows=@((GuardRow),(GuardRow));Emit-Fixture ((Get-DeviceGuardEvidence).query -ceq 'Findings') 'ambiguous DeviceGuard query is not success'
+            function Get-WinEvent {
+                [CmdletBinding()]param($FilterHashtable,$MaxEvents)
+                $script:eventCalls+=@{filter=$FilterHashtable;maximum=$MaxEvents}
+                if($script:eventMode -ceq 'error' -and $FilterHashtable.LogName -ceq 'Microsoft-Windows-DeviceGuard/Operational'){throw ('optional log unavailable '+('x'*700))}
+                if($script:eventMode -cne 'events'){$PSCmdlet.ThrowTerminatingError([Management.Automation.ErrorRecord]::new([Exception]::new('No matching events'),'NoMatchingEventsFound',[Management.Automation.ErrorCategory]::ObjectNotFound,$null))}
+                foreach($id in 1..40){[pscustomobject]@{Id=$id;TimeCreated=[DateTime]::UtcNow;ProviderName='inert provider';Message=('m'*700)}}
+            }
+            $script:eventCalls=@();$script:eventMode='events';$events=Get-HvciDiagnosticEvents
+            Emit-Fixture ($script:eventCalls.Count -eq 2 -and $script:eventCalls[0].maximum -eq 32 -and $script:eventCalls[0].filter.LogName -ceq 'System' -and $script:eventCalls[0].filter.ProviderName -ceq 'Microsoft-Windows-Hyper-V-Hypervisor' -and ($script:eventCalls[0].filter.Level -join ',') -ceq '1,2,3' -and $script:eventCalls[1].filter.LogName -ceq 'Microsoft-Windows-DeviceGuard/Operational') 'boot diagnostics use exact Hyper-V provider and DeviceGuard log with bounded warning/error filters'
+            Emit-Fixture ($events.hypervisor.events.Count -eq 32 -and $events.deviceGuard.events.Count -eq 32 -and @($events.hypervisor.events | Where-Object {$_.message.Length -ne 512}).Count -eq 0) 'diagnostic events and messages retain hard 32-event and 512-character bounds'
+            Emit-Fixture ($events.hypervisor.events[0].id -eq 1 -and $events.hypervisor.events[31].id -eq 32 -and $events.hypervisor.events[0].utc -is [string]) 'bounded boot warnings retain event IDs provider and UTC evidence'
+            $script:eventCalls=@();$null=Get-BoundedEvents 'System' ([Nullable[int]]1001)
+            Emit-Fixture ($script:eventCalls[0].filter.Id -eq 1001 -and !$script:eventCalls[0].filter.ContainsKey('Level') -and !$script:eventCalls[0].filter.ContainsKey('ProviderName')) 'legacy event ID query keeps its unchanged two-argument filter'
+            $null=Get-BoundedEvents 'Microsoft-Windows-CodeIntegrity/Operational' $null
+            Emit-Fixture (($script:eventCalls[1].filter.Level -join ',') -ceq '1,2' -and !$script:eventCalls[1].filter.ContainsKey('ProviderName')) 'legacy event error query keeps default critical/error levels without provider restriction'
+            $script:eventMode='quiet';$events=Get-HvciDiagnosticEvents
+            Emit-Fixture ($events.hypervisor.query -ceq 'Passed' -and $events.hypervisor.events.Count -eq 0 -and $events.deviceGuard.query -ceq 'Passed' -and $events.deviceGuard.events.Count -eq 0) 'no matching optional boot events are an empty successful query'
+            $script:eventMode='error';$events=Get-HvciDiagnosticEvents
+            Emit-Fixture ($events.hypervisor.query -ceq 'Passed' -and $events.deviceGuard.query -ceq 'Findings' -and $null -eq $events.deviceGuard.events -and $events.deviceGuard.error.Length -eq 512) 'optional event query failure is retained as bounded Findings without aborting diagnostics'
+            function New-Result {param($Status)return @{status=$Status}}
+            function Get-WindowsLicenseEvidence {return @{LicenseStatus=1}}
+            function Invoke-BoundedTool {return @{exitCode=0;timedOut=$false;outputLimited=$false}}
+            function Get-SavedVerifierEvidence {return @{configured=$false}}
+            function Get-ActiveVerifierEvidence {return @{activeVerified=$false}}
+            function Write-Report {param($Name,$Value)$script:diagnosticsReport=$Value}
+            function Get-Acl {throw 'Host registry/ACL access forbidden in diagnostics fixtures.'}
+            $system32='C:\Windows\System32';$body=$clause.Substring(1,$clause.Length-2)
+            $script:rows=@(GuardRow);$script:rows[0].SecurityServicesRunning=@();$script:eventMode='quiet';& ([ScriptBlock]::Create($body))
+            Emit-Fixture ($script:diagnosticsReport.status -ceq 'Passed' -and $script:diagnosticsReport.deviceGuard.hvci -ceq 'Not run') 'actual diagnostics branch never mistakes configured-only capability evidence for HVCI Passed'
+            $script:eventMode='error';& ([ScriptBlock]::Create($body))
+            Emit-Fixture ($script:diagnosticsReport.status -ceq 'Findings' -and $script:diagnosticsReport.hvciBootDiagnostics.deviceGuard.query -ceq 'Findings') 'actual diagnostics branch exposes optional log query failure as Findings'
+            $script:eventMode='events';& ([ScriptBlock]::Create($body))
+            Emit-Fixture ($script:diagnosticsReport.status -ceq 'Findings') 'actual diagnostics branch reports retained boot warnings as Findings'
+            $script:eventMode='quiet';$script:rows[0].AvailableSecurityProperties=@('2');& ([ScriptBlock]::Create($body))
+            Emit-Fixture ($script:diagnosticsReport.status -ceq 'Findings') 'actual diagnostics branch reports malformed capability evidence as Findings'
+            $script:rows[0].PSObject.Properties.Remove('AvailableSecurityProperties');$script:rows[0].PSObject.Properties.Remove('RequiredSecurityProperties');& ([ScriptBlock]::Create($body))
+            Emit-Fixture ($script:diagnosticsReport.status -ceq 'Passed' -and $script:diagnosticsReport.deviceGuard.AvailableSecurityPropertiesQuery -ceq 'NotAvailable' -and $script:diagnosticsReport.deviceGuard.hvci -ceq 'Not run') 'older guard class stays diagnostically usable with explicit unavailable capabilities and no HVCI claim'
+        }).AddArgument($diagnosticSource).AddArgument($diagnosticClause)
+        $diagnosticResults=@($diagnosticRunspace.Invoke())
+        if($diagnosticRunspace.HadErrors){throw ('Inert diagnostics fixture failure: '+($diagnosticRunspace.Streams.Error | Out-String))}
+        Check ($diagnosticResults.Count -eq 32) 'read-only DeviceGuard and boot diagnostics fixture inventory complete'
+        foreach($diagnosticResult in $diagnosticResults){Check $diagnosticResult.passed $diagnosticResult.name}
+    }finally{$diagnosticRunspace.Dispose()}
     $verifierHelpers=@('ConvertFrom-VerifierRegistryEvidence','Get-VerifierEnableDecision','ConvertFrom-VerifierActiveEvidence','Get-HvciLabDecision','Test-HvciBaselineFresh','Test-HvciBeforeBcdEvidence')
     $verifierSource=($verifierHelpers | ForEach-Object {
         $wanted=$_

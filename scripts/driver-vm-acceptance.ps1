@@ -196,21 +196,52 @@ function Get-WindowsLicenseEvidence{
     return @($rows | ForEach-Object {[ordered]@{Name=[string]$_.Name;Description=[string]$_.Description;
         LicenseStatus=[int]$_.LicenseStatus;GracePeriodRemaining=[int]$_.GracePeriodRemaining}})
 }
+function Get-DeviceGuardArrayEvidence($Guard,[string]$Name){
+    $property=$Guard.PSObject.Properties[$Name]
+    if(!$property -or $null -eq $property.Value){return @{query='NotAvailable';values=$null;error='DeviceGuard property is absent or null.'}}
+    $value=$property.Value
+    if($value -isnot [Array] -or $value.Count -gt 32){return @{query='Findings';values=$null;error='DeviceGuard property is not a bounded numeric array.'}}
+    $values=@()
+    foreach($item in $value){
+        if(($item -isnot [int] -and $item -isnot [uint32] -and $item -isnot [long]) -or $item -lt 0 -or $item -gt [int]::MaxValue){
+            return @{query='Findings';values=$null;error='DeviceGuard property contains an invalid numeric type or range.'}
+        }
+        $values+=[int]$item
+    }
+    return @{query='Passed';values=$values}
+}
 function Get-DeviceGuardEvidence{
     try{
-        $guard=Get-CimInstance -Namespace root/Microsoft/Windows/DeviceGuard -ClassName Win32_DeviceGuard
-        $status=[int]$guard.VirtualizationBasedSecurityStatus
-        $configured=@($guard.SecurityServicesConfigured | ForEach-Object {[int]$_})
-        $running=@($guard.SecurityServicesRunning | ForEach-Object {[int]$_})
-        return @{query='Passed';VirtualizationBasedSecurityStatus=$status;SecurityServicesConfigured=$configured;
+        $rows=@(Get-CimInstance -Namespace root/Microsoft/Windows/DeviceGuard -ClassName Win32_DeviceGuard -OperationTimeoutSec 5 -ErrorAction Stop)
+        if($rows.Count -ne 1){throw 'Expected exactly one DeviceGuard evidence row.'}
+        $guard=$rows[0];$property=$guard.PSObject.Properties['VirtualizationBasedSecurityStatus']
+        if(!$property -or ($property.Value -isnot [int] -and $property.Value -isnot [uint32] -and $property.Value -isnot [long]) -or
+            $property.Value -lt 0 -or $property.Value -gt 2){throw 'DeviceGuard VBS status is absent or malformed.'}
+        $status=[int]$property.Value
+        $configuredEvidence=Get-DeviceGuardArrayEvidence $guard 'SecurityServicesConfigured'
+        $runningEvidence=Get-DeviceGuardArrayEvidence $guard 'SecurityServicesRunning'
+        if($configuredEvidence.query -cne 'Passed' -or $runningEvidence.query -cne 'Passed'){throw 'DeviceGuard configured/running evidence is absent or malformed.'}
+        $configured=$configuredEvidence.values;$running=$runningEvidence.values
+        $evidence=@{query='Passed';VirtualizationBasedSecurityStatus=$status;SecurityServicesConfigured=$configured;
             SecurityServicesRunning=$running;hvci=($(if($status -eq 2 -and 2 -in $running){'Passed'}else{'Not run'}))}
-    }catch{return @{query='Findings';hvci='Not run';error=$_.Exception.Message}}
+        foreach($name in @('AvailableSecurityProperties','RequiredSecurityProperties')){
+            $capability=Get-DeviceGuardArrayEvidence $guard $name
+            $evidence[$name]=$capability.values;$evidence[$name+'Query']=$capability.query
+            if($capability.query -cne 'Passed'){$evidence[$name+'Error']=$capability.error}
+        }
+        return $evidence
+    }catch{
+        $message=$_.Exception.Message;if($message.Length -gt 512){$message=$message.Substring(0,512)}
+        return @{query='Findings';hvci='Not run';error=$message;AvailableSecurityProperties=$null;RequiredSecurityProperties=$null;
+            AvailableSecurityPropertiesQuery='NotAvailable';RequiredSecurityPropertiesQuery='NotAvailable'}
+    }
 }
-function Get-BoundedEvents([string]$LogName,[Nullable[int]]$Id){
+function Get-BoundedEvents([string]$LogName,[Nullable[int]]$Id,[string]$ProviderName='',[int[]]$Levels=@(1,2)){
     $filter=@{LogName=$LogName;StartTime=(Get-Date).AddDays(-7)}
-    if($null -ne $Id){$filter.Id=[int]$Id}else{$filter.Level=@(1,2)}
+    if($null -ne $Id){$filter.Id=[int]$Id}else{$filter.Level=$Levels}
+    if($ProviderName){$filter.ProviderName=$ProviderName}
     try{
-        return @((Get-WinEvent -FilterHashtable $filter -MaxEvents 32 -ErrorAction Stop) | ForEach-Object {
+        return @((Get-WinEvent -FilterHashtable $filter -MaxEvents 32 -ErrorAction Stop) | Select-Object -First 32 | ForEach-Object {
             $message=[string]$_.Message;if($message.Length -gt 512){$message=$message.Substring(0,512)}
             @{id=$_.Id;utc=$_.TimeCreated.ToUniversalTime().ToString('o');provider=$_.ProviderName;message=$message}
         })
@@ -218,6 +249,23 @@ function Get-BoundedEvents([string]$LogName,[Nullable[int]]$Id){
         if($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*'){return @()}
         throw
     }
+}
+function Get-HvciDiagnosticEvents{
+    $evidence=@{}
+    foreach($spec in @(
+        @{name='hypervisor';log='System';provider='Microsoft-Windows-Hyper-V-Hypervisor'},
+        @{name='deviceGuard';log='Microsoft-Windows-DeviceGuard/Operational';provider=''})){
+        $entry=@{logName=$spec.log;providerName=$spec.provider;query='Findings';events=$null}
+        try{
+            $entry.events=@(Get-BoundedEvents $spec.log $null $spec.provider @(1,2,3))
+            $entry.query='Passed'
+        }catch{
+            $message=$_.Exception.Message;if($message.Length -gt 512){$message=$message.Substring(0,512)}
+            $entry.error=$message
+        }
+        $evidence[$spec.name]=$entry
+    }
+    return $evidence
 }
 function Get-SesDevices{
     return @(Get-CimInstance -ClassName Win32_PnPEntity | Where-Object {
@@ -584,8 +632,12 @@ try{
             $result.verifierActiveEvidence=Get-ActiveVerifierEvidence $result.verifierRunning
             $result.systemBugchecks=@(Get-BoundedEvents 'System' ([Nullable[int]]1001))
             $result.codeIntegrityErrors=@(Get-BoundedEvents 'Microsoft-Windows-CodeIntegrity/Operational' $null)
+            $result.hvciBootDiagnostics=Get-HvciDiagnosticEvents
             $result.syntheticAudioOnly=$true
             if($result.deviceGuard.query -ne 'Passed' -or @($result.licensing).Count -eq 0 -or
+               $result.deviceGuard.AvailableSecurityPropertiesQuery -ceq 'Findings' -or $result.deviceGuard.RequiredSecurityPropertiesQuery -ceq 'Findings' -or
+               $result.hvciBootDiagnostics.hypervisor.query -cne 'Passed' -or $result.hvciBootDiagnostics.deviceGuard.query -cne 'Passed' -or
+               @($result.hvciBootDiagnostics.hypervisor.events).Count -gt 0 -or @($result.hvciBootDiagnostics.deviceGuard.events).Count -gt 0 -or
                $result.powercfg.exitCode -ne 0 -or $result.powercfg.timedOut -or $result.powercfg.outputLimited -or
                $result.verifierSettings.timedOut -or $result.verifierSettings.outputLimited -or
                $result.verifierRunning.timedOut -or $result.verifierRunning.outputLimited){$result.status='Findings'}
