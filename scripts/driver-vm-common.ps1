@@ -1,7 +1,7 @@
 # Private VM control: no sockets, arbitrary QMP or host devices.
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'driver-signing.ps1')
-$vmAllowedKeys=@('ret','esc','spc','tab','up','down','left','right','home','end','pgup','pgdn','backspace','delete','ctrl','alt','shift')+@('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z')+@('0','1','2','3','4','5','6','7','8','9')+@(1..12 | ForEach-Object {'f'+$_})
+$vmAllowedKeys=@('ret','esc','spc','tab','up','down','left','right','home','end','pgup','pgdn','backspace','delete','ctrl','alt','shift','meta_l','semicolon','slash','backslash','dot','apostrophe','grave_accent','bracket_left','bracket_right','minus','equal','comma')+@('a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z')+@('0','1','2','3','4','5','6','7','8','9')+@(1..12 | ForEach-Object {'f'+$_})
 function Assert-VmPrivateAcl([string]$Path,[string]$Within) {
     $full=Assert-LabPath $Path $Within;$acl=Get-Acl -LiteralPath $full
     $owner=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -55,6 +55,7 @@ function Write-VmJson([string]$Directory,[string]$Name,$Value) {
     $path=Assert-LabPath (Join-Path $Directory $Name) $Directory -MayNotExist
     if(Test-Path -LiteralPath $path){Assert-VmPrivateAcl $path $Directory | Out-Null}
     $temporary=Assert-LabPath (Join-Path $Directory ('write-'+[Guid]::NewGuid().ToString('N')+'.tmp')) $Directory -MayNotExist
+    $backup=Assert-LabPath (Join-Path $Directory ('previous-'+[Guid]::NewGuid().ToString('N')+'.tmp')) $Directory -MayNotExist
     try{
         [IO.File]::WriteAllText($temporary,($Value | ConvertTo-Json -Depth 8 -Compress),[Text.UTF8Encoding]::new($false))
         # Elevated Windows tokens can default a new file's owner to Administrators.
@@ -63,18 +64,32 @@ function Write-VmJson([string]$Directory,[string]$Name,$Value) {
         $acl=Get-Acl -LiteralPath $temporary
         $acl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User)
         Set-Acl -LiteralPath $temporary -AclObject $acl
-        Assert-VmPrivateAcl $temporary $Directory | Out-Null;[IO.File]::Move($temporary,$path,$true)
-    }finally{if(Test-Path -LiteralPath $temporary){Remove-Item -LiteralPath $temporary}}
+        Assert-VmPrivateAcl $temporary $Directory | Out-Null
+        if(Test-Path -LiteralPath $path){[IO.File]::Replace($temporary,$path,$backup)}else{[IO.File]::Move($temporary,$path)}
+    }finally{foreach($item in @($temporary,$backup)){if(Test-Path -LiteralPath $item){Remove-Item -LiteralPath $item}}}
 }
 function Read-VmJson([string]$Directory,[string]$Name) {
     if($Name -cnotin @('process.json','command.json','response.json')){throw 'Unapproved VM input filename'}
     $path=Assert-VmPrivateAcl (Join-Path $Directory $Name) $Directory
-    if((Get-Item -LiteralPath $path).Length -gt 16KB){throw 'Oversized VM control message'}
+    # Allow atomic replacement while a reader holds the previous file. The
+    # PowerShell provider's default sharing can reject Move(overwrite), which
+    # used to terminate a healthy VM during concurrent command/response polls.
+    $stream=[IO.File]::Open($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try{
+        if($stream.Length -gt 16KB){throw 'Oversized VM control message'}
+        $reader=[IO.StreamReader]::new($stream,[Text.UTF8Encoding]::new($false,$true),$true,1024,$true)
+        try{
+            $buffer=[char[]]::new(16385);$length=0
+            while($length -lt $buffer.Length){$count=$reader.Read($buffer,$length,$buffer.Length-$length);if(!$count){break};$length+=$count}
+            if($length -gt 16KB){throw 'Oversized VM control message'}
+            $json=[string]::new($buffer,0,$length)
+        }finally{$reader.Dispose()}
+    }finally{$stream.Dispose()}
     # PowerShell 7.5+ otherwise coerces ISO timestamps into DateTime objects,
     # breaking exact process identity and the request's string contract.
     $jsonOptions=@{}
     if($PSVersionTable.PSVersion -ge [Version]'7.5'){$jsonOptions.DateKind='String'}
-    return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json @jsonOptions
+    return $json | ConvertFrom-Json @jsonOptions
 }
 function Get-VmArguments([string]$Vm,$State,[switch]$BootInstalled) {
     $diskBoot=$BootInstalled -or $State.installed

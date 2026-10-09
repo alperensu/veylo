@@ -55,7 +55,10 @@ try{
     }
 }catch{
     if(!$record){$record=@{schema=2;vmId=$state.id;sessionId=$SessionId;phase='failed'}}
-    $record.phase='failed';Write-VmJson $vm 'process.json' $record
+    $record.phase='failed'
+    $reason=$_.Exception.Message
+    $record.failureReason=$reason.Substring(0,[Math]::Min(1024,$reason.Length))
+    Write-VmJson $vm 'process.json' $record
     throw 'VM supervisor failed; inspect bounded stderr log'
 }finally{
     if($transport){$transport.Dispose()}

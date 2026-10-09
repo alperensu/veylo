@@ -57,6 +57,11 @@ try{
     $processTime=[DateTime]::UtcNow.ToString('O')
     Write-VmJson $vm 'process.json' @{startTimeUtc=$processTime}
     Check ((Read-VmJson $vm 'process.json').startTimeUtc -ceq $processTime) 'process start timestamp survives JSON without date coercion'
+    $held=[IO.File]::Open((Join-Path $vm 'process.json'),[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try{
+        Write-VmJson $vm 'process.json' @{startTimeUtc='replacement'}
+        Check ((Read-VmJson $vm 'process.json').startTimeUtc -ceq 'replacement') 'atomic IPC replacement succeeds while previous generation is open'
+    }finally{$held.Dispose()}
     Check ((Get-VmCommand $request $identity.id $session $screen).execute -ceq 'query-status') 'fixed query-status accepted'
     $request.command='human-monitor-command';Reject {Get-VmCommand $request $identity.id $session $screen} 'arbitrary QMP command rejected'
     $request.command='screendump';$request | Add-Member -NotePropertyName filename -NotePropertyValue 'C:\outside.ppm'

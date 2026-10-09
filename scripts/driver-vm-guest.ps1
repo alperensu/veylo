@@ -7,12 +7,12 @@ function Lab-Serial([string]$Message){
     try{$port=[IO.Ports.SerialPort]::new('COM1',115200);$port.Open();try{$port.WriteLine($Message)}finally{$port.Close();$port.Dispose()}}catch{}
 }
 $local='C:/VeyloLab'
+$allowed=@('SesMicrophone.inf','SesMicrophone.sys','SesMicrophone.cat','SYSVAD-LICENSE','lab-test.cer','ses_driver_lab_tests.exe','ses_driver_capture_lab_tests.exe','DRIVER.md','DRIVER-LAB.md','LICENSE','README-TEST-SIGNED.txt','test-signing-manifest.json','devcon.exe','guest.ps1')
 if(!(Test-Path -LiteralPath (Join-Path $local 'veylo-lab-seed.json'))){
     $drives=@(Get-PSDrive -PSProvider FileSystem | Where-Object {Test-Path -LiteralPath (Join-Path $_.Root 'veylo-lab-seed.json')})
     if($drives.Count -ne 1){throw 'Exactly one owned lab seed is required'}
     $seed=$drives[0].Root;$identity=Get-Content -LiteralPath (Join-Path $seed 'veylo-lab-seed.json') -Raw | ConvertFrom-Json
     if($identity.schema -ne 1 -or $identity.testOnly -ne $true -or $identity.id -ine $product.UUID){throw 'Guest hardware UUID differs from seed'}
-    $allowed=@('SesMicrophone.inf','SesMicrophone.sys','SesMicrophone.cat','SYSVAD-LICENSE','lab-test.cer','ses_driver_lab_tests.exe','ses_driver_capture_lab_tests.exe','DRIVER.md','DRIVER-LAB.md','LICENSE','README-TEST-SIGNED.txt','test-signing-manifest.json','devcon.exe','guest.ps1')
     if(@($identity.files.PSObject.Properties).Count -ne $allowed.Count){throw 'Invalid seed inventory'}
     foreach($entry in $identity.files.PSObject.Properties){
         if($entry.Name -cnotin $allowed -or $entry.Value -cnotmatch '^[0-9a-f]{64}$'){throw 'Invalid seed payload'}
@@ -25,8 +25,31 @@ if(!(Test-Path -LiteralPath (Join-Path $local 'veylo-lab-seed.json'))){
     Copy-Item -LiteralPath (Join-Path $seed 'veylo-lab-seed.json') -Destination $local
 }
 $identity=Get-Content -LiteralPath (Join-Path $local 'veylo-lab-seed.json') -Raw | ConvertFrom-Json
-if($identity.id -ine $product.UUID){throw 'Local guest identity mismatch'}
+if($identity.schema -ne 1 -or $identity.testOnly -ne $true -or $identity.id -ine $product.UUID -or @($identity.files.PSObject.Properties).Count -ne $allowed.Count){throw 'Local guest identity mismatch'}
+foreach($entry in $identity.files.PSObject.Properties){
+    if($entry.Name -cnotin $allowed -or $entry.Value -cnotmatch '^[0-9a-f]{64}$'){throw 'Invalid local guest inventory'}
+    $file=Join-Path $local $entry.Name;$info=Get-Item -LiteralPath $file
+    if($info.PSIsContainer -or $info.Length -gt 16MB -or ($info.Attributes -band [IO.FileAttributes]::ReparsePoint) -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.Value){throw 'Local guest payload changed'}
+}
+$principal=[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
+if(!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){
+    Lab-Serial 'VEYLO_LAB: guest administrator consent required'
+    # Identity/hash checks precede guest-only UAC; never request host elevation.
+    Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','C:\VeyloLab\guest.ps1') | Out-Null
+    return
+}
 if(!(Test-Path -LiteralPath (Join-Path $local 'prepared.flag'))){
+    # The startup task executes as SYSTEM. Keep its code and manifest writable
+    # only by guest administrators/SYSTEM, including file ownership.
+    $admins=[Security.Principal.SecurityIdentifier]::new('S-1-5-32-544');$systemSid=[Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+    $directoryAcl=[Security.AccessControl.DirectorySecurity]::new();$directoryAcl.SetOwner($admins);$directoryAcl.SetAccessRuleProtection($true,$false)
+    foreach($sid in @($admins,$systemSid)){$directoryAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::FullControl,([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit),[Security.AccessControl.PropagationFlags]::None,[Security.AccessControl.AccessControlType]::Allow))}
+    Set-Acl -LiteralPath $local -AclObject $directoryAcl
+    foreach($name in ($allowed+@('veylo-lab-seed.json'))){
+        $fileAcl=[Security.AccessControl.FileSecurity]::new();$fileAcl.SetOwner($admins);$fileAcl.SetAccessRuleProtection($true,$false)
+        foreach($sid in @($admins,$systemSid)){$fileAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::FullControl,[Security.AccessControl.AccessControlType]::Allow))}
+        Set-Acl -LiteralPath (Join-Path $local $name) -AclObject $fileAcl
+    }
     $manifest=Get-Content -LiteralPath (Join-Path $local 'test-signing-manifest.json') -Raw | ConvertFrom-Json
     if($manifest.testOnly -ne $true -or $manifest.microsoftProductionSigned -ne $false -or $manifest.dailyUseReady -ne $false){throw 'Not a lab test certificate package'}
     $cer=Join-Path $local 'lab-test.cer'
