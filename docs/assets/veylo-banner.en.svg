@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="400" viewBox="0 0 1280 400" role="img" aria-labelledby="title desc">
+  <title id="title">Veylo — Your voice, refined.</title>
+  <desc id="desc">Your local microphone studio for Windows. Veylo's original audio-bar icon and copper waveform on a charcoal surface.</desc>
+  <rect width="1280" height="400" rx="24" fill="#17272c"/>
+  <path d="M852 0H1256Q1280 0 1280 24V376Q1280 400 1256 400H1018Z" fill="#203238"/>
+  <path d="M938 0 1098 400" stroke="#314349" stroke-width="1"/>
+  <rect x="64" y="56" width="64" height="64" rx="18" fill="#ba4a24"/>
+  <g fill="#fff" transform="translate(79 61) scale(1.5)">
+    <path d="M0 12H3V25H0ZM5 5H8V32H5ZM10 0H13V37H10ZM15 8H18V29H15ZM20 13H23V24H20Z"/>
+  </g>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <text x="148" y="105" fill="#fbfaf7" font-size="54" font-weight="600" letter-spacing="-2">Veylo</text>
+    <text x="64" y="222" fill="#fbfaf7" font-size="64" font-weight="600" letter-spacing="-2">Your voice, refined.</text>
+    <text x="66" y="278" fill="#becbc9" font-size="28">Your local microphone studio for Windows.</text>
+    <text x="66" y="350" fill="#d9a086" font-size="22">LOCAL AUDIO</text>
+    <circle cx="254" cy="342" r="3" fill="#738782"/>
+    <text x="275" y="350" fill="#d9a086" font-size="22">OPEN SOURCE</text>
+    <circle cx="452" cy="342" r="3" fill="#738782"/>
+    <text x="473" y="350" fill="#d9a086" font-size="22">YOUR VOICE</text>
+  </g>
+  <g stroke="#d9a086" stroke-width="8" stroke-linecap="round" fill="none">
+    <path d="M935 169V231M962 126V274M989 93V307M1016 145V255M1043 174V226"/>
+    <path d="M1097 160V240M1124 107V293M1151 140V260M1178 178V222" stroke="#72918b"/>
+  </g>
+  <path d="M898 200H908M1207 200H1230" stroke="#56726d" stroke-width="2" stroke-linecap="round"/>
+</svg>

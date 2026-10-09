@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Kurulum rehberi / Getting started
+    url: https://github.com/alperensu/veylo/blob/main/docs/INSTALL.md
+    about: Mikrofonunu bağla, VB-CABLE yönlendirmesini kur ve ilk profilini seç.
+  - name: Sık sorulanlar / FAQ
+    url: https://github.com/alperensu/veylo/blob/main/docs/FAQ.md
+    about: Ses gelmiyor, gürültü geçiyor veya ekran paylaşımında ses iki kez duyuluyor.
+  - name: Güvenlik açığını özel bildir / Report a vulnerability privately
+    url: https://github.com/alperensu/veylo/security/advisories/new
+    about: Hassas bulguları herkese açık Issue yerine bakımcılara özel bildir.

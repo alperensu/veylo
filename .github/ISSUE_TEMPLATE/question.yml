@@ -1,0 +1,30 @@
+name: Kullanım sorusu / Usage question
+description: Kurulum, yönlendirme, profil veya kalibrasyon hakkında soru sor.
+title: '[Soru] '
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Önce [kurulum rehberini](https://github.com/alperensu/veylo/blob/main/docs/INSTALL.md)
+        ve [sık sorulanları](https://github.com/alperensu/veylo/blob/main/docs/FAQ.md) kontrol et.
+        Sorunu İngilizce de yazabilirsin. Ses kaydı, cihaz kimliği veya kişisel ayar dosyası paylaşma.
+  - type: input
+    id: version
+    attributes:
+      label: Veylo sürümü / Version
+      placeholder: 0.7.5-dev
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Sorun veya soru / Question
+      description: Ne yapmak istiyorsun, hangi adımda takıldın ve ne denedin?
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Ortam / Environment
+      description: Windows sürümü, mikrofon modeli ve yönlendirme türü. Kişisel kayıt veya cihaz kimliği ekleme.

@@ -1,103 +1,46 @@
-# Security scope
+# Güvenlik politikası / Security policy
 
-## VB-CABLE routing (0.5.2)
+## Güvenlik açığı bildirimi
 
-Routing uses already installed WASAPI devices; no driver installation, UAC, boot
-policy change, downloads or arbitrary DLL/plugin loading is introduced. Persisted
-output mode is limited to cable/driver/local. Output IDs must match enumerated
-CABLE Input render devices; physical speakers are excluded even for stale state.
-Corrupt saved state recovers with local-only output, preventing unintended
-transmission from a default microphone to a newly selected cable.
-Cable detection uses the endpoint display name, not publisher authentication; a
-same-user/admin process can rename a different endpoint to impersonate that name.
-Do not treat the label as a security identity. Known CABLE Output sources are rejected before opening a cable route, preventing
-self-feedback even when the destination is currently missing. Unknown/missing
-cable sources wait for enumeration before opening transmission, so native
-reconnection cannot bypass source validation.
-Audio stays in the bounded existing
-ring. Missing saved cable is not replaced; shared presets contain no routing IDs.
+Veylo herkese açık bir depodur. Güvenlik açığı, kişisel veri sızıntısı veya
+kernel sürücüsüyle ilgili hassas bir bulgu için **herkese açık Issue açma**.
+[GitHub'ın özel güvenlik bildirimi kanalını kullan](https://github.com/alperensu/veylo/security/advisories/new).
+GitHub hesabınla oturum açman gerekir; bu kanala yalnız yetkili bakımcılar erişir.
 
+Etkilenen sürümü, beklenen/gerçekleşen davranışı ve kişisel veri içermeyen
+tekrarlama adımlarını belirt. Token, parola, gerçek konuşma, kullanıcı ayar dosyası
+veya cihaz kimliği gönderme. Yalnızca sana ait ya da açıkça yetkilendirilmiş
+test ortamlarında doğrulama yap. Yanıt veya düzeltme süresi taahhüdü verilmez.
 
-## Virtual microphone trust boundaries (0.5.0 development)
+Normal ses, kurulum veya arayüz sorunları için [hata bildirimi](https://github.com/alperensu/veylo/issues/new/choose) kullanabilirsin.
 
-The daily desktop runs without administrator privileges. The separate installer
-requests UAC only for install/update/remove/rollback. It manages the exact Veylo
-hardware identity; arbitrary INF paths or driver names are not accepted. Daily
-security settings and test-signing policy are never changed.
+## Sürüm kapsamı
 
-The private control device allows System/admin and interactive users. A single
-file object owns production; IOCTL lengths, version, format, reserved fields and
-sequence are validated before copying into a bounded ring. Ownership is not
-application identity: another process running as the same interactive user can
-race to claim the connection or supply its own PCM. The app reports busy/access
-errors. Protocol checks do not authenticate voice or prevent same-user interference.
-The WDM dispatch forwards only non-control requests to PortCls. PCM processing is
-integer-only under a bounded spinlock; stale/disconnected/starved audio is zeroed.
+Proje şu anda `-dev` geliştirme sürümleri yayımlar. İncelemeler güncel `main`
+ve en yeni geliştirme sürümüne odaklanır; eski sürümlere düzeltme garantisi veya
+üretim güvenlik sertifikası sunulmaz. Bildiriminde tam sürümü yaz.
 
-Installer files are size-bounded; input file reparse points are rejected. The INF
-must match embedded Veylo bytes. Loaded bytes are staged under Program Files before
-catalog verification; no path from UI input is executed. SignedCms and online
-Windows chain checks require a trusted Microsoft Windows catalog signer. Windows
-PnP subsequently enforces catalog membership and kernel signing policy. Four read-only rejection tests cover malformed, unsigned, untrusted Microsoft-name and multiple-signer catalogs; no certificates were imported. Development
-CAT/SYS files are unsigned and cannot pass this release installer.
+## Gizlilik ve sınırlar
 
-Verified: dependency pin hashes, secret scan, user-mode Clang/.NET analysis,
-AddressSanitizer and transport misuse tests; EWDK DriverRecommendedRules analysis,
-InfVerif and Inf2Cat. No elevated installation or kernel abuse test ran on this
-machine. Driver Verifier, HVCI, sleep/unplug/crash/update/rollback and live game
-compatibility remain required in an isolated lab with a correctly signed package.
-A compile/SAST pass is not proof of kernel safety or Vanguard compatibility.
+- Ses işleme yereldir; hesap, bulut ses servisi veya ses telemetrisi bulunmaz.
+- Karşılaştırma örneği RAM'de tutulur; WAV yalnız açık dışa aktarım isteğiyle yazılır.
+- Paylaşılan JSON profilleri ses kaydı ve cihaz kimliği içermez.
+- Uygulama yönetici olmadan çalışır. Ayrı sürücü kurulumu yönetici izni isteyebilir.
+- Normal Setup kendi kernel sürücümüzü içermez. TEST-SIGNED sürücü yalnız
+  izole, ayrıca yetkilendirilmiş Windows laboratuvarı içindir.
+- Host test-signing, Secure Boot veya Bellek Bütünlüğünü kapatmak normal kurulumun parçası değildir.
 
-Offline local desktop, no cloud/accounts/HTTP endpoints. Boundaries:
-untrusted presets, corrupt state, DLL search paths, malformed audio/parameters,
-bounded samples. Shared profiles omit device IDs/voice. RAM voice is not saved
-without export; OS paging/crash dumps remain operating-system behavior.
+[Teknik güvenlik kapsamı ve geçmiş inceleme notları](docs/SECURITY-SCOPE.md) ·
+[Güncel kabul durumu](docs/ACCEPTANCE.md) · [Sürücü laboratuvarı](docs/DRIVER-LAB.md)
 
-scripts/security.ps1: dependency hashes, Gitleaks, .NET vulnerability metadata,
-Clang SAST and managed analyzers. Native AddressSanitizer via build/test -Sanitize.
-Regressions cover malformed/duplicate/oversize profiles, mute/limiter/silence,
-alignment/transitions and ABI. DAST/auth/IDOR do not apply: no web backend.
+## Reporting in English
 
-Personal calibration accepts only bounded20s mono arrays and rejects nonfinite
-or clipped input. Recommendations validate before mutation; applying to a
-different endpoint fails. Profile/device limits are checked before creating
-state. Optional per-device settings are validated on load, within the existing
-1MiB local state/64KiB shared-profile limits. Offline previews use a separate
-engine and the limiter. Regression tests cover rejection, endpoint isolation,
-apply/undo, local persistence and voice/device-free sharing. Speech detection
-and tone estimation quality are separate listening-validation concerns.
+Please use [private vulnerability reporting](https://github.com/alperensu/veylo/security/advisories/new)
+for sensitive findings, rather than public Issues. Include the exact version,
+impact and a minimal reproduction without credentials, personal recordings,
+device identifiers or local user state. Only test systems you own or are
+explicitly authorized to test. No response-time or fix-time guarantee is offered.
 
-Portable package is unsigned. The source repository is initially private:
-https://github.com/alperensu/veylo. No public vulnerability reporting inbox is
-configured. Do not post secrets or personal audio in Issues; report sensitive
-findings directly to the repository owner through an existing private channel.
-Sensitivity config uses validated boolean flags and finite bounded thresholds;
-ABI4 size/version checks reject mixed UI/DLL releases. Tests cover default-off
-legacy profiles, mode persistence, below-threshold output, bypass/mute/limiter
-and overloaded input. AddressSanitizer covers the new callback envelope.
-Report reproduction/affected version without publishing recordings/local state.
-
-## Game mode and UI preferences (0.5.1)
-
-The detector reads process names and foreground-window geometry every5 seconds
-on a worker; it does not open game memory, inject code, read command lines, change
-priority or persist process inventories. Detection stops when automatic mode is
-turned off. One outstanding poll is allowed; exit stops the timer/unsubscribes
-Windows settings events. Known-name/fullscreen matching is heuristic, not proof
-that a foreground application is a game. The UI discloses that limitation.
-
-Custom process names are bounded to20×96 characters, validated at entry and local
-state load/save, and never executed or interpreted as paths. Duplicate .exe/non-
-.exe names and command/path characters are rejected. Local preferences remain
-outside shareable profiles. Regression tests cover these boundaries, defaults,
-persistence and deterministic15s recovery hold. No new dependency or driver API.
-
-## 0.6.0 scoped controls
-Local shortcut settings validate enum, letters and active conflicts. New bindings
-are transactional; no Windows/Discord defaults or driver installation changes.
-Only configured chord states are sampled; no key logs/history/hook/injection.
-PTT starts closed and bypass cannot unmute. Native gate values and all expander
-parameters are checked before assignment; no RT allocation/lock was introduced.
-These checks do not demonstrate Vanguard compatibility or complete Windows
-lock/sleep/physical-key behavior. Already queued speech may take a few milliseconds
-to drain after key release.
+Veylo is in development. A passing test or review is scoped evidence, not a
+production security certification. The virtual microphone package is currently
+test-signed for isolated labs, not Microsoft production signed.

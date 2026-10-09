@@ -1,235 +1,151 @@
-# Veylo
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px)" srcset="docs/assets/veylo-banner-small.svg">
+    <img src="docs/assets/veylo-banner.svg" alt="Veylo — Sesinin en iyi hâli. Windows için yerel mikrofon stüdyosu." width="100%">
+  </picture>
+</p>
 
-**Sesinin en iyi hâli.**
+<p align="center">
+  <a href="https://github.com/alperensu/veylo/actions/workflows/windows.yml"><img src="https://github.com/alperensu/veylo/actions/workflows/windows.yml/badge.svg?branch=main" alt="Windows derleme ve test durumu"></a>
+  <a href="https://github.com/alperensu/veylo/releases"><img src="https://img.shields.io/github/v/release/alperensu/veylo?include_prereleases&amp;label=s%C3%BCr%C3%BCm&amp;color=b94b24" alt="En yeni geliştirme sürümü"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/lisans-MIT-233136" alt="MIT lisansı"></a>
+  <img src="https://img.shields.io/badge/platform-Windows_x64-233136" alt="Windows x64">
+</p>
 
-[Kaynak depo](https://github.com/alperensu/veylo) ·
-[Windows doğrulaması](https://github.com/alperensu/veylo/actions) ·
-[Sürümler](https://github.com/alperensu/veylo/releases) ·
-[Katkı ve GitHub akışı](CONTRIBUTING.md)
+<p align="center">
+  <strong><a href="https://github.com/alperensu/veylo/releases/tag/v0.7.5-dev">Windows için indir</a></strong> ·
+  <a href="docs/INSTALL.md">Kurulum rehberi</a> ·
+  <a href="docs/FAQ.md">Sık sorulanlar</a> ·
+  <a href="CONTRIBUTING.md">Katkıda bulun</a> ·
+  <a href="docs/README.en.md">English</a>
+</p>
 
-Kaynak kod ve indirilebilir paketler GitHub üzerinden dağıtılır.
+# Mikrofonun için küçük bir stüdyo
 
-Ad değişikliği ve eski ayarlarla uyumluluk: [BRANDING.md](docs/BRANDING.md).
+**Veylo**, mikrofon sesini bilgisayarında işleyen açık kaynak bir Windows uygulaması.
+Arka plan gürültüsünü azalt, konuşma seviyeni dengele ve sesinin karakterini kendine göre ayarla.
+Kayıt, yayın, toplantı, sesli iletişim ve oyun için tek bir çalışma alanı.
 
-Windows için genel amaçlı, yerel mikrofon ve ses iyileştirme: RNNoise gürültü azaltma, konuşma sırasında
-ses dengeleme, giriş duyarlılığı, dört bant EQ, de-esser, kompresör ve güvenlik
-limiter'i. Türkçe/İngilizce WPF arayüz, kişisel kalibrasyon ve beş hazır preset;
-Podcast — Tok ve Net dahildir. C++20 / CMake / .NET 10, MIT.
+**Hesap yok. Abonelik yok. Sesini buluta göndermek yok.** Günlük ses işleme internet veya GPU gerektirmez.
 
-Veylo; kayıt, yayın, toplantı, sesli iletişim ve oyun gibi farklı kullanımlar için
-geliştirilir. Discord ve Valorant kullanım örnekleridir; ürünün kapsamını veya
-genel ses kalitesi kabulünü bu iki uygulama belirlemez. Kullanıcı 8 Ekim 2026'da
-kendi kurulumunda seslerin temizlendiğini ve sorun olmadığını bildirdi.
-Bu geri bildirim tüm mikrofonlar ve uygulamalar için uyumluluk garantisi değildir.
+> **Geliştirme sürümü · 0.7.5-dev**
+> Uygulamalara ses aktarımı şu anda **VB-CABLE** üzerinden yapılır; ayrıca kurulmalıdır.
+> Kendi Veylo Mikrofon sürücümüz yalnız izole laboratuvarda test edilmiştir ve normal Setup'a dahil değildir.
+> Tüm cihazlarda ses kalitesi, uyumluluk veya performans garantisi verilmez. [Doğrulanan kapsam →](docs/ACCEPTANCE.md)
 
-**0.7.5-dev geliştirme çıktısıdır.** Açılışta kayıtlı mikrofon/ayarlarla otomatik
-işleme başlar; Başlat/Durdur kaldırıldı. Pencereyi kapatmak bildirim alanına
-gizler; Veylo'dan çık mikrofonu bırakır. Eski profiller/kalibrasyonlar korunur.
+![Veylo'nun Türkçe ana ekranı: cihaz seçimi, giriş ve çıkış ölçerleri, kişisel kalibrasyon ve sürekli erişilebilir susturma kontrolleri](docs/assets/overview.png)
 
-**VB-CABLE çıkışı geri geldi ve varsayılandır.** Kurulu CABLE Input otomatik seçilir;
-Kullandığın uygulamanın mikrofon girişi CABLE Output olmalıdır. Çıkış listesinden ayrıca
-Veylo Mikrofon (geliştirme) veya yalnızca yerel işleme açıkça seçilebilir.
-Hoparlörler çıkış listesinde gösterilmez. Kayıtlı kablo kaybolursa başka çıkışa
-geçilmez; aynı cihaz beklenir. İlk açılışta kablo bulunamazsa yerel işleme başlar,
-kurulum/yenileme sonrası aynı akış kabloya bağlanır. VB-CABLE pakete dahil değildir.
+<sub>Gerçek uygulama arayüzünün kontrollü test modundaki görüntüsü. Gösterilen cihaz, profil ve seviye değerleri örnektir; canlı mikrofon ölçümü değildir.</sub>
 
-Capture-only PortCls/WaveRT Veylo Mikrofon sürücüsü derlendi; dosya tabanlı
-laboratuvar test imzası ve gerçek WASAPI yakalama test aracı hazırlandı.
-Microsoft üretim imzası ve gerçek uygulamalarla uyumluluk kabulü henüz yok.
-Veylo Mikrofon seçeneği bu sürücü olmadan uygulamalara ses taşımaz. VB-CABLE yolu
-bu sürücüye ihtiyaç duymaz; gerçek uygulama/uzun süreli performans kabulü beklenir.
-Üretim sertifikası satın alınmadı. Test imzası yalnız izole Windows hedefi içindir;
-günlük çıkış hâlâ VB-CABLE.
-[İzole laboratuvar ve geçiş kapıları](docs/DRIVER-LAB.md) tamamlanmadan
-kendi sürücümüze otomatik geçilmez. `package-driver.ps1` yalnız hash doğrulanmış,
-açıkça etiketlenmiş imzasız laboratuvar ZIP’i üretir. `sign-driver-lab.ps1`
-ayrı TEST-SIGNED paketi oluşturur; host sertifika deposunu değiştirmez.
-Her iki paket de normal Setup’a eklenmez. [İmzalama adımları](docs/DRIVER-SIGNING.md).
+## Temizle. Dengele. Kendine göre ayarla.
 
-[Son sürümden](https://github.com/alperensu/veylo/releases) **win-x64-Setup.exe**
-indirerek kur veya taşınabilir **win-x64.zip** paketini tamamen çıkarıp Veylo.exe aç.
-Kurulum kullanıcı hesabına yapılır; yönetici izni istemez. Başlat menüsü kısayolu
-ekler, masaüstü kısayolu isteğe bağlıdır. Kaldırma profilleri/kalibrasyonları korur.
-VB-CABLE ayrı kurulur. Geliştirme kurulum dosyası kod imzalı değildir; Windows
-tanınmayan yayıncı/SmartScreen uyarısı gösterebilir. Güvenlik ayarlarını kapatma;
-dosya adını, GitHub kaynağını ve yayımlanan SHA-256 değerini doğrula.
-Kullanım [INSTALL.md](docs/INSTALL.md),
-sürücü/imzalama/laboratuvar [DRIVER.md](docs/DRIVER.md),
-kapsam ve ölçüm sınırları [VALIDATION.md](docs/VALIDATION.md),
-özellik bazında kabul durumu [ACCEPTANCE.md](docs/ACCEPTANCE.md).
+| | Ne yapabilirsin? |
+| --- | --- |
+| **Arka planı temizle** | RNNoise gürültü azaltma, manuel veya otomatik temizleme gücü, güçlü temizleme ve ayarlanabilir giriş duyarlılığı. |
+| **Konuşmanı dengele** | Konuşma sırasında otomatik seviye dengeleme; kompresör, kazanç sınırları ve güvenlik limiter'i. |
+| **Tonunu şekillendir** | Dört bant EQ, sıcaklık ve netlik kontrolleri, alt frekans kesimi ve keskin “s/ş” sesleri için de-esser. |
+| **Sesine uyarla** | 10 saniyelik hızlı veya 20 saniyelik ayrıntılı kalibrasyon; öneriyi dinle, uygula veya geri al. |
+| **Farkı dinle** | En fazla 20 saniyelik aynı örneği ham ve işlenmiş olarak, ses yüksekliği eşlenmiş karşılaştır. |
+| **Kendi profilini oluştur** | Hazır profilleri kullan; kişisel ayarlarını kaydet, sürümlü JSON olarak içe veya dışa aktar. |
+| **Arka planda kullan** | Açılışta otomatik işleme, bildirim alanı, susturma ve orijinal ses kısayolları, isteğe bağlı basılı tutarak konuşma. |
+| **Oyuna odaklan** | Otomatik oyun modu algılandığında görsel efektleri durdurur; ses işleme devam eder. FPS artışı vaadi değildir. |
 
-## Hızlı kalibrasyon ve profiller
+## İlk sesini üç adımda gönder
 
-Varsayılan kişisel ölçüm 10 saniye: 2 saniye ortam, 8 saniye doğal konuşma.
-Seçili EQ/ton karakteri ve güçlü temizleme korunur. İsteğe bağlı ayrıntılı ölçüm
-20 saniyedir. Net Konuşma, Sıcak Ses, Yayın ve Podcast tonları daha belirgin
-ayrışır. Profiller sayfasında aynı RAM kaydını ham/seçili profil olarak, ses
-yüksekliği eşlenmiş dinleyebilirsin. Kayıtlı kullanıcı ayarları güncellemede
-korunur; yeni fabrika tonunu almak için başka profili, sonra istediğini seç.
-Bu değişiklikler sinyal testleriyle doğrulandı; gerçek mikrofonla dinleme kabulü
-ayrıca yapılmalıdır.
+1. **İndir ve kur.** [0.7.5-dev sürümünden](https://github.com/alperensu/veylo/releases/tag/v0.7.5-dev)
+   `Veylo-0.7.5-dev-win-x64-Setup.exe` dosyasını indir.
+   Kurulum istemiyorsan taşınabilir ZIP'i tamamen çıkarıp `Veylo.exe` dosyasını aç.
+   [.NET'i ayrıca kurman gerekmez.](docs/INSTALL.md)
+2. **Mikrofonunu bağla.** [VB-CABLE'ı resmî kaynaktan](https://vb-audio.com/Cable/) kur;
+   gerekirse Windows'u yeniden başlat. Veylo'da fiziksel mikrofonunu ve **VB-CABLE / CABLE Input** çıkışını seç.
+   Veylo açıldığında işleme otomatik başlar.
+3. **Kullandığın uygulamaya aktar.** Kayıt, toplantı, yayın veya iletişim uygulamanda mikrofon girişi olarak
+   **CABLE Output** seç. Kulaklık/hoparlör çıkışın kendi normal ses aygıtın olarak kalsın.
 
-## Arayüz ve oyun modu
+```text
+Fiziksel mikrofon → Veylo → CABLE Input → CABLE Output → Kullandığın uygulama
+```
 
-Yeni açık çalışma alanı, koyu yan menü, bakır vurgu ve daha okunaklı kontroller.
-Menü beş bölümden oluşur; Gürültü ve İletim, Seviye, Ton ve EQ aynı Ses İşleme
-bölümündedir. Profillerin tek seçicisi Profiller'de, kalibrasyon ve karşılaştırma
-aynı bölümdedir. Ana ekran bağlantı/seviyeleri gösterir; etkin profil göstergesi
-Profiller'i açar. Sustur ve Orijinal ses her sayfada erişilebilir. Kısa, isteğe
-bağlı geçişler ve gerçek RMS seviye geçmişi. Ayarlar → Oyun modu varsayılan açık:
-bilinen oyunlar arka planda, diğerleri tam ekran üzerinden algılanır. Oyun
-algılanınca animasyonlar/vurgu dekoru/canlı ses görseli kapanır; ölçerler5Hz,
-ses motoru ve susturma aynı şekilde çalışır. Özel süreç adları eklenebilir.
-Windows azaltılmış hareket tercihi animasyonları kapatır; yüksek kontrast
-tercihi arayüz renklerini Windows sistem paletine geçirir.
-Ayrıntı [UI.md](docs/UI.md). Gerçek oyun FPS/frametime testi yapılmadı.
+**Input ve Output neden ters görünüyor?** Veylo kabloya ses *verir*; diğer uygulama kablodan ses *alır*.
+VB-CABLE yokken yerel işleme ve kalibrasyon kullanılabilir, ancak diğer uygulamalara ses aktarılmaz.
 
-## Derleme ve test
+| İndirme | Kullanım |
+| --- | --- |
+| [**Windows Setup**](https://github.com/alperensu/veylo/releases/download/v0.7.5-dev/Veylo-0.7.5-dev-win-x64-Setup.exe) | Kullanıcı hesabına kurulum ve Başlat menüsü kısayolu. |
+| [**Taşınabilir ZIP**](https://github.com/alperensu/veylo/releases/download/v0.7.5-dev/Veylo-0.7.5-dev-win-x64.zip) | Tamamını çıkar, `Veylo.exe` dosyasını çalıştır. |
+| [**Kaynak kod**](https://github.com/alperensu/veylo/releases/download/v0.7.5-dev/Veylo-0.7.5-dev-source.zip) | İncele, kendin derle veya katkıda bulun. |
 
-    ./scripts/build.ps1
-    ./scripts/test.ps1
-    ./scripts/test.ps1 -Live
-    ./scripts/build.ps1 -Sanitize
-    ./scripts/test.ps1 -Sanitize
-    ./scripts/security.ps1
-    ./scripts/build-driver.ps1 -DownloadKit
-    ./scripts/package.ps1 -SkipBuild
-    ./scripts/test-installer.ps1
+Her paketin SHA-256 dosyası [sürüm sayfasında](https://github.com/alperensu/veylo/releases/tag/v0.7.5-dev) bulunur.
+Geliştirme Setup'ı kod imzalı değildir; Windows yayıncı uyarısı gösterebilir.
+Güvenlik ayarlarını kapatma; kaynağı ve checksum'ı [kurulum rehberiyle](docs/INSTALL.md) doğrula.
 
-Paketleme resmî Inno Setup 7.1.0 derleyicisini SHA-256 ile sabitler ve gerektiğinde
-`.tools` altına kurar. Üç çıktı üretilir: kurulum EXE'si, taşınabilir ZIP ve kaynak ZIP;
-her biri için `.sha256` dosyası vardır. Kurulum testleri ayrı ürün kimliği ve dizinle
-çalışır; gerçek kullanıcı profiline/başlangıç tercihine dokunmaz. Inno Setup ticari
-kullanımı için kendi lisans koşulları ayrıca değerlendirilmelidir.
+## Bir ses karakteri seç
 
-Profil kaydetme/içe aktarma sırasında diske yazma başarısızsa başarı mesajı
-gösterilmez. Masaüstü kayıt testleri, gerçek kullanıcı ayarlarına veya ses
-cihazlarına dokunmadan yazma hatalarını, yeniden yüklemeyi ve tekrar denemeyi sınar.
-Veylo'dan çık sırasında tamamlanan arka plan karşılaştırması/kalibrasyonu yeni
-dinleme veya dosya penceresi başlatmaz; normal pencere kapatma bildirim alanına gizler.
-Giriş/çıkış ölçerleri, kayıt ilerlemesi ve EQ alanlarının ekran okuyucu adları
-Türkçe/İngilizce seçimini izler; gerçek Narrator ve çoklu DPI kabulü ayrıca beklenir.
+| Profil | Başlangıç karakteri |
+| --- | --- |
+| **Doğal** | Hafif işleme, doğal ton. |
+| **Net Konuşma** | Daha az boğukluk, belirgin konuşma ve açık üst tonlar. |
+| **Sıcak Ses** | Dolgun bas ve daha yumuşak tizler. |
+| **Yayın** | Açık, parlak ton ve daha sıkı dinamikler. |
+| **Podcast — Tok ve Net** | Tok bas, temiz orta tonlar, daha yumuşak tizler ve güçlü temizleme. |
 
-Alternatif bir CMake çıktı diziniyle derlenen DLL, masaüstü derleme/yayımlamada
-`-p:NativeBinary=C:\tam\yol\ses_native.dll` ile seçilebilir. Paketleme için
-`./scripts/package.ps1 -SkipBuild -NativeBinary C:\tam\yol\ses_native.dll`
-kullanılır. Bu yol yerel geliştirici girdisidir; preset dosyalarından okunmaz.
+Profil seçtikten sonra **Kalibrasyon ve Test** bölümünde sesine göre ayarla.
+Hızlı ölçümde 2 saniye sessiz kal, ardından 8 saniye doğal sesinle konuş.
+Seçtiğin ton korunur; öneriyi dinleyip uygulamak sana kalır. Mikrofon, ortam ve konuşma biçimi sonucu etkiler.
 
-Mevcut SDK/CMake/LLVM kurulumları yeniden kullanılacaktır. Bağlı resmî EWDK için
-build-driver.ps1 -EwdkRoot D:\ kullanılabilir. Kit 26100.6584, kaynak/model ve
-SYSVAD commit/checksum'ları sabittir. Kernel build sürücüyü kurmaz/imzalamaz.
-Active IOCTL testi yalnızca ayrı laboratuvarda; normal CTest'e dahil değildir.
+<details>
+<summary><strong>Arayüzü keşfet: profiller ve kalibrasyon</strong></summary>
 
-İşleme tamamen yereldir; hesap/internet/GPU gerekmez. Ses örneği RAM'de tutulur,
-yalnızca açık WAV aktarımı kaydeder. JSON paylaşımı ses/cihaz kimliği içermez.
-Mikrofonun donanımsal sorununu çözdüğümüz veya tüm dış sesleri sildiğimiz iddia
-edilmez. CPU/RAM/gecikme hedefleri tam sürücü + oyun sistemi üzerinde ölçülmelidir.
+### Hazır profiller ve kişisel ayarlar
 
-## 0.6.0 konuşma kontrolleri
-VB-CABLE yönlendirmesi korunur. Ayarlar / Konuşma kontrolü: açık mikrofon,
-basılı tutarak konuş veya basılı tutarak sustur. Varsayılan tuş Ctrl+Alt+T.
-Uygula ile etkinleştir. Sustur her zaman önceliklidir. PTT kapalı başlar;
-tuş çakışırsa açılmaz. Çakışmada eski çalışan kayıtlar korunur. Klavye günlüğü
-ve hook yok; sadece seçili Ctrl+Alt+tuş durumu 20 ms aralıkla okunur. Gizli
-pencerede çalışır. Gerçek oyun/uyku/kilit ekranı davranışı ayrıca doğrulanmalıdır.
+![Veylo Profiller sayfasında Doğal, Net Konuşma, Sıcak Ses, Yayın ve Podcast seçenekleri](docs/assets/profiles.png)
 
-Hazır preset kısayolları isteğe bağlı Ctrl+Alt+1…5: Doğal, Net Konuşma,
-Sıcak Ses, Yayın, Podcast; kayıt/kalibrasyon sırasında devre dışıdır.
-Gürültü / Giriş duyarlılığı: mevcut kapatma modu veya yeni yumuşak expander;
-açılma, bekleme, kapanma, kapanma eşiği farkı, oran ve azami azaltma.
-Expander insan sesi ayırma modeli değildir. Varsayılan presetler değişmedi;
-eski JSON dosyaları yeni alanların koruyucu varsayılanlarıyla yüklenir.
-Uygulama ve native DLL ABI5 birlikte kullanılır; eski DLL ile karıştırma.
-Kernel sürücüsü protokolü 1 korunur; bu pakete sürücü eklenmez. AI ses
-restorasyonu, yankı iptali, soundboard ve çok kanallı mixer dahil değildir.
+### Mikrofonuna ve sesine göre kalibrasyon
 
-## 0.6.1 — klavye için güçlü temizleme
-Gürültü Azaltma / Güçlü temizlemeyi uygula, mevcut ton ve dengeleme ayarlarını
-koruyarak RNNoise karışımını %100 yapar; otomatik güç kapatılır, otomatik eşikli
-yumuşak expander eklenir. Orijinal ses kapanır; Sustur korunur. Kayıt/kalibrasyon
-sırasında uygulanmaz. %65 karışımda ham mikrofonun %35'i çıkışa geri eklenir;
-otomatik mod da ham yol bırakır. Güçlü temizleme bu geri karışımı kaldırır.
-Açılışta --strong-clean aynı ayarı yükler ve normal kullanıcı ayarlarına kaydeder;
-varsayılan açılış kendi başına mevcut ayarlarını değiştirmez. Eski presetler
-korunur. Gürültü Azaltma kontrollerinden önceki seçenekleri tekrar seçebilirsin.
-RNNoise bütün klavyeleri veya konuşurken yapılan her tuş vuruşunu silemez;
-yakındaki diğer insan seslerini ayırma garantisi yoktur. Kullanılan uygulamanın girişi CABLE
-Output olmalıdır. Gerçek dinleme ve sessiz kelime koruması kullanıcı ortamında
-ayrıca kontrol edilmelidir.
+![Veylo Kalibrasyon ve Test sayfasındaki hızlı ve ayrıntılı ölçüm seçenekleri](docs/assets/calibration.png)
 
-## 0.6.3: Ani gürültü ve akış tanısı
+Görüntüler kontrollü arayüz testlerinden alınmıştır; cihaz ve ölçüm değerleri örnektir.
 
-Sabit RNNoise v0.2 modeli, resmi bb18d2f değişikliğindeki enerjiye göre kazanç
-geçmişi düzeltmesiyle kullanılıyor. Bazı ani gürültülerin sızıntısını azaltabilir;
-masa darbelerini tamamen kesme garantisi vermez. Ek model, GPU veya ses bloğu
-gerektirmez. Ses aktarımı paket zamanlamasıyla sınanan saat farkı dengelemesi ve
-bir örnek hizalama gecikmesi olan interpolasyon kullanır. Geliştirici tanısı
-callback boyutlarını/aralıklarını, gerçek tampon hatalarını ve CPU/bellek
-hedeflerini raporlar. Oyun algılayıcısının bellek tahsisi azaltıldı. Eski ayarlar
-ve cihaz kalibrasyonları uyumludur.
+</details>
 
-Gerçek masa darbesi/konuşma dinlemesi, uçtan uca gecikme ve oyun performansı
-kabulü tamamlanmadı. Ölçüm yapılan gizli koşularda150MB çalışma belleği hedefi
-aşıldı; bu paket geliştirme çıktısıdır.
+## Sesin senin bilgisayarında kalır
 
-## 0.6.4: Otomatik yumuşak duyarlılık
+Ses işleme yereldir. Karşılaştırma örneği bellekte tutulur; ses dosyası yalnızca sen WAV dışa aktarımını seçersen yazılır.
+Paylaşılan JSON profilleri ses kaydı veya cihaz kimliği içermez. Normal uygulama yönetici izni istemez;
+VB-CABLE'ın ayrı sürücü kurulumu isteyebilir.
 
-Güçlü temizlemeyi uygula seçeneğiyle, konuşma algılanmayan yüksek sesler
-yumuşak azaltmayı açamaz veya konuşma bekleme süresini yenileyemez.
-Bu davranış gürültü azaltma + otomatik duyarlılık + expander açıkken çalışır.
-Modelin konuşma sandığı masa darbeleri yine geçebilir; gerçek sessiz kelime
-başlangıçlarını Önce/sonra ile dinleyerek kontrol et. Bu sürüm masa darbesi
-sorununun tamamen çözüldüğü veya günlük kullanım testlerinin bittiği anlamına gelmez.
+Veylo bütün dış sesleri silemez, yakındaki konuşmacıları kesin olarak ayıramaz veya bozuk mikrofon donanımını onaramaz.
+Kısık kelimeleri ve cümle başlangıçlarını kendi mikrofonunla dinleyerek kontrol et.
+[Gizlilik ve güvenlik sınırları](SECURITY.md) · [Sık sorulanlar](docs/FAQ.md)
 
-## 0.6.5: Callback boyuna göre aktarım rezervi
+## Açık geliştirme, açık doğrulama
 
-VB-CABLE aktarımında tampon hedefi artık çıkış callback boyunu hesaba katar;
-varsayılan ayarda render sonrasında ortalama 15 ms rezerv hedeflenir. Saat
-düzeltmesinin hata ölçeği 10 ms giriş paketine bağlıdır. Bu, zamanlama
-oynamaları ve büyük callbacklerdeki boşalma riskini azaltır. Hesaplanan
-gecikme uçtan uca ölçüm değildir; 40 ms hedefi henüz doğrulanmadı.
+Veylo **Windows 10/11 x64** için geliştirilir. C++20 ses motoru, miniaudio/WASAPI, RNNoise ve C#/.NET 10 WPF kullanır.
+Hedeflenen sistemler ile gerçekten doğrulanan cihaz ve koşullar [kabul tablosunda](docs/ACCEPTANCE.md) ayrıdır.
 
-## 0.6.6: Oyun algılamada daha az bellek tahsisi
+Kendi sanal mikrofonumuz Windows 11 VM'de kısa kernel ve PCM16/PCM32 ses testlerini, standart Driver Verifier açıkken de geçti.
+**Microsoft üretim imzası, HVCI, uzun süreli testler ve gerçek alıcı uygulama kabulü bekleniyor.**
+Laboratuvar paketini günlük bilgisayara kurma; günlük aktarım için VB-CABLE kullan.
+CPU, bellek ve gecikme hedefleri tamamlanmış performans garantileri değildir.
 
-Oyun algılama politikası artık her arka plan işlemi için geçici bir sorgu
-oluşturmuyor. Özel oyun adları ve `.exe` eşleşmesi, tam ekran istisnaları ve
-15 saniyelik bekleme davranışı korunuyor. 350 işlemli kontrollü karşılaştırmada
-politikanın tarama başına tahsisi yaklaşık 42 KB'den 32 bayta indi; bu ölçüm
-uygulamanın toplam bellek kullanımı değildir. Ses motoru bu sürümde değişmedi.
+| Belge | İçeriği |
+| --- | --- |
+| [Kurulum ve kullanım](docs/INSTALL.md) | Cihaz bağlantısı, kalibrasyon, kısayollar ve sorun giderme. |
+| [Sık sorulanlar](docs/FAQ.md) | Ses gelmiyor, gürültü geçiyor, ekran paylaşımı ve sürücü soruları. |
+| [Kabul durumu](docs/ACCEPTANCE.md) | Özellik bazında Passed / Partial / Not run. |
+| [Doğrulama raporu](docs/VALIDATION.md) | Çalıştırılan testler, ölçümler ve sınırlar. |
+| [Geliştirici rehberi](docs/DEVELOPMENT.md) | Derleme, test, paketleme ve laboratuvar araçları. |
+| [Sürüm notları](docs/CHANGELOG.md) | Geliştirme geçmişi ve geçmiş ölçümler. |
+| [Sanal mikrofon laboratuvarı](docs/DRIVER-LAB.md) | İzole test kurulumu ve günlük kullanıma geçiş koşulları. |
 
-0.6.5'in 10 dakikalık gerçek mikrofon → VB-CABLE koşusunda tampon hatası yoktu,
-CPU yaklaşık %0,20 idi; en yüksek çalışma belleği 151,6 MB ile 150 MB hedefini
-aştı. Gürültü temizliği, gerçek uçtan uca gecikme ve oyun kabulü henüz tamamlanmadı.
+## Birlikte geliştirelim
 
-## 0.6.7: Hafif oyun taraması ve kısa çıkış periyodu
+Yeni bir mikrofonla denemek, anlaşılır bir hata bildirimi yazmak, çeviriyi geliştirmek veya kodla katkıda bulunmak değerlidir.
+[Hata bildir / fikir öner](https://github.com/alperensu/veylo/issues/new/choose) ·
+[Katkı rehberi](CONTRIBUTING.md) ·
+[Güvenlik açığını özel bildir](https://github.com/alperensu/veylo/security/advisories/new)
 
-Oyun taraması artık tüm süreçler için metin ve gözlem listeleri oluşturmadan
-ilk eşleşmeyi buluyor. Aynı .NET 10.0.11 üzerinde 394 süreçli karşılaştırmada
-tarama ve politika tahsisi 58.912 bayttan 32 bayta indi; özel eşleşmede 144 bayt
-ölçüldü. UI görev maliyeti ve toplam uygulama belleği bu ölçüme dahil değildir.
-Özel oyun listesi tarama sırasında değişirse yeni listeyle tekrar kontrol edilir.
+Ses kayıtlarını, kişisel konuşmaları ve cihaz kimliklerini herkese açık Issue'lara ekleme.
 
-Ses motoruna istenen cihaz periyodu 5 ms oldu; 20 ms tampon rezervi korunuyor.
-Bu bilgisayarda USB giriş 10 ms, VB-CABLE çıkış 5 ms periyotla çalıştı.
-10 dakikalık sessiz aktarım denemesi sıfır tampon hatasıyla tamamlandı.
-Desteklenen gerçek periyot cihaza bağlıdır; bu bir 40 ms gecikme garantisi değildir.
-
-0.6.6'nın bir saatlik ölçümünde sıfır tampon hatası ve yaklaşık %0,16 CPU görüldü;
-152,0 MB en yüksek çalışma belleği 150 MB hedefini aştı. Bu ölçüm tanı araçları
-açıkken yapıldı. 0.6.7 için bellek, gerçek konuşma ve oyun kabulü ayrıca gereklidir.
-
-## 0.6.8: Açılış hedefinin yenilenmesi ve bellek tanısı
-
-Yeni Veylo açıldığında Windows ile başlatma tercihi zaten açıksa, tanınan eski
-eski SES.exe veya Veylo.exe hedefi mevcut sürüme yenilenir. Kapalı tercih açılmaz; daha yeni bir
-sürümün kaydı eski sürüme indirilmez. Açık olan diğer Veylo süreci kapatılmaz.
-
-Geliştirici için düşük yüklü ölçüm modu eklendi: `--validate-live
---validate-low-overhead --validate-cable --validate-duration-seconds 600
---minimized --out <klasör>`. Bu mod kendi mikrofon katkısını başlangıçtan önce
-susturur; ses kaydı yazmaz. Normal kullanıcı arayüzü ve ses işleme ayarları değişmez.
-Ölçüm 1 Hz, tanı kaydı 30 saniyede bir alınır; işletim sisteminin süreç boyunca
-gördüğü bellek zirvesi de korunur. Bu, normal kullanımın kesin RAM ölçümü değildir.
-
-Önceki 0.6.7 uzun koşusu bilgisayar kapatıldığında yaklaşık 48. dakikada kesildi.
-Son örnekte tampon hatası yoktu; bir saatlik test tamamlanmış sayılmaz.
+Veylo kaynak kodu [MIT](LICENSE) lisanslıdır. Bağımlılık bildirimleri [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) içindedir.
+VB-CABLE ayrı bir üründür; pakete dahil edilmez ve kendi lisans koşullarına tabidir.

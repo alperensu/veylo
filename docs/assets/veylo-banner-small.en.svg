@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400" role="img" aria-labelledby="title desc">
+  <title id="title">Veylo — Your voice, refined.</title>
+  <desc id="desc">Your local microphone studio for Windows. Veylo banner for narrow screens.</desc>
+  <rect width="640" height="400" rx="20" fill="#17272c"/>
+  <rect x="36" y="36" width="64" height="64" rx="18" fill="#ba4a24"/>
+  <g fill="#fff" transform="translate(51 41) scale(1.5)">
+    <path d="M0 12H3V25H0ZM5 5H8V32H5ZM10 0H13V37H10ZM15 8H18V29H15ZM20 13H23V24H20Z"/>
+  </g>
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <text x="120" y="86" fill="#fbfaf7" font-size="54" font-weight="600" letter-spacing="-2">Veylo</text>
+    <text x="36" y="186" fill="#fbfaf7" font-size="52" font-weight="600" letter-spacing="-2">Your voice, refined.</text>
+    <text x="38" y="244" fill="#becbc9" font-size="28">Your local microphone</text>
+    <text x="38" y="282" fill="#becbc9" font-size="28">studio for Windows.</text>
+    <text x="38" y="357" fill="#d9a086" font-size="24">LOCAL AUDIO · OPEN SOURCE</text>
+  </g>
+</svg>

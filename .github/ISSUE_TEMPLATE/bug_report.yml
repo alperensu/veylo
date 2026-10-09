@@ -1,4 +1,4 @@
-name: Hata bildirimi
+name: Hata bildirimi / Bug report
 description: Ses, cihaz, arayüz veya kurulum sorunu bildir.
 title: '[Hata] '
 labels: [bug]
@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: Veylo sürümü
-      placeholder: 0.6.12-dev
+      placeholder: 0.7.5-dev
     validations:
       required: true
   - type: textarea
