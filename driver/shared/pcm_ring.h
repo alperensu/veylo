@@ -28,10 +28,9 @@ struct PcmRing {
         if(!attached||now-last_ms>SES_DRIVER_TIMEOUT_MS)discard();
         const uint32_t reserve=SES_DRIVER_TARGET+SES_DRIVER_FRAMES/2;
         if(!primed&&queued()>=reserve+frames+1)primed=true;
-        // TARGET is the reserve AFTER this pull, not the initial fill. Keep
-        // one complete producer block in reserve through ordinary callback jitter.
-        // Half a producer packet compensates the occupancy sawtooth as the
-        // independent clocks cross a packet boundary; TARGET remains the floor.
+        // This is an occupancy controller, not a guaranteed reserve floor.
+        // Half a producer packet centers the occupancy sawtooth; bounded
+        // resampling corrects gradual clock drift, not a stalled producer.
         int64_t correction=(static_cast<int64_t>(queued())-frames-reserve)*65536/(SES_DRIVER_TARGET*200);
         if(correction>328)correction=328;if(correction< -328)correction= -328;
         const uint32_t step=static_cast<uint32_t>(65536+correction);drift_ppm=primed?static_cast<int32_t>(correction*1000000/65536):0;

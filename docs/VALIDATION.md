@@ -24,6 +24,53 @@ without freeing pending I/O storage. Kernel source, protocol 1, ABI 5 and the
 normal VB-CABLE route are unchanged. Active product-bridge capture is not yet
 established at this source checkpoint; the older hour failures below remain.
 
+Findings: the first real ProductBridge 60-second request ended after 23,844 ms
+with process exit 1, 36 checks and eight failures. The actual application
+worker, upstream and consumers all registered MMCSS; TransferQueue drops=0.
+There was one steady underrun, no overruns, maximum completed WRITE gap
+25,492 us, upstream lateness 15 ms and minimum observed steady queue 236
+frames. Total connected-session silence was 2,571 frames, including priming;
+the last steady sample increased silence from 2,212 to 2,571. Two connected
+source sessions had run; the third required lifecycle stage was not reached.
+The counters and waveform test correctly rejected this result. Atomic STATUS
+snapshots may be stale, so they do not establish the exact kernel pull size
+or queue occupancy at the start of the write gap. The original output and
+normal shutdown were preserved in product-bridge-24s-findings-serial.log,
+product-bridge-24s-and-shutdown-serial.log and the owned disk snapshot
+product-bridge-24s-findings-20261009. No hour run was started after this failure.
+
+Investigation found a blocking path in the lab producer's measurement
+publication: consumer and producer share a mutex while copying the fixed
+history. A descheduled consumer can delay upstream callbacks. This is a
+test-harness issue, not proof that it caused the recorded underrun; it must
+be removed before using the harness to diagnose the production buffer.
+Kernel reserve and acceptance thresholds were not relaxed.
+
+Passed: the blocking publication was replaced in both lab producers by a fixed
+three-slot single-writer/single-reader mailbox. Sequentially consistent slot
+ownership protects plain-field copies; publication never waits for a reader,
+and snapshots make at most three attempts before using the reader's cache.
+After worker join, the uncontended terminal snapshot reads the actual last
+publication. The fixture pins a reader for at least 40 ms while 1,000 writer
+updates complete, then checks concurrent copies of the 64-entry history and
+the exact terminal publication. Bounds apply to fixture barriers as well.
+The worker now timestamps its counter publication; JSON reports independent
+publication age, not coherent kernel-counter time or measured audio latency.
+Seven Release/ASan groups passed; the final mailbox ordering and diagnostic
+checks passed again in focused Release/ASan runs (62 offline checks). Both
+independent reviews passed the final change. The kernel reserve comment was
+corrected; kernel behavior and all acceptance gates stayed the same. The
+first real failure is not explained or repaired merely by these offline passes.
+Evidence: product-mailbox-{release,asan,sc-release,sc-asan}.log,
+product-mailbox-offline.json and product-mailbox-secrets.log.
+
+Passed: exact source commit dde1d140e43bddc43df534167a7488b156df2cea completed
+both GitHub Windows workflows (37980338215 push, 37980344700 pull request),
+including managed/native/ASan tests, scanners, application packaging,
+installer lifecycle and checksum validation. Tool hash
+352dcd02583098a1cf083bfc3b920b31faa0d54821879ba9cc9e4551dc2098a3;
+guest runner hash 4f791702aa5d1b0375132500976a8daedb68fe7f5cac4d2243e904ce6b1d2b7f.
+
 Evidence: artifacts/driver-acceptance/{product-native-release.log,
 product-native-asan.log,product-capture-final-release.log,
 product-capture-final-asan.log,product-bridge-vm-fixtures.log,

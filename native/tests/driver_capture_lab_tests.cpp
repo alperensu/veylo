@@ -27,6 +27,7 @@
 #include <deque>
 #include <mutex>
 #include <thread>
+#include <type_traits>
 #include "../../driver/shared/ses_driver_protocol.h"
 #include "../../driver/shared/pcm_ring.h"
 #include "../src/driver_bridge.hpp"
@@ -45,6 +46,7 @@ struct ExtendedClientEvidence {
 struct ProducerStatusObservation {
     uint64_t sample=0,elapsed100ns=0,due100ns=0,lateness100ns=0,statusDuration100ns=0;
     uint64_t lastWriteGap100ns=0,sinceWrite100ns=0,received=0,silence=0;
+    uint64_t workerPublicationAge100ns=0;
     uint32_t queued=0,underruns=0,overruns=0;
     int32_t drift=0;
     unsigned phase=0;
@@ -68,6 +70,7 @@ struct ExtendedEvidence {
     bool requested=false, ran=false;
     bool product=false,workerMmcss=false;
     uint64_t submittedPackets=0;
+    uint64_t maxWorkerPublicationAge100ns=0;
     uint32_t queueDrops=0,sourceSessions=0,bridgeStatus=0,bridgeLastError=0;
     unsigned requestedSeconds=0;
     uint64_t elapsedMs=0, writes=0, maxLatenessMs=0, maxWriteGap100ns=0, maxIoctl100ns=0;
@@ -127,18 +130,21 @@ struct Report {
                 static_cast<unsigned long long>(c.gaps),c.windows[0],c.windows[1],c.windows[2],c.silenceChecks,c.reconnects)>0&&ok;
         }
         ok=std::fprintf(file,"],\"producer_status_history\":{\"capacity\":%zu,\"count\":%zu,"
-            "\"time_origin\":\"producer_measured_QPC_begin\",\"source\":\"%s\",\"status_duration_available\":%s,\"observations\":[",
+            "\"time_origin\":\"producer_measured_QPC_begin\",\"source\":\"%s\",\"status_duration_available\":%s,"
+            "\"worker_publication_age_available\":%s,\"observations\":[",
             ProducerStatusHistory::capacity,e.statusHistory.count,e.product?"bridge_worker_atomic_snapshot":"strict_producer_STATUS_ioctl",
-            e.product?"false":"true")>0&&ok;
+            e.product?"false":"true",e.product?"true":"false")>0&&ok;
         for(size_t i=0;i<e.statusHistory.count;++i) {
             const auto& o=e.statusHistory.oldest(i);
             ok=std::fprintf(file,"%s{\"sample\":%llu,\"elapsed_us\":%llu,\"due_us\":%llu,\"lateness_us\":%llu,"
-                "\"status_duration_us\":%llu,\"last_write_completion_gap_us\":%llu,\"since_last_write_completion_us\":%llu,"
+                "\"status_duration_us\":%llu,\"worker_status_publication_age_us\":%llu,"
+                "\"last_write_completion_gap_us\":%llu,\"since_last_write_completion_us\":%llu,"
                 "\"phase\":%u,\"steady\":%s,\"queued_frames\":%u,\"drift_ppm\":%d,"
                 "\"driver_received_frames\":%llu,\"driver_silence_frames\":%llu,\"driver_underruns\":%u,\"driver_overruns\":%u}",
                 i?",":"",static_cast<unsigned long long>(o.sample),static_cast<unsigned long long>(o.elapsed100ns/10),
                 static_cast<unsigned long long>(o.due100ns/10),static_cast<unsigned long long>(o.lateness100ns/10),
-                static_cast<unsigned long long>(o.statusDuration100ns/10),static_cast<unsigned long long>(o.lastWriteGap100ns/10),
+                static_cast<unsigned long long>(o.statusDuration100ns/10),static_cast<unsigned long long>(o.workerPublicationAge100ns/10),
+                static_cast<unsigned long long>(o.lastWriteGap100ns/10),
                 static_cast<unsigned long long>(o.sinceWrite100ns/10),o.phase,o.steady?"true":"false",o.queued,o.drift,
                 static_cast<unsigned long long>(o.received),static_cast<unsigned long long>(o.silence),o.underruns,o.overruns)>0&&ok;
         }
@@ -147,10 +153,11 @@ struct Report {
             "\"transfer_queue_capacity_packets\":4,\"worker_period_us\":2000,\"driver_write_threshold_frames\":961,"
             "\"worker_mmcss_pro_audio\":%s,\"queue_drops\":%u,\"submitted_packets\":%llu,\"source_sessions\":%u,"
             "\"last_observed_status\":%u,\"last_observed_error\":%u,"
+            "\"maximum_worker_status_publication_age_us\":%llu,"
             "\"driver_counter_scope\":\"sum_of_connected_source_session_deltas_excludes_disconnected_holds\","
             "\"bounded_flush_deadline_ms\":150}}}\n",e.product&&e.requested?"true":"false",e.product&&e.ran?"true":"false",
             e.workerMmcss?"true":"false",e.queueDrops,static_cast<unsigned long long>(e.submittedPackets),e.sourceSessions,
-            e.bridgeStatus,e.bridgeLastError)>0&&ok;
+            e.bridgeStatus,e.bridgeLastError,static_cast<unsigned long long>(e.maxWorkerPublicationAge100ns/10))>0&&ok;
         return std::fclose(file)==0&&ok;
     }
 };
@@ -658,9 +665,55 @@ struct ProducerPublication {
     bool ready=false,done=false;
     const char* failure=nullptr;
 };
+// Exactly one publisher and one reader. A preempted reader can pin an old
+// slot, but the writer always has a different non-latest slot available.
+// Unlike a seqlock over plain fields, every copy has exclusive slot ownership.
+// SC ordering also prevents stale latest reads from moving the reader across
+// both writer candidates between the two bounded CAS attempts.
+class ProducerMailbox {
+    struct Slot {
+        std::atomic<bool> owned{false};
+        ProducerPublication publication{};
+    };
+    std::array<Slot,3> slots{};
+    std::atomic<unsigned> latest{0};
+    ProducerPublication cached{}; // Reader-owned, never accessed by the writer.
+public:
+    static_assert(std::is_trivially_copyable_v<ProducerPublication>);
+    static_assert(std::atomic<bool>::is_always_lock_free&&std::atomic<unsigned>::is_always_lock_free);
+    bool publish(const ProducerPublication& publication) noexcept {
+        const unsigned current=latest.load(std::memory_order_seq_cst);
+        for(unsigned offset=1;offset<3;++offset) {
+            const unsigned index=(current+offset)%3;bool expected=false;
+            if(!slots[index].owned.compare_exchange_strong(expected,true,std::memory_order_seq_cst))continue;
+            slots[index].publication=publication;
+            latest.store(index,std::memory_order_seq_cst);
+            slots[index].owned.store(false,std::memory_order_seq_cst);
+            return true;
+        }
+        return false; // Only a violation of the single-reader contract can exhaust both slots.
+    }
+    ProducerPublication snapshot(void(*onReadAcquired)(void*) noexcept=nullptr,void* context=nullptr) noexcept {
+        for(unsigned attempt=0;attempt<3;++attempt) {
+            const unsigned index=latest.load(std::memory_order_seq_cst);bool expected=false;
+            if(!slots[index].owned.compare_exchange_strong(expected,true,std::memory_order_seq_cst))continue;
+            // The optional hook is used only by offline preemption fixtures.
+            if(onReadAcquired)onReadAcquired(context);
+            cached=slots[index].publication;
+            slots[index].owned.store(false,std::memory_order_seq_cst);
+            return cached;
+        }
+        return cached;
+    }
+};
 bool productDeliveryComplete(uint64_t submitted,uint64_t sent,uint64_t received,uint64_t baseline) {
     return submitted<=std::numeric_limits<uint64_t>::max()/SES_DRIVER_FRAMES&&received>=baseline&&
         sent==submitted*SES_DRIVER_FRAMES&&received-baseline==sent;
+}
+uint64_t workerPublicationAge(uint64_t sampled,uint64_t published){
+    // Independent publication timestamp; the separate counter atomics are
+    // not a coherent kernel snapshot. Missing/newer timestamps have no age.
+    return published&&sampled>=published?sampled-published:0;
 }
 bool productFlushComplete(uint64_t submitted,uint64_t sent,uint64_t received,uint64_t baseline,
     uint64_t now,uint64_t deadline) {
@@ -671,14 +724,13 @@ bool productTelemetryHealthy(uint32_t status,uint32_t protocol,bool workerMmcss,
     return status==2&&protocol==SES_DRIVER_PROTOCOL&&workerMmcss&&queueDrops==0&&overruns==0&&steadyUnderruns==0;
 }
 struct ExtendedProducer {
-    std::mutex mutex;
-    ProducerPublication publication;
+    ProducerMailbox publication;
     std::atomic<bool> stop{false},finished{false};
     std::atomic<unsigned> resumePermit{0};
     std::thread worker;
     ExtendedProducer(unsigned seconds):worker([this,seconds]{run(seconds);}){}
-    ProducerPublication snapshot(){std::lock_guard<std::mutex> lock(mutex);return publication;}
-    void publish(const ProducerPublication& state){std::lock_guard<std::mutex> lock(mutex);publication=state;}
+    ProducerPublication snapshot(){return publication.snapshot();}
+    void publish(const ProducerPublication& state){if(!publication.publish(state))std::terminate();}
     void finish() {
         stop=true;
         if(worker.joinable()) {
@@ -818,14 +870,13 @@ struct ExtendedProducer {
 // The actual DriverBridge owns TransferQueue, PCM conversion, IOCTLs and its
 // private 2 ms cadence; no lab implementation substitutes for that worker.
 struct ProductBridgeProducer {
-    std::mutex mutex;
-    ProducerPublication publication;
+    ProducerMailbox publication;
     std::atomic<bool> stop{false},finished{false};
     std::atomic<unsigned> resumePermit{0};
     std::thread worker;
     ProductBridgeProducer(unsigned seconds):worker([this,seconds]{run(seconds);}){}
-    ProducerPublication snapshot(){std::lock_guard<std::mutex> lock(mutex);return publication;}
-    void publish(const ProducerPublication& state){std::lock_guard<std::mutex> lock(mutex);publication=state;}
+    ProducerPublication snapshot(){return publication.snapshot();}
+    void publish(const ProducerPublication& state){if(!publication.publish(state))std::terminate();}
     void finish() {
         stop=true;
         if(worker.joinable()) {
@@ -879,6 +930,8 @@ struct ProductBridgeProducer {
             ProducerStatusObservation observation{};observation.sample=++e.statusSamples;
             observation.elapsed100ns=sampled>=began?sampled-began:0;observation.due100ns=due>=began?due-began:0;
             observation.lateness100ns=sampled>=due?sampled-due:0;
+            observation.workerPublicationAge100ns=workerPublicationAge(sampled,bridge.statusObserved100ns.load());
+            e.maxWorkerPublicationAge100ns=std::max(e.maxWorkerPublicationAge100ns,observation.workerPublicationAge100ns);
             // STATUS timings are unavailable as an isolated operation: this
             // history samples genuine worker counters, with no lab STATUS call.
             const uint64_t completion=bridge.lastWriteCompletion100ns.load();
@@ -1144,7 +1197,94 @@ bool parseOptions(int argc,char** argv,Options& options) {
     return options.offline!=options.lab&&(!options.extended||options.lab)&&(!durationSet||options.extended)&&
         (!options.product||(options.lab&&options.extended&&durationSet));
 }
+void mailboxSelfTest(Report& r) {
+    const char oddFailure[]="fixture odd generation",evenFailure[]="fixture even generation";
+    constexpr uint64_t terminal=11002;
+    auto makePublication=[&](uint64_t generation) {
+        ProducerPublication state{};state.began=generation;state.phaseEpoch=generation*7;state.phase=static_cast<unsigned>(generation%5);
+        state.ready=true;state.done=generation==terminal;state.failure=generation%2?oddFailure:evenFailure;
+        auto& e=state.evidence;e.writes=generation*11;e.driverReceivedFrames=generation*480;
+        e.driverSilenceFrames=generation*13;e.steadyUnderruns=static_cast<uint32_t>(generation%31);
+        e.statusHistory.count=64;e.statusHistory.next=0;
+        for(size_t i=0;i<64;++i) {
+            auto& o=e.statusHistory.observations[i];o.sample=generation;o.elapsed100ns=generation*17+i;
+            o.phase=state.phase;o.received=generation*480+i;o.silence=generation*13+i;
+            o.underruns=static_cast<uint32_t>(generation%31);o.drift=-static_cast<int32_t>(i);
+        }
+        return state;
+    };
+    auto consistent=[&](const ProducerPublication& state) {
+        const uint64_t generation=state.began;const auto& e=state.evidence;
+        if(!generation||state.phaseEpoch!=generation*7||state.phase!=generation%5||!state.ready||
+            state.done!=(generation==terminal)||state.failure!=(generation%2?oddFailure:evenFailure)||
+            e.writes!=generation*11||e.driverReceivedFrames!=generation*480||e.driverSilenceFrames!=generation*13||
+            e.steadyUnderruns!=generation%31||e.statusHistory.count!=64||e.statusHistory.next!=0)return false;
+        for(size_t i=0;i<64;++i) {
+            const auto& o=e.statusHistory.observations[i];
+            if(o.sample!=generation||o.elapsed100ns!=generation*17+i||o.phase!=state.phase||
+                o.received!=generation*480+i||o.silence!=generation*13+i||o.underruns!=generation%31||
+                o.drift!=-static_cast<int32_t>(i))return false;
+        }
+        return true;
+    };
+    ProducerMailbox mailbox;
+    const bool initialized=mailbox.publish(makePublication(1));
+    struct ReaderPause {
+        std::atomic<bool> held{false},released{false},writerProof{false},timedOut{false};
+        uint64_t elapsedMs=0;
+    } pause;
+    std::atomic<bool> sampling{false},writerDone{false},torn{false},writerFailed{false},barrierTimeout{false};
+    uint64_t updatesWhilePinned=0,snapshots=0;
+    ProducerPublication pinned;
+    std::thread reader([&] {
+        pinned=mailbox.snapshot([](void* context) noexcept {
+            auto& pause=*static_cast<ReaderPause*>(context);const uint64_t began=GetTickCount64();
+            pause.held=true;
+            while(GetTickCount64()-began<1000&&(!pause.writerProof||GetTickCount64()-began<40))Sleep(1);
+            pause.elapsedMs=GetTickCount64()-began;pause.timedOut=!pause.writerProof||pause.elapsedMs>1000;pause.released=true;
+        },&pause);
+        if(!consistent(pinned))torn=true;
+        sampling=true;
+        do {
+            if(!consistent(mailbox.snapshot()))torn=true;
+            ++snapshots;
+        } while(!writerDone);
+    });
+    const uint64_t heldDeadline=GetTickCount64()+1000;
+    while(!pause.held&&GetTickCount64()<heldDeadline)Sleep(1); // Fixture orchestration only.
+    if(!pause.held)barrierTimeout=true;
+    std::thread writer([&] {
+        for(uint64_t generation=2;generation<=1001;++generation) {
+            if(!mailbox.publish(makePublication(generation)))writerFailed=true;
+            if(!pause.released)++updatesWhilePinned;
+        }
+        pause.writerProof=true;
+        const uint64_t samplingDeadline=GetTickCount64()+1000;
+        while(!sampling&&GetTickCount64()<samplingDeadline)Sleep(1);
+        if(!sampling){barrierTimeout=true;writerDone=true;return;}
+        for(uint64_t generation=1002;generation<=terminal;++generation)
+            if(!mailbox.publish(makePublication(generation)))writerFailed=true;
+        writerDone=true;
+    });
+    writer.join();reader.join();
+    // With the writer joined, the latest slot is uncontended. This must read
+    // the actual final publication, regardless of the reader's prior cache.
+    const auto final=mailbox.snapshot();
+    auto check=[&](bool ok,const char* label){++r.selfTests;r.check(ok,label);};
+    check(initialized&&!writerFailed&&!barrierTimeout&&!pause.timedOut&&pause.elapsedMs>=40&&updatesWhilePinned==1000,
+        "three-slot producer publication completes 1000 updates before pinned reader releases after at least 40 ms within bounded fixture guards");
+    check(!torn&&pinned.began==1&&snapshots>0,
+        "bounded producer mailbox retains unmixed phase, failure, counters and all 64 observations under concurrent copies");
+    check(consistent(final)&&final.began==terminal&&final.done,
+        "joined producer mailbox delivers actual newest terminal evidence instead of an earlier cached snapshot");
+}
 void extendedSelfTest(Report& r) {
+    mailboxSelfTest(r);
+    ++r.selfTests;r.check(workerPublicationAge(100,40)==60&&workerPublicationAge(40,40)==0,
+        "worker publication age measures the independent timestamp without changing counter gates");
+    ++r.selfTests;r.check(workerPublicationAge(100,0)==0&&workerPublicationAge(40,100)==0&&
+        workerPublicationAge(std::numeric_limits<uint64_t>::max(),1)==std::numeric_limits<uint64_t>::max()-1,
+        "missing or newer worker timestamp cannot underflow publication age");
     auto check=[&](bool ok,const char* label){++r.selfTests;r.check(ok,label);};
     ProducerStatusHistory history;
     check(history.count==0&&history.next==0&&history.observations.size()==64,

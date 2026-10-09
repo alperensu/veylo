@@ -61,6 +61,7 @@ class DriverBridge {
     bool validStatus(const SesDriverStatus& info){const DWORD error=driverStatusError(info);if(error){lastError=error;return false;}return true;}
     void publishCounters(const SesDriverStatus& info){
         queued=info.queued_frames;received=info.received_frames;underruns=info.underruns;overruns=info.overruns;silence=info.silence_frames;drift=info.drift_ppm;
+        statusObserved100ns=qpc100ns();
     }
     void loop(){
         BoundedDriverIo<> io;
@@ -101,11 +102,12 @@ public:
     std::atomic<bool> workerMmcss{false};
     std::atomic<int32_t> drift{0};std::atomic<uint64_t> sent{0},received{0},silence{0};
     std::atomic<uint64_t> maxIoctl100ns{0},lastWriteCompletion100ns{0},lastWriteGap100ns{0},maxWriteGap100ns{0};
+    std::atomic<uint64_t> statusObserved100ns{0};
     ~DriverBridge(){stop();}
     void start(){stop();
         if(BoundedDriverIo<>::poisoned()){fatalIo=true;status=6;lastError=ERROR_TIMEOUT;return;}
         fatalIo=false;queue.discard();sent=0;received=0;silence=0;underruns=0;overruns=0;queueDrops=0;
-        maxIoctl100ns=0;lastWriteCompletion100ns=0;lastWriteGap100ns=0;maxWriteGap100ns=0;
+        maxIoctl100ns=0;lastWriteCompletion100ns=0;lastWriteGap100ns=0;maxWriteGap100ns=0;statusObserved100ns=0;
         auto failStart=[this](DWORD error){stop();status=6;lastError=error;};
         stopEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);
         if(!stopEvent){failStart(GetLastError());return;}
