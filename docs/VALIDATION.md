@@ -259,8 +259,26 @@ regression. Independent read-only correctness/security reviews and 303 safe VM
 fixtures passed; no leaks found. Frozen preparation:
 artifacts/driver-test-signing/version-transition-no-ui-final-5308283600784e7bbb88ed6975739fd1/.
 
-Findings: the next requested one-hour run on the rebooted current driver stopped
-at 632,893 ms with one steady underrun and 22 driver silence frames. Native PnP
+Passed / actual different-version transition: the final serial report completed
+the original run d430ff7c-56a1-4ae4-b729-f32ea93baac7 on the same owned VM
+e49c7f67-9bb0-4984-acf8-acb088d8f799 with frozen runner adb94eec...43c3.
+Its seven ordered stages include four independent actual captures: old 0.5.0.0,
+upgraded 0.5.1.0, native-rollback 0.5.0.0 and restored 0.5.1.0. Each passed
+20 checks, both PCM16/PCM32 formats and zero failures. Actual DiRollbackDriver
+with NO_UI returned exit 0 in 5.09 seconds; forced old installation was not used
+as rollback evidence. Final current restoration returned exit 1/NeedsReboot,
+then an explicit Resume after a later boot passed the final capture. The final
+report is Passed/complete with apiRollbackVerified/currentRestored=true and
+rebootRequired/driverMutationUncertain=false; testOnly=true and
+productionReady=false remain. Cold CIM preflight failures and the earlier
+interactive-dialog failure remain preserved attempts; read-only preflight
+retry retained the immutable checkpoint without driver or trust mutation.
+An independent read-only audit matched this final evidence. Exact f074d78
+push CI 37971061744 and PR CI 37971066834 passed. Evidence:
+artifacts/driver-acceptance/version-transition-final-pass-serial.log.
+
+Findings retained: the earlier requested one-hour run on the rebooted current
+driver stopped at 632,893 ms with one steady underrun and 22 driver silence frames. Native PnP
 reported 0.5.1.0 before capture; active Code Integrity Verifier targeted only
 SesMicrophone.sys. Producer and consumer MMCSS registrations succeeded. Maximum
 producer lateness was 10 ms, write completion gap 14,751 us, IOCTL duration
@@ -309,9 +327,9 @@ could not receive final verification; this is not a passed hibernate test or an
 established driver bugcheck.
 
 Not run/completed at this source checkpoint: one-hour acceptance, active HVCI
-capture, standby/full application recovery, different-version upgrade/rollback,
-separate receiving applications, physical latency and Microsoft production
-signing. The guest exposes hibernate but no standby state; cold boot is not sleep.
+capture, standby/full application recovery, separate receiving applications,
+physical latency and Microsoft production signing. The guest exposes hibernate
+but no standby state; cold boot is not sleep.
 HVCI configuration preserves its first protected registry/BCD baseline and only
 reports reboot required until actual VBS/running-service evidence is collected.
 The pre-existing production bridge wait after CancelIoEx remains unbounded for
