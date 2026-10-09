@@ -50,6 +50,17 @@ also passed under Windows PowerShell 5.1; wildcard, foreign and duplicate device
 selections remain rejected. Culture-invariant matching preserves Windows ID
 case semantics under Turkish culture. Independent follow-up reviews passed.
 
+Passed: the corrected guest runner removed the exact ROOT\\MEDIA\\0000 instance,
+confirmed device absence, then reinstalled the verified same-version INF. Both
+DevCon commands returned zero and the resulting sole device had error code zero.
+This does not establish a different-version upgrade or rollback.
+
+Findings fixed: fresh elevated Windows-2022 CI initially rejected newly created
+inert fixture files whose default owner was Administrators. Fixtures now set their
+owner to the current user SID, matching the existing metadata fixture pattern;
+production ACL guards and guest code are unchanged. Local 149 checks and both
+independent reviews passed; the subsequent CI result must be recorded separately.
+
 Findings: guest HVCI configuration persisted the five requested registry values
 and both BCD launch settings, with its first baseline preserved. The subsequent
 cold boot stopped in Windows Recovery with error 0xc0000189 and a system-capability

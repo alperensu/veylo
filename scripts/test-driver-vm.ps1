@@ -37,11 +37,15 @@ try{
     foreach($name in @('driver-vm-acceptance.ps1','ses_driver_capture_lab_tests.exe')){
         $file=Join-Path $acceptance $name
         [IO.File]::WriteAllText($file,'inert owned acceptance fixture; never executed')
+        # An elevated Windows token may default new files to Administrators.
+        # Match the existing disk/metadata fixtures without relaxing the guard.
+        $fileAcl=Get-Acl -LiteralPath $file;$fileAcl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $file -AclObject $fileAcl
         $acceptanceFiles[$name]=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $acceptanceManifest=Join-Path $acceptance 'acceptance-manifest.json'
     function Save-Acceptance {
         @{schema=1;testOnly=$true;vmId=$identity.id;files=$acceptanceFiles} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $acceptanceManifest -Encoding utf8
+        $fileAcl=Get-Acl -LiteralPath $acceptanceManifest;$fileAcl.SetOwner([Security.Principal.WindowsIdentity]::GetCurrent().User);Set-Acl -LiteralPath $acceptanceManifest -AclObject $fileAcl
     }
     Save-Acceptance
     Check ((Assert-VmAcceptanceSeed $acceptanceSeed $identity.id) -eq $acceptance) 'fixed private acceptance seed hash inventory accepted'
