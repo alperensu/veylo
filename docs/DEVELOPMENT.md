@@ -5,6 +5,15 @@ PowerShell 7 önerilir ve VM başlatma/kontrol betiklerinde zorunludur.
 Sabit araç sürümleri ve SHA kontrolleri [bootstrap.ps1](../scripts/bootstrap.ps1),
 native bağımlılıklar [dependencies.lock.json](../dependencies.lock.json) içindedir.
 
+## Bağımlılık kaynakları
+
+RNNoise dizininde Veylo'nun derlediği C kaynakları, varsayılan model ve lisans
+bildirimleri bulunur. Model eğitimi, PyTorch checkpoint'i, alternatif model ve
+upstream Autotools araçları depoya dahil değildir. Bu işlemler için sabitlenmiş
+[RNNoise kaynağını](https://github.com/xiph/rnnoise/tree/904a876dce1f9ab8860c0a5000ed151f9f6eef58)
+kullanın; kaynak/model arşiv checksum'ları `dependencies.lock.json` içinde korunur.
+Veylo'nun kendi derlemesi ek model indirmez. [Kapsam](../THIRD_PARTY_NOTICES.md).
+
 ## Uygulama ve testler
 
 ```powershell
