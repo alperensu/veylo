@@ -25,6 +25,14 @@ Yaşam döngüsü guard'ları dahil gözlenen bütün konum boşlukları kabulü
 Yeniden bağlantı başlamadan yaklaşan faz yayımlanır; gerçek resume zamanı ancak
 bağlantı/prefill tamamlanıp eski süre sınırı geçilmediğinde yayımlanır.
 
+Ürün worker'ı, doğrulanmış son doluluk ve kendi başarılı WRITE'larından tuttuğu
+muhafazakâr üst sınır mevcut 961-frame eşiğinin altındaysa hazır taze paketi
+STATUS'tan önce teslim eder. Her tamamlanan turda STATUS ve en fazla bir
+başarılı WRITE bulunur; üst sınır kapalıysa yeni STATUS ile aynı turda denenir.
+Hata/yeniden bağlantı sınırı sıfırlar. Bu üst sınır gerçek kernel ölçümü olarak
+raporlanmaz. İlk gözlenen underrun, fallback tesliminden önce dondurulur.
+Tamponlar, 2 ms periyot, 50 ms eskime sınırı ve kabul eşikleri değişmez.
+
 ## Sabit ve doğrulanmış test medyası
 
 Önce mevcut [laboratuvar kurulumunu](DRIVER-LAB.md) tamamla. VM kapalıyken:

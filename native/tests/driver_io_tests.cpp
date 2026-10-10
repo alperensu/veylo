@@ -2,14 +2,159 @@
 #define NOMINMAX
 #include "../src/driver_io.hpp"
 #include "../src/driver_bridge.hpp"
+#include "../../driver/shared/pcm_ring.h"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
 #include <thread>
+#include <string>
 
 static std::atomic<unsigned> checks{0};
 static void check(bool ok,const char* name){++checks;if(!ok){std::fprintf(stderr,"FAIL %s\n",name);std::exit(1);}}
+
+// The production iteration helper drives a real bounded queue/ring with fake
+// synchronous I/O leaves. STATUS delay advances capture, not a wall-time sleep.
+struct DeliveryFixture {
+    ses_driver::PcmRing ring;
+    ses::TransferQueue queue;
+    ses::DriverDelivery delivery;
+    ses::WorkerTrace trace;
+    std::array<float,480> source{},copied{};
+    std::array<int32_t,960> captured{};
+    SesDriverStatus lastStatus{};
+    uint64_t now=0,sequence=0,tick=1;
+    unsigned statusCalls=0,writeCalls=0,successfulWrites=0,delayFrames=0;
+    bool writeFails=false,statusFails=false,invalidStatus=false,enqueueDuringStatus=false;
+    bool wroteAfterFreeze=false,conservativeTake=false,freshTake=false;
+    std::string order;
+    DeliveryFixture(){
+        source.fill(.25f);
+        const SesDriverHello hello{SES_DRIVER_PROTOCOL,sizeof(hello),SES_DRIVER_RATE,1,32,SES_DRIVER_FRAMES};
+        check(ring.connect(hello,now)&&delivery.observe(ring.status()),"Delivery fixture validates actual CONNECT baseline");
+        trace.reset(true,1);trace.connected(tick++,0);
+    }
+    void seed(unsigned packets){
+        for(unsigned n=0;n<packets;++n){
+            SesDriverPacket packet{SES_DRIVER_PROTOCOL,sizeof(packet),SES_DRIVER_FRAMES,0,sequence,{}};
+            for(auto& value:packet.pcm)value=536870911;
+            check(ring.push(packet,now),"Seed real kernel ring without overflow");++sequence;
+        }
+    }
+    void capture(unsigned frames){
+        check(frames<=captured.size(),"Fake STATUS capture delay stays within fixed output storage");
+        ring.pull(captured.data(),frames,32,now);
+    }
+    void nearReserve(){
+        seed(3);capture(480);capture(240);
+        check(ring.primed&&ring.queued()<961&&ring.queued()>600&&delivery.observe(ring.status()),
+            "Actual primed ring establishes an open conservative gate near existing reserve");
+    }
+    void enqueue(uint64_t at){check(queue.push(source.data(),at),"Real upstream queue accepts fixture callback");}
+    ses::DriverDeliveryAttempt deliver(bool gate,bool fresh){
+        ses::WorkerTraceEvent event{};event.kind=ses::WorkerTraceKind::Dequeue;
+        event.begin100ns=event.end100ns=tick++;event.gateOpen=gate;
+        event.kernelStatusAvailable=fresh;
+        if(fresh){event.kernelQueued=lastStatus.queued_frames;event.underruns=lastStatus.underruns;}
+        const bool taken=gate&&queue.take(copied.data(),now);
+        event.take=!gate?ses::WorkerTraceTake::NotAttempted:taken?ses::WorkerTraceTake::Packet:ses::WorkerTraceTake::EmptyOrExpired;
+        trace.append(event);
+        if(!taken)return ses::DriverDeliveryAttempt::Empty;
+        conservativeTake|=!fresh;freshTake|=fresh;
+        order+='W';++writeCalls;
+        wroteAfterFreeze|=trace.reason()==ses::WorkerTraceFreeze::FirstUnderrun;
+        if(writeFails)return ses::DriverDeliveryAttempt::Failed;
+        SesDriverPacket packet{SES_DRIVER_PROTOCOL,sizeof(packet),SES_DRIVER_FRAMES,0,sequence,{}};
+        for(unsigned i=0;i<480;++i)packet.pcm[i]=static_cast<int32_t>(copied[i]*2147483647.);
+        if(!ring.push(packet,now))return ses::DriverDeliveryAttempt::Failed;
+        ++sequence;++successfulWrites;return ses::DriverDeliveryAttempt::Written;
+    }
+    bool refresh(SesDriverStatus& info){
+        order+='S';++statusCalls;
+        if(delayFrames){now+=delayFrames/48;capture(delayFrames);}
+        if(enqueueDuringStatus)enqueue(now);
+        if(statusFails)return false;
+        info=ring.status();if(invalidStatus)info.reserved=1;
+        if(ses::driverStatusError(info)!=ERROR_SUCCESS)return false;
+        ses::WorkerTraceEvent event{};event.kind=ses::WorkerTraceKind::Status;
+        event.begin100ns=event.end100ns=tick++;event.kernelStatusAvailable=true;
+        event.kernelQueued=info.queued_frames;event.underruns=info.underruns;trace.append(event);
+        trace.observeUnderruns(info.underruns,tick++);lastStatus=info;return true;
+    }
+    ses::DriverDeliveryResult iteration(){
+        return delivery.iteration([&](bool gate,bool fresh){return deliver(gate,fresh);},
+            [&](SesDriverStatus& info){return refresh(info);});
+    }
+};
+static void readyFirstDelivery(){
+    using ses::DriverDeliveryResult;
+    DeliveryFixture ready;ready.nearReserve();ready.enqueue(0);ready.delayFrames=864;
+    check(ready.iteration()==DriverDeliveryResult::Complete&&ready.order=="WS"&&ready.conservativeTake&&
+        ready.successfulWrites==1&&ready.statusCalls==1&&ready.ring.underruns==0,
+        "Actual ready-first helper delivers before delayed STATUS while retaining one STATUS and one WRITE");
+    check(ready.delivery.upperBound()==ready.ring.queued(),"Post-WRITE STATUS refreshes upper bound to actual captured occupancy");
+    ready.trace.stopped(ready.tick++);ses::WorkerTraceEvent conservative{};
+    check(ready.trace.readAfterStop(1,conservative)&&conservative.kind==ses::WorkerTraceKind::Dequeue&&
+        !conservative.kernelStatusAvailable&&conservative.kernelQueued==0&&conservative.gateOpen,
+        "Conservative delivery evidence is explicitly unavailable as an actual kernel STATUS");
+    DeliveryFixture old;old.nearReserve();old.enqueue(0);old.delayFrames=864;
+    SesDriverStatus delayed{};
+    check(old.refresh(delayed)&&old.deliver(true,true)==ses::DriverDeliveryAttempt::Written&&old.order=="SW"&&old.ring.underruns==1,
+        "Same real capture delay starves old STATUS-first ordering; fixture is not a claim about live failure cause");
+
+    DeliveryFixture closed;closed.seed(3);check(closed.delivery.observe(closed.ring.status()),"Validate closed-gate occupancy baseline");
+    closed.capture(480);closed.capture(240);closed.enqueue(0);
+    check(closed.iteration()==DriverDeliveryResult::Complete&&closed.order=="SW"&&closed.freshTake&&!closed.conservativeTake&&
+        closed.successfulWrites==1&&closed.delivery.upperBound()==closed.lastStatus.queued_frames+480&&closed.ring.overruns==0,
+        "Closed conservative gate uses fresh STATUS fallback and adds successful WRITE to bound without overflow");
+    closed.order.clear();closed.enqueue(0);
+    check(!closed.delivery.gateOpen()&&closed.iteration()==DriverDeliveryResult::Complete&&closed.order=="S"&&closed.queue.frames()==480,
+        "Bound above unchanged threshold prevents delivery when fresh STATUS also keeps gate closed");
+
+    DeliveryFixture backlog;backlog.enqueue(0);backlog.enqueue(0);backlog.enqueue(0);
+    check(backlog.iteration()==DriverDeliveryResult::Complete&&backlog.successfulWrites==1&&backlog.writeCalls==1&&
+        backlog.statusCalls==1&&backlog.queue.frames()==960&&backlog.order=="WS",
+        "Several ready callbacks cannot cause a second successful WRITE in the same iteration");
+    DeliveryFixture arriving;arriving.enqueueDuringStatus=true;
+    check(arriving.iteration()==DriverDeliveryResult::Complete&&arriving.order=="SW"&&arriving.freshTake&&arriving.successfulWrites==1,
+        "Packet arriving during STATUS uses same-iteration fallback without requiring another cadence slot");
+
+    DeliveryFixture stale;stale.now=51;stale.enqueue(0);
+    check(stale.iteration()==DriverDeliveryResult::Complete&&stale.order=="S"&&stale.queue.frames()==0&&stale.successfulWrites==0,
+        "Ready-first path still expires voice older than existing 50ms limit");
+    DeliveryFixture exactAge;exactAge.now=50;exactAge.enqueue(0);
+    check(exactAge.iteration()==DriverDeliveryResult::Complete&&exactAge.order=="WS"&&exactAge.successfulWrites==1,
+        "Ready-first delivery preserves exact existing 50ms expiration boundary");
+
+    DeliveryFixture failed;failed.enqueue(0);failed.writeFails=true;
+    check(failed.iteration()==DriverDeliveryResult::WriteFailed&&failed.order=="W"&&failed.successfulWrites==0&&
+        !failed.delivery.valid()&&failed.delivery.upperBound()==0&&failed.sequence==0,
+        "Failed ready WRITE resets bound, retains sequence and follows failure path before any STATUS");
+    DeliveryFixture failedStatus;failedStatus.enqueue(0);failedStatus.statusFails=true;
+    check(failedStatus.iteration()==DriverDeliveryResult::StatusFailed&&failedStatus.order=="WS"&&
+        failedStatus.successfulWrites==1&&!failedStatus.delivery.valid(),
+        "STATUS failure after successful ready delivery abandons old connection bound");
+    DeliveryFixture invalid;auto bad=invalid.ring.status();bad.reserved=1;
+    check(!invalid.delivery.observe(bad)&&!invalid.delivery.gateOpen(),"Invalid baseline cannot authorize conservative WRITE");
+    invalid.enqueue(0);invalid.invalidStatus=true;
+    check(invalid.iteration()==DriverDeliveryResult::StatusFailed&&invalid.order=="S"&&invalid.writeCalls==0&&invalid.queue.frames()==480,
+        "Invalid replacement STATUS never dequeues or delivers waiting upstream audio");
+    invalid.invalidStatus=false;invalid.ring.disconnect();invalid.queue.discard();invalid.delivery.reset();
+    const SesDriverHello hello{SES_DRIVER_PROTOCOL,sizeof(hello),SES_DRIVER_RATE,1,32,SES_DRIVER_FRAMES};
+    check(!invalid.delivery.valid()&&invalid.ring.connect(hello,invalid.now)&&invalid.delivery.observe(invalid.ring.status())&&
+        invalid.delivery.gateOpen()&&invalid.delivery.upperBound()==0,
+        "Reconnect abandons invalid old bound and validates new zero-queued CONNECT baseline");
+    invalid.sequence=0;invalid.order.clear();invalid.enqueue(invalid.now);
+    check(invalid.iteration()==DriverDeliveryResult::Complete&&invalid.order=="WS"&&invalid.ring.sequence==1,
+        "New connection delivers with its own reset sequence and bound");
+
+    DeliveryFixture freeze;freeze.seed(3);check(freeze.delivery.observe(freeze.ring.status()),"Prepare closed gate for first observed underrun");
+    freeze.capture(480);freeze.capture(240);freeze.enqueue(0);freeze.delayFrames=864;
+    check(freeze.iteration()==DriverDeliveryResult::Complete&&freeze.order=="SW"&&freeze.wroteAfterFreeze&&
+        freeze.trace.reason()==ses::WorkerTraceFreeze::FirstUnderrun&&freeze.trace.freezeOldUnderruns()==0&&
+        freeze.trace.freezeNewUnderruns()==1,
+        "Fresh STATUS freezes first-underrun trace before fallback WRITE or subsequent iteration work");
+}
 
 // Windows events are real; every device/IOCTL leaf is fake. This executable
 // never opens a driver path, installs a device, or accesses the registry.
@@ -292,4 +437,4 @@ static void neverCompletes(){
     Io blocked;check(!blocked.open()&&blocked.fatal(),"Late completion never automatically reattaches poisoned process");
     std::printf("Cancellation grace measured under1000ms; retained exactly one request and two private handles until process exit\n");
 }
-int main(){immediateAndValidation();diagnosticOutput();pendingAndCancellation();phaseObservations();repeatAndLease();uncompletedDiagnostic();neverCompletes();std::printf("%u offline bounded driver I/O checks passed; no kernel driver opened\n",checks.load());}
+int main(){readyFirstDelivery();immediateAndValidation();diagnosticOutput();pendingAndCancellation();phaseObservations();repeatAndLease();uncompletedDiagnostic();neverCompletes();std::printf("%u offline bounded driver I/O checks passed; no kernel driver opened\n",checks.load());}

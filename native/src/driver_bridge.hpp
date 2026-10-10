@@ -10,6 +10,7 @@
 #include "transfer_queue.hpp"
 #include "worker_timer.hpp"
 #include "driver_io.hpp"
+#include "driver_delivery.hpp"
 #include "worker_trace.hpp"
 namespace ses {
 // Registration and DLL lifetime belong to the worker, never the audio callback.
@@ -85,9 +86,11 @@ class DriverBridge {
         if(!io.open()){lastError=io.error();fatalIo=io.fatal();status=6;return;}
         DriverWorkerMmcss mmcss;workerMmcss=mmcss.ready;
         uint64_t sequence=0,servicedDiagnosticRequest=0;uint32_t baselineUnderruns=0;bool diagnosticsAttempted=false;
+        DriverDelivery delivery;
         SesDriverPacket packet{SES_DRIVER_PROTOCOL,sizeof(packet),SES_DRIVER_FRAMES,0,0,{}};std::array<float,480> samples{};
         while(running){
             if(!io.connected()){
+                delivery.reset();
                 queue.discard();
                 const HANDLE device=CreateFileW(SES_DRIVER_PATH,GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED,nullptr);
                 if(device==INVALID_HANDLE_VALUE){DWORD error=GetLastError();lastError=error;status=error==ERROR_FILE_NOT_FOUND||error==ERROR_PATH_NOT_FOUND?1u:error==ERROR_ACCESS_DENIED?4u:error==ERROR_SHARING_VIOLATION?5u:6u;WaitForSingleObject(stopEvent,500);continue;}
@@ -97,32 +100,36 @@ class DriverBridge {
                     if(io.fatal())break;
                     status=lastError==ERROR_REVISION_MISMATCH?3u:6u;io.disconnect();WaitForSingleObject(stopEvent,500);continue;}
                 sequence=0;baselineUnderruns=info.underruns;diagnosticsAttempted=false;
+                delivery.observe(info); // CONNECT has already passed validStatus.
                 if(trace.recording())trace.connected(qpc100ns(),info.underruns);
                 publishCounters(info);protocol=info.version;lastError=0;status=2;
             }
             SesDriverStatus info{};
-            if(!call(io,SES_IOCTL_STATUS,nullptr,0,&info,sizeof(info))||!validStatus(info)){
-                status=6;if(io.fatal())break;io.disconnect();continue;}
-            // Freeze the STATUS event and its prehistory before any delivery or
-            // optional DIAGNOSTICS request can perturb the failure evidence.
-            if(trace.recording())trace.observeUnderruns(info.underruns,qpc100ns());
-            publishCounters(info);
-            const bool gate=info.queued_frames<SES_DRIVER_TARGET*2+1;
-            const bool tracing=trace.recording();
-            WorkerTraceEvent dequeue{};
-            if(tracing){dequeue.kind=WorkerTraceKind::Dequeue;dequeue.begin100ns=qpc100ns();
-                dequeue.kernelQueued=info.queued_frames;dequeue.underruns=info.underruns;
-                dequeue.kernelStatusAvailable=true;dequeue.upstreamSamplesAvailable=true;
-                dequeue.gateOpen=gate;dequeue.upstreamBefore=queue.frames();}
-            const bool taken=gate&&queue.take(samples.data(),GetTickCount64());
-            if(tracing){dequeue.upstreamAfter=queue.frames();dequeue.end100ns=qpc100ns();
-                dequeue.take=!gate?WorkerTraceTake::NotAttempted:taken?WorkerTraceTake::Packet:WorkerTraceTake::EmptyOrExpired;
-                trace.append(dequeue);}
-            if(taken){
+            const auto iteration=delivery.iteration([&](bool gate,bool freshStatus){
+                const bool tracing=trace.recording();
+                WorkerTraceEvent dequeue{};
+                if(tracing){dequeue.kind=WorkerTraceKind::Dequeue;dequeue.begin100ns=qpc100ns();
+                    // A conservative gate is not a kernel STATUS observation.
+                    if(freshStatus){dequeue.kernelQueued=info.queued_frames;dequeue.underruns=info.underruns;dequeue.kernelStatusAvailable=true;}
+                    dequeue.upstreamSamplesAvailable=true;
+                    dequeue.gateOpen=gate;dequeue.upstreamBefore=queue.frames();}
+                const bool taken=gate&&queue.take(samples.data(),GetTickCount64());
+                if(tracing){dequeue.upstreamAfter=queue.frames();dequeue.end100ns=qpc100ns();
+                    dequeue.take=!gate?WorkerTraceTake::NotAttempted:taken?WorkerTraceTake::Packet:WorkerTraceTake::EmptyOrExpired;
+                    trace.append(dequeue);}
+                if(!taken)return DriverDeliveryAttempt::Empty;
                 packet.sequence=sequence;for(unsigned i=0;i<480;++i){double x=samples[i];x=std::isfinite(x)?std::clamp(x,-1.,1.):0.;packet.pcm[i]=static_cast<int32_t>(x*2147483647.);}
-                if(!call(io,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0)){status=6;if(io.fatal())break;io.disconnect();continue;}
-                ++sequence;sent+=480;
-            }
+                if(!call(io,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0))return DriverDeliveryAttempt::Failed;
+                ++sequence;sent+=480;return DriverDeliveryAttempt::Written;
+            },[&](SesDriverStatus& observed){
+                if(!call(io,SES_IOCTL_STATUS,nullptr,0,&observed,sizeof(observed))||!validStatus(observed))return false;
+                // Freeze exactly when STATUS first reports an underrun, before
+                // counter publication, fallback delivery or optional sampling.
+                if(trace.recording())trace.observeUnderruns(observed.underruns,qpc100ns());
+                info=observed;publishCounters(observed);return true;
+            });
+            if(iteration!=DriverDeliveryResult::Complete){
+                status=6;if(io.fatal())break;io.disconnect();continue;}
             // Opt-in lab sampling follows normal audio delivery. The production
             // default issues no diagnostic IOCTLs. Only this worker writes the
             // plain snapshot; the lab reader must stop/join before inspecting it.

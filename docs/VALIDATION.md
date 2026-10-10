@@ -1,3 +1,58 @@
+# Ready-first product bridge delivery — 2026-10-10
+
+The product worker now delivers an already-ready fresh upstream packet before
+STATUS when its conservative occupancy bound permits the existing <961-frame
+gate. The bound starts with validated CONNECT/STATUS and grows only after this
+worker's successful WRITE; capture, expiry and discard can only reduce actual
+occupancy. A closed bound still uses the same iteration's fresh STATUS. Every
+completed iteration retains STATUS and at most one successful WRITE. Failure
+and reconnect reset the bound. Capacity, reserves, 2 ms cadence, MMCSS, 50 ms
+upstream expiry, IOCTL deadlines, ABI 5 and protocol 1 are unchanged.
+
+First-underrun evidence freezes at the STATUS observation before counter
+publication, fallback delivery or optional diagnostics. Conservative dequeue
+events explicitly lack a kernel STATUS observation; the trace layout is not
+expanded. The production iteration helper is exercised with the real bounded
+PcmRing and TransferQueue plus fake I/O leaves. A delayed STATUS fixture
+distinguishes WRITE-before-STATUS from the old starvation-prone ordering; this
+does not establish the cause of a live VM failure.
+
+Passed: eight Release groups (16.90 s), eight ASan groups (18.27 s), 696 offline
+bounded driver-I/O checks and 90 offline capture-analyzer checks. Fixtures cover
+closed/fresh gates, backlog, arrival during STATUS, exact/stale expiry, failed
+WRITE/STATUS, invalid baseline/status, reconnect and freeze-before-fallback.
+Two independent read-only Sol correctness/security reviews passed without new
+findings. The kernel SYS/CAT is unchanged by this user-space worker change.
+New acceptance executable SHA256:
+31a8ae3f4bebbd6069b76f80cb7219e9c94054edc76e330b81e632081b500d60.
+
+Live ready-first acceptance is pending. Before this change, driver 0.5.5 with
+tool SHA256 2ee2dab7e1b325798e8894f997d80fb7af054e39eff73b85fb4f0bb829e6ba35
+produced two distinct results in the isolated, licensed, network-off UEFI VM:
+
+- Findings: a normal product-bridge 60-second request ended after 27,885 ms,
+  38 checks/9 failures, native exit 1, one steady/driver underrun, zero overruns
+  or transfer drops. Both clients had zero position gaps and timestamp errors,
+  but only two source sessions ran: producer reconnect and signal stage three
+  were not reached. Maximum upstream lateness was 11 ms, WRITE completion gap
+  19.403 ms, IOCTL wall interval 5.136 ms and consumer drain gap 11.803 ms.
+- Passed: a focused normal 10-second request completed 10,000 ms, 38 checks/
+  zero failures, native exit 0, all three source sessions, one producer
+  reconnect and one client reopen. Both clients had zero position gaps and
+  timestamp errors, two fresh-silence checks and waveform stages [4,3,3].
+  Steady underruns, overruns and transfer drops were zero. This verifies that
+  short full lifecycle, not the failed 60-second or one-hour acceptance.
+
+The guest installed 0.5.5 on the existing ROOT\\MEDIA\\0000 device; no duplicate
+device was created. Sole-target Code Integrity Verifier 0x021209bb was active
+according to verifier /query. Configured-registry evidence remained rejected
+for an untrusted writer; active and configured evidence are separate. HVCI
+was inactive. Existing failed runs remain evidence and are not overwritten by
+the short pass. Both GitHub Windows CI runs for e7fb988 passed (push 38063279878,
+pull request 38063283180). One hour, active HVCI, physical microphone/DSP,
+separate applications, measured performance/latency and Microsoft production
+signing remain open. VB-CABLE stays the daily route.
+
 # Producer-generation capture continuity — 2026-10-10
 
 Driver 0.5.5 fixes a deterministic loss mechanism in 0.5.4: clearing stale
@@ -38,7 +93,7 @@ fae3146eeecba75994dcd04654f35151dade6f76f75d87dbe25a1c42142ff789.
 Final lab executable SHA256:
 2ee2dab7e1b325798e8894f997d80fb7af054e39eff73b85fb4f0bb829e6ba35.
 
-Live 0.5.5 capture is pending. The prior 40.580 s failure is consistent with
+Live 0.5.5 results are recorded above. The prior 40.580 s failure is consistent with
 the corrected mechanism but lacks a generation/CONNECT event ledger, so its
 specific cause is not claimed proven. The prior hour-request underrun is a
 separate unresolved acceptance failure. Active HVCI, remaining current-version
