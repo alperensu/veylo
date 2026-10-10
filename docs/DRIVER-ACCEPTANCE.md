@@ -4,8 +4,16 @@ Bu araçlar test imzalı sürücünün **yetkilendirilmiş Windows VM'sinde** de
 içindir. Günlük Windows'a sürücü kurmaz; normal uygulama VB-CABLE ile çalışır.
 Üretim imzası, fiziksel mikrofon ve uygulama uyumluluğu yerine geçmez.
 
-0.5.3 geliştirme sürücüsü paket zamanını ilk örneğe göre bildirir. Capture
-raporundaki `clients[].first_invalid_packet`, ilk geçersiz paketin frame
+0.5.4 geliştirme sürücüsü tamamlanan PCM paketlerini önceden ayrılmış sekiz
+paketlik özel kuyrukta korur. Windows'un DMA tamponuna yalnız GetReadPacket
+tam paketi yayımlar; kısmi paket sonraki okuma alanını değiştirmez. MoreData,
+gecikmeli okumadan sonra kalan tam paketlerin sırayla alınmasını sağlar.
+Kuyruk taşarsa en eski paket atılır; konum boşluğu kabul testinde görünür kalır.
+Üretici kapanması, yeni bağlantı veya zaman aşımı özel kuyruktaki eski sesi
+geçersizleştirir. İlk örneğin zamanı paketle saklanır; PAUSE/RUN bunu değiştirmez.
+Bu kaynak/çevrimdışı doğrulama, önceki canlı hatanın çözüldüğünü tek başına kanıtlamaz.
+
+Capture raporundaki `clients[].first_invalid_packet`, ilk geçersiz paketin frame
 konumunu, beklenen konumu, flag'lerini, QPC zamanlarını ve uygunluk durumunu
 saklar; olay yoksa `null` olur. Zamanlar WASAPI'nin QPC tabanlı 100 ns
 birimindedir; kernel tanılarındaki interrupt-time saatinden ayrı tutulur.

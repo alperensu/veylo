@@ -5,15 +5,15 @@
 
 ## Mevcut durum
 
-Güncel sürücü geliştirme sürümü 0.5.3'tür; günlük bilgisayara yüklenmemelidir.
-`Veylo-driver-0.5.3.0-TEST-SIGNED-isolated-lab.zip` paketi dosya tabanlı
+Güncel sürücü geliştirme sürümü 0.5.4'tür; günlük bilgisayara yüklenmemelidir.
+`Veylo-driver-0.5.4.0-TEST-SIGNED-isolated-lab.zip` paketi dosya tabanlı
 test sertifikasıyla SYS ve CAT imzası taşır; bu Microsoft üretim imzası değildir.
 Önceki 0.5.1 sürümüyle izole Windows 11 build 26100 guest'te kurulum, 104 kernel IOCTL kontrolü ve
 PCM16/PCM32 gerçek ses aktarımı geçti. Bu test-policy sonucudur; üretim kernel
 politikası, HVCI, geniş yaşam döngüsü ve alıcı uygulama kabulü tamamlanmadı. Uygulama ZIP'i üretim
 sürücüsü içermez, VB-CABLE ile çalışmaya devam eder. Kur/güncelle üretim paketi yokken
 devre dışıdır. [İzole VM adımları](DRIVER-LAB.md) ve
-[Microsoft imzalama hazırlığı](https://github.com/alperensu/veylo/blob/main/docs/DRIVER-SIGNING.md) ayrı rehberlerdedir.
+[Microsoft imzalama hazırlığı](DRIVER-SIGNING.md) ve [son sürüm kabulü](DRIVER-RELEASE.md) ayrı rehberlerdedir.
 
 ## Üretim imzalı paketle normal kullanım
 

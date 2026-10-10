@@ -1,3 +1,69 @@
+# Driver 0.5.4 retained packets and producer-session isolation — 2026-10-10
+
+Passed: the notification path assembles PCM into a preallocated private queue
+with eight complete packets and one assembly slot. GetReadPacket publishes only
+the selected complete packet into the OS DMA buffer; retained first-sample
+timestamps survive PAUSE/RUN. MoreData exposes backlog and overflow leaves
+visible packet-number gaps. Disconnect, producer replacement and source timeout
+invalidate private audio through an internal generation check, including an
+atomic check at publication. Protocol 1 and ABI 5 are unchanged. This addresses
+a possible latest-packet-only loss mechanism; the historical intermittent
+failure is not claimed resolved without live extended acceptance.
+
+Passed: pinned EWDK build, recommended WDK analysis, InfVerif/Inf2Cat without
+warnings/errors. Eight Release groups passed in 16.23 seconds and eight ASan
+groups in 17.12 seconds. Capture retention passed 17,060 portable checks;
+driver validation passed 120,661. Eight package-integrity checks and 35 actual
+cryptographic lab-signing checks passed. The existing security pipeline passed.
+An initial ASan invocation lacked the toolchain DLL search path and exited
+0xc0000135; the corrected invocation passed, and the failed environment log is
+preserved. Two independent read-only Sol reviews found timestamp/session
+boundary issues, which were fixed, retested and independently re-reviewed.
+Both complete CI runs passed for code commit 0de5779: push 38028039375 and
+pull request 38028041702.
+
+Passed: the reviewed test-signing package verifies SYS/CAT cryptography,
+catalog membership, fixed ZIP contents and ephemeral private-key deletion.
+Signed SYS SHA256:
+77e13a0e6391cdeec9f783fb8b94f753281136d7e2d8365829bbb8dc459a341a.
+The unsigned Microsoft submission draft verifies exact archive contents and
+the matching PDB GUID/age; it is neither EV-signed nor submitted. No host
+certificate store changed. The staging helper passed independent correctness
+and security reviews before execution; the original seed files are preserved.
+
+Passed: actual guest installation and installed service SYS hash matching the
+reviewed signed package; 269 live kernel IOCTL checks with zero failures.
+Normal product-bridge capture completed 60,000 ms, 36 checks/zero failures,
+exit 0. Two shared WASAPI clients in one process, reconnect and fresh-silence
+checks passed. Steady underruns, overruns and transfer drops were zero; neither
+client had a position gap or timestamp error. Minimum observed queue was 472
+frames and maximum completed WRITE gap was 12,944 us. Sole-target Code
+Integrity Verifier 0x021209bb was active; HVCI was not. This uses synthetic
+input, not a physical microphone or separate receiving applications.
+Evidence: retained-packets-054-normal-60-serial.log,
+retained-packets-installed.png, retained-packets-ioctl.png and
+retained-packets-driver-hash.png under artifacts/driver-acceptance.
+
+Findings: the subsequent normal product-bridge hour request stopped after
+33,415 ms, 36 checks/nine failures, exit 1. One steady ring underrun occurred;
+overruns and transfer drops were zero. Both clients had zero position gaps and
+timestamp errors, with null first-invalid packet records. Maximum completed
+WRITE gap was 24,657 us; upstream producer lateness reached 9,504 us. The last
+observed pre-underrun queue was 297 frames, but that worker snapshot was already
+9,530 us old at the later observation: it is not the instantaneous queue at
+that later time. These timing observations do not establish a physical latency
+measurement or localize the scheduling delay. The short pass does not establish
+one-hour acceptance. Evidence: retained-packets-054-normal-hour-failed-serial.log
+and retained-packets-hour-terminal.png. No acceptance thresholds were relaxed.
+
+Not run / external prerequisites: active HVCI in a capable isolated platform,
+current-version final lifecycle acceptance, physical microphone/DSP and
+separate applications, physical added latency and production-package acceptance.
+The user confirmed no verified Hardware Dev Center/Partner Center organization
+account and no EV certificate. Microsoft production signing remains unavailable;
+dailyUseReady=false and VB-CABLE remains the daily route. Host security and
+audio defaults are unchanged. [Final release gates](DRIVER-RELEASE.md).
+
 # Driver 0.5.3 packet timestamps and preserved capture failures — 2026-10-10
 
 Passed: corrected GetReadPacket to report the first sample's timestamp,

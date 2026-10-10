@@ -1,6 +1,6 @@
 # Veylo Mikrofon: test imzası ve Microsoft gönderimi
 
-Veylo **0.7.5-dev**, sürücü **0.5.1.0**. Yerel test imzalı paket üretildi ve
+Veylo **0.7.5-dev**, sürücü **0.5.4.0**. Yerel test imzalı paket üretildi ve
 dosyaların kriptografik doğrulaması geçti. Bu paket **Microsoft üretim imzalı
 değildir** ve `dailyUseReady=false` taşır. Normal Setup kernel sürücüsünü
 paketlemez; günlük uygulama mevcut VB-CABLE ile çalışmaya devam eder.
@@ -80,7 +80,7 @@ Güncel imzasız `build/driver/package` ve derlenmiş PDB ile:
 ./scripts/prepare-driver-submission.ps1
 ```
 
-Araç `artifacts/driver-submission/<run>/VeyloMic-0.5.1.0-UNSIGNED-submission-draft.cab`
+Araç `artifacts/driver-submission/<run>/VeyloMic-0.5.4.0-UNSIGNED-submission-draft.cab`
 ve `submission-manifest.json` üretir. CAB içindeki `VeyloMic` alt klasöründe
 yalnız `SesMicrophone.inf`, `.sys`, `.cat` ve `.pdb` vardır. Manifest kopyalanan
 dosyaların hash'lerini ve CAB hash'ini kaydeder. Bu bir **imzasız gönderim
