@@ -25,8 +25,78 @@ Two independent read-only Sol correctness/security reviews passed without new
 findings. The kernel SYS/CAT is unchanged by this user-space worker change.
 New acceptance executable SHA256:
 31a8ae3f4bebbd6069b76f80cb7219e9c94054edc76e330b81e632081b500d60.
+Both complete Windows CI runs for ready-first code commit d77ccee passed:
+push 38064536117 and pull request 38064540651, including managed/offscreen UI,
+dependency/secret/static analysis, ASan, application ZIP and installer checks.
+The refreshed isolated-lab archive reverified SYS/CAT cryptography and fixed
+inventory, while preserving signed SYS/CAT/certificate bytes and the source
+package. Archive SHA256:
+b202dc3689c60f0a6da577b7f5ff8d809a288f15dc844408df5f942135017d8d.
 
-Live ready-first acceptance is pending. Before this change, driver 0.5.5 with
+Passed: live ready-first normal product-bridge capture completed its requested
+60,000 ms: 38 checks/zero failures, native exit 0, all three source sessions,
+producer reconnect and client reopen. Both shared WASAPI clients had zero
+position gaps and timestamp errors, waveform stages [28,28,28], and fresh
+  silence at lifecycle boundaries. Steady underruns, overruns and transfer drops
+were zero. Maximum upstream lateness was 3 ms, WRITE completion gap 14.075 ms
+and IOCTL wall interval 3.635 ms. Optional kernel diagnostics were off. This
+is synthetic PCM32 into two clients of one process, not two applications or
+physical microphone/DSP acceptance.
+
+Findings: the subsequent diagnostics-off 3,600-second request stopped after
+535,967 ms, 38 checks/eight failures, native exit 1. One steady underrun occurred
+in source session one; the remaining lifecycle/signal stages were not reached.
+Overruns, transfer drops, both clients' position gaps and timestamp errors were
+zero; both first-invalid-packet records were null. Maximum upstream lateness
+was 15 ms, steady WRITE completion gap 31.345 ms, IOCTL wall interval 11.612 ms
+and consumer drain gap 16.440 ms. Maximum observed worker status publication
+age was 25.657 ms. Near failure the producer was 15.066 ms late and observed
+an old 636-frame snapshot; the next fresh snapshot reported 1,344 queued and
+underrun one. This proves a delivery interruption, not its scheduling/kernel
+cause or a platform fault. No buffer, reserve or acceptance gate was relaxed.
+Findings: the subsequent instrumented 600-second request stopped at 55,518 ms,
+39 checks/nine failures, native exit 1, one steady underrun in source one.
+Overruns, transfer drops and both clients' position/timestamp errors were zero.
+Maximum upstream lateness was 12 ms, WRITE completion gap 32.298 ms, IOCTL
+wall interval 11.315 ms and consumer drain gap 20.059 ms. The first kernel
+underrun requested 72 frames with 44 queued and produced 29 silent frames
+(interpolation requires queued >1). It occurred 21.4945 ms after the last
+successful kernel WRITE; maximum kernel WRITE gap was 32.7983 ms. Lifetime
+counter 1→2 includes the prior run's baseline and means one new underrun.
+
+Passed, diagnostic observation only: 128 chronological worker events froze
+at the first STATUS counter rise with zero rejected events. The tail shows
+fresh STATUS 524 → fallback dequeue 480 → successful 0.0805 ms WRITE, then
+a 20.9551 ms WAIT returning 19.2275 ms after its cadence deadline. The next
+STATUS took 11.3155 ms, including 11.3083 ms inside immediate DeviceIoControl;
+no pending-completion wait/result probe occurred. The conservative bound
+524+480=1,004 correctly closed the unchanged <961 gate, so no pre-STATUS
+dequeue was observed on that iteration. Earlier fresh upstream availability
+is not proven. This demonstrates late worker service and ring starvation,
+not whether timer firing, pre-arm descheduling, dispatch or another cause
+produced the delay. API wall time includes preemption, not kernel CPU time.
+QPC and InterruptTime absolute values were not subtracted. Producer-observed
+counter atomics are not a coherent snapshot; separate maxima are not summed
+to infer causality. The one-hour acceptance gate remains failed.
+
+Passed: current 0.5.5 guest kernel IOCTL suite, 269 checks/zero failures. A
+same-version exact-instance removal/reinstallation confirmed device absence
+before reinstalling; both tool exits were zero and the sole reinstalled
+ROOT\\MEDIA\\0000 device had ConfigManagerErrorCode 0. This is not rollback
+or production-package validation. A following normal product-bridge 10-second
+request completed 10,013 ms, 38 checks/zero failures, all three source sessions
+and waveform stages [4,3,3], with zero steady underruns, position gaps or
+timestamp errors. It does not supersede the two failed longer requests above.
+After reinstall, the guest service was Running and its image file SHA256
+still matched fae3146eeecba75994dcd04654f35151dade6f76f75d87dbe25a1c42142ff789.
+This checks the installed running
+service's image file, not an in-memory module hash.
+Passed: normal guest shutdown, absent owned QEMU/supervisor process identities,
+exclusive disk access and the preserved stopped snapshot
+ready-first-tested-stopped-20261010. No host driver, trust, security policy or
+daily audio-route change was made.
+
+Before this change, driver 0.5.5 with
 tool SHA256 2ee2dab7e1b325798e8894f997d80fb7af054e39eff73b85fb4f0bb829e6ba35
 produced two distinct results in the isolated, licensed, network-off UEFI VM:
 

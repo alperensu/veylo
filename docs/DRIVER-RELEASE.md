@@ -23,6 +23,17 @@ Kesin sonuçlar, sürüm ve test süresiyle [VALIDATION.md](VALIDATION.md) için
 saklanır. Eski sürümde geçen kısa/yaşam döngüsü testi yeni sürümün geçtiği
 anlamına gelmez. Bir saat istenmesi veya ara heartbeat, tamamlanan saat değildir.
 
+0.5.5'te üretici geçişlerinin paket konumunu koruması düzeltildi; ürün bridge'i
+güvenli olduğunda hazır paketi STATUS'tan önce teslim ediyor. Normal 60 saniye,
+269 kernel kontrolü ve aynı sürümü kaldırma/yeniden kurma geçti. Ancak yeni
+bir saatlik istek 535,967 saniyede underrun ile durdu; ayrı tanı koşusu da
+55,518 saniyede aynı kabulü reddetti. Dondurulmuş kayıt geç worker hizmetini
+gösteriyor; timer/dispatch nedeni ve daha erken hazır paket henüz kanıtlanmadı.
+Sıradaki aktarım çalışması bu ayrımı doğrulamalı; tampon ve kabul eşikleri
+sonucu geçirmek için gevşetilmeyecek. Kısa geçiş testleri uzun koşuyu geçirmez.
+İlk odak, kapalı üst sınırla STATUS'a girerken taze upstream paketin hazır olup
+olmadığını gösteren sınırlı tanıdır; mevcut kayıt bu bilgiyi kanıtlamaz.
+
 ## Dış ön koşullar
 
 - Mevcut QEMU/WHPX laboratuvarı etkin VBS/HVCI'yi göstermedi; BIOS ve UEFI
