@@ -19,6 +19,42 @@ static_assert((SES_IOCTL_DIAGNOSTICS&3u)==0u); // METHOD_BUFFERED
 static_assert(((SES_IOCTL_DIAGNOSTICS>>14)&3u)==3u); // Same read/write access
 static unsigned checks=0;
 static void check(bool ok,const char* name){++checks;if(!ok){std::fprintf(stderr,"FAIL %s\n",name);std::exit(1);}}
+static void monotonicWorkerCadence(){
+    ses::WorkerCadence cadence;uint64_t delay=123;
+    check(!cadence.delay(100000,0,delay)&&delay==123,"Zero interval does not initialize cadence or modify output");
+    check(!cadence.delay(100000,501,delay)&&delay==123,"Unbounded interval does not initialize cadence");
+    check(cadence.delay(100000,2,delay)&&delay==20000,"First valid wait anchors a two-millisecond deadline");
+    check(cadence.delay(123000,2,delay)&&delay==17000,"IO work uses the remainder of the anchored interval");
+    check(cadence.delay(147000,2,delay)&&delay==13000,"Wake lateness and longer IO do not compound cadence drift");
+    check(cadence.delay(160000,2,delay)&&delay==20000,"An exact deadline schedules a positive future interval");
+    check(cadence.delay(40357890,2,delay)&&delay==2110,"Long stalls skip every missed deadline in one bounded step");
+    delay=123;
+    check(!cadence.delay(40357889,2,delay)&&delay==123,"Backward monotonic clock fails without changing output");
+    check(!cadence.delay(40358000,501,delay)&&delay==123,"Invalid interval cannot change an established cadence");
+    check(cadence.delay(40360000,2,delay)&&delay==20000,"Failed requests preserve the established phase");
+    check(cadence.delay(40361000,5,delay)&&delay==50000,"Changing interval deliberately reanchors cadence");
+    cadence.reset();
+    check(cadence.delay(1,2,delay)&&delay==20000,"Reset discards the prior clock and deadline");
+    // Include counter horizons and conversion failures without sleeping or
+    // relying on wall-clock latency while the instrumented VM is running.
+    const auto maximum=std::numeric_limits<uint64_t>::max();
+    cadence.reset();delay=123;
+    check(!cadence.delay(maximum-19999,2,delay)&&delay==123,"Initial deadline addition cannot wrap");
+    check(cadence.delay(maximum-20000,2,delay)&&delay==20000,"Last representable initial deadline is accepted");
+    delay=123;
+    check(!cadence.delay(maximum,2,delay)&&delay==123,"Skipping past the clock horizon fails rather than spinning");
+    check(cadence.delay(maximum-19999,2,delay)&&delay==19999,"Overflow failure leaves deadline and clock state unchanged");
+    uint64_t hns=123;
+    check(ses::WorkerCadence::qpcToHns(100000,10000000,hns)&&hns==100000,"10MHz worker clock conversion is exact");
+    check(ses::WorkerCadence::qpcToHns(480003,24000000,hns)&&hns==200001,"Worker clock conversion rounds down by less than one 100ns tick");
+    check(ses::WorkerCadence::qpcToHns(24000000000000ull,24000000,hns)&&hns==10000000000000ull,
+          "Long-running worker clock avoids intermediate multiplication overflow");
+    check(ses::WorkerCadence::qpcToHns(maximum,10000000,hns)&&hns==maximum,"Largest representable converted clock remains exact");
+    hns=123;
+    check(!ses::WorkerCadence::qpcToHns(1,0,hns)&&hns==123,"Uninitialized frequency fails without modifying clock output");
+    check(!ses::WorkerCadence::qpcToHns(1,maximum,hns)&&hns==123,"Unbounded frequency is rejected before scaling");
+    check(!ses::WorkerCadence::qpcToHns(maximum,1,hns)&&hns==123,"Converted clock overflow fails without modifying output");
+}
 static void workerTimer(){
     ses::WorkerTimer timer;
     HANDLE stop=CreateEventW(nullptr,TRUE,FALSE,nullptr);
@@ -26,6 +62,7 @@ static void workerTimer(){
     check(timer.wait(stop,2)==WAIT_FAILED,"Uninitialized cadence fails closed");
     check(timer.open(),"Private high-resolution cadence timer opens");
     check(timer.wait(stop,0)==WAIT_FAILED,"Zero cadence is rejected");
+    check(timer.wait(stop,501)==WAIT_FAILED,"Oversized cadence is rejected");
     check(timer.wait(stop,2)==WAIT_OBJECT_0+1,"Private cadence wakes without stop");
     SetEvent(stop);
     check(timer.wait(stop,500)==WAIT_OBJECT_0,"Stop preempts a pending worker timer");
@@ -265,5 +302,5 @@ static void captureDiagnostics(){
     diagnostics.successfulWrite(true,10349999);
     check(diagnostics.snapshot().last_successful_write_gap_hns==0,"Backward simulated write tick cannot create a huge gap");
 }
-int main(){workerTimer();clockAndFormat();reserveAndDrift(10000,true);reserveAndDrift(9990,false);reserveAndDrift(10010,false);workerCadence(48);workerCadence(240);workerCadence(480);workerCadence(960);captureDiagnostics();
+int main(){monotonicWorkerCadence();workerTimer();clockAndFormat();reserveAndDrift(10000,true);reserveAndDrift(9990,false);reserveAndDrift(10010,false);workerCadence(48);workerCadence(240);workerCadence(480);workerCadence(960);captureDiagnostics();
     std::printf("%u portable driver validation checks passed; no kernel or installation test was run\n",checks);}
