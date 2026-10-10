@@ -12,6 +12,111 @@ function Assert-VmPrivateAcl([string]$Path,[string]$Within) {
     foreach($rule in $rules){if($rule.IdentityReference.Value -cnotin @($owner,'S-1-5-18') -or $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or $rule.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl){throw 'VM path is not owner/SYSTEM-only'}}
     return $full
 }
+function Assert-VmAcceptanceSeed([string]$Seed,[string]$VmId) {
+    $directory=Assert-LabPath (Join-Path $Seed 'acceptance') $Seed
+    Assert-LabPrivateAcl $directory
+    $names=@('driver-vm-acceptance.ps1','ses_driver_capture_lab_tests.exe','acceptance-manifest.json')
+    Assert-LabInventory $directory $names
+    foreach($name in $names){Assert-LabPrivateAcl (Join-Path $directory $name)}
+    $path=Join-Path $directory 'acceptance-manifest.json'
+    if((Get-Item -LiteralPath $path).Length -gt 16KB){throw 'Oversized acceptance manifest'}
+    $manifest=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if($manifest.schema -ne 1 -or $manifest.testOnly -isnot [bool] -or !$manifest.testOnly -or $manifest.vmId -cne $VmId){throw 'Acceptance seed identity mismatch'}
+    $entries=@($manifest.files.PSObject.Properties)
+    if($entries.Count -ne 2){throw 'Acceptance inventory mismatch'}
+    foreach($entry in $entries){
+        if($entry.Name -cnotin $names[0..1] -or $entry.Value -cnotmatch '^[0-9a-f]{64}$' -or (Get-FileHash -LiteralPath (Join-Path $directory $entry.Name) -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.Value){throw 'Acceptance payload checksum mismatch'}
+    }
+    return $directory
+}
+function Assert-VmVersionTransitionPayload([string]$Directory,[string]$VmId) {
+    $directory=Assert-LabPath $Directory;Assert-LabPrivateAcl $directory
+    if(!(Get-Item -LiteralPath $directory).PSIsContainer){throw 'Version transition payload must be a directory'}
+    $inventory=@(Get-ChildItem -LiteralPath $directory -Force)
+    if($inventory.Count -ne 4){throw 'Unexpected version transition root inventory'}
+    foreach($entry in $inventory){
+        if($entry.Name -cnotin @('driver-vm-version-transition.ps1','version-transition-manifest.json','old','current') -or
+           $entry.PSIsContainer -ne ($entry.Name -cin @('old','current'))){throw 'Unexpected version transition root path/type'}
+        Assert-LabPath $entry.FullName $directory | Out-Null;Assert-LabPrivateAcl $entry.FullName
+    }
+    $names=@('driver-vm-version-transition.ps1')
+    $packageNames=@('SesMicrophone.inf','SesMicrophone.sys','SesMicrophone.cat','lab-test.cer','ses_driver_capture_lab_tests.exe','test-signing-manifest.json')
+    foreach($version in @('old','current')){
+        $subdirectory=Assert-LabPath (Join-Path $directory $version) $directory
+        Assert-LabPrivateAcl $subdirectory
+        if(!(Get-Item -LiteralPath $subdirectory).PSIsContainer){throw 'Version package must be a directory'}
+        Assert-LabInventory $subdirectory $packageNames
+        foreach($name in $packageNames){$names+=($version+'\'+$name)}
+    }
+    $path=Assert-LabPath (Join-Path $directory 'version-transition-manifest.json') $directory
+    Assert-LabPrivateAcl $path
+    $info=Get-Item -LiteralPath $path
+    if($info.PSIsContainer -or $info.Length -lt 2 -or $info.Length -gt 16KB){throw 'Invalid version transition manifest size/type'}
+    $manifest=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if($manifest.schema -ne 1 -or $manifest.testOnly -isnot [bool] -or !$manifest.testOnly -or
+       $manifest.productionReady -isnot [bool] -or $manifest.productionReady -or $manifest.vmId -cne $VmId -or
+       $manifest.oldVersion -cne '0.5.0.0' -or $manifest.currentVersion -cne '0.5.1.0' -or $manifest.abi -ne 5 -or $manifest.protocol -ne 1){
+        throw 'Version transition manifest contract mismatch'
+    }
+    $entries=@($manifest.files.PSObject.Properties)
+    if($entries.Count -ne $names.Count){throw 'Version transition inventory mismatch'}
+    foreach($entry in $entries){
+        if($entry.Name -cnotin $names -or $entry.Value -isnot [string] -or $entry.Value -cnotmatch '^[0-9a-f]{64}$'){
+            throw 'Unexpected version transition entry'
+        }
+        $file=Assert-LabPath (Join-Path $directory $entry.Name) $directory;Assert-LabPrivateAcl $file
+        $info=Get-Item -LiteralPath $file
+        if($info.PSIsContainer -or $info.Length -lt 1 -or $info.Length -gt 16MB -or
+           (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.Value){
+            throw 'Version transition payload checksum/type/size mismatch'
+        }
+    }
+    return $directory
+}
+function Get-VmFirmwarePaths([string]$Vm,$State,[switch]$VerifyInputs) {
+    $properties=@($State.PSObject.Properties.Name)
+    $firmware=if($properties -contains 'firmware'){$State.firmware}else{'BIOS'}
+    if($firmware -isnot [string] -or $firmware -cnotin @('BIOS','UEFI')){throw 'Invalid guest firmware enum'}
+    if($firmware -ceq 'BIOS'){
+        if($properties -contains 'firmwareCode' -or $properties -contains 'firmwareVars'){throw 'BIOS metadata cannot attach firmware paths'}
+        return @{firmware='BIOS'}
+    }
+    $base=Join-Path $labSigningRoot '.tools/driver-lab'
+    $ownedVm=Assert-VmPrivateAcl $Vm $base
+    $code=Join-Path $base 'qemu/share/edk2-x86_64-code.fd'
+    $vars=Join-Path $ownedVm 'uefi-vars.fd'
+    if($properties -notcontains 'firmwareCode' -or $properties -notcontains 'firmwareVars' -or
+       $State.firmwareCode -isnot [string] -or $State.firmwareVars -isnot [string] -or
+       $State.firmwareCode -cne $code -or $State.firmwareVars -cne $vars){throw 'UEFI metadata must use fixed code and owned NVRAM paths'}
+    $code=Assert-LabPath $code $base
+    $vars=Assert-VmPrivateAcl $vars $ownedVm
+    foreach($file in @($code,$vars)){
+        if($file.Contains(',') -or $file.Contains('"')){throw 'Unsupported firmware path delimiter'}
+        $info=Get-Item -LiteralPath $file
+        if($info.PSIsContainer -or $info.Length -lt 1 -or $info.Length -gt 16MB){throw 'Invalid guest firmware file size/type'}
+    }
+    # NVRAM is mutable during guest boots. Its template is pinned at creation;
+    # subsequent starts enforce fixed ownership/path and the exact flash size.
+    if((Get-Item -LiteralPath $vars).Length -ne 540672){throw 'Guest NVRAM flash size differs'}
+    if($VerifyInputs){
+        $lock=Get-Content -LiteralPath (Join-Path $labSigningRoot 'driver/lab.lock.json') -Raw | ConvertFrom-Json
+        if($lock.qemu.uefiCodeSha256 -cnotmatch '\A[0-9a-f]{64}\z' -or
+           (Get-FileHash -LiteralPath $code -Algorithm SHA256).Hash.ToLowerInvariant() -cne $lock.qemu.uefiCodeSha256){throw 'Pinned UEFI code checksum mismatch'}
+    }
+    return @{firmware='UEFI';code=$code;vars=$vars}
+}
+function Get-VmInstallLayout([ValidateSet('BIOS','UEFI')][string]$Firmware='BIOS') {
+    if($Firmware -eq 'UEFI'){
+        # Microsoft's current Windows 11 GPT guidance requires ESP >=200 MB for
+        # 512/512e and >=300 MB for 4Kn. Use 300 MB for this new guest disk only.
+        return @{partitionId=3;
+            create='<CreatePartition wcm:action="add"><Order>1</Order><Type>EFI</Type><Size>300</Size></CreatePartition><CreatePartition wcm:action="add"><Order>2</Order><Type>MSR</Type><Size>16</Size></CreatePartition><CreatePartition wcm:action="add"><Order>3</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>';
+            modify='<ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>FAT32</Format><Label>System</Label></ModifyPartition><ModifyPartition wcm:action="add"><Order>2</Order><PartitionID>3</PartitionID><Format>NTFS</Format><Label>VEYLO-LAB</Label><Letter>C</Letter></ModifyPartition>'}
+    }
+    return @{partitionId=1;
+        create='<CreatePartition wcm:action="add"><Order>1</Order><Type>Primary</Type><Extend>true</Extend></CreatePartition>';
+        modify='<ModifyPartition wcm:action="add"><Order>1</Order><PartitionID>1</PartitionID><Format>NTFS</Format><Label>VEYLO-LAB</Label><Letter>C</Letter><Active>true</Active></ModifyPartition>'}
+}
 function Get-OwnedVm([string]$Directory,[switch]$VerifyInputs) {
     $base=Join-Path $labSigningRoot '.tools/driver-lab';$vm=Assert-VmPrivateAcl $Directory $base
     if([IO.Path]::GetFileName($vm) -cnotmatch '^vm-[0-9a-f]{32}$'){throw 'Not an owned Veylo VM directory'}
@@ -19,10 +124,17 @@ function Get-OwnedVm([string]$Directory,[switch]$VerifyInputs) {
     if((Get-Item -LiteralPath $metadata).Length -gt 16KB){throw 'Oversized VM metadata'}
     $state=Get-Content -LiteralPath $metadata -Raw | ConvertFrom-Json;$id=[Guid]::Empty
     if($state.schema -ne 1 -or $state.ownedBy -cne 'Veylo isolated driver lab' -or ![Guid]::TryParseExact([string]$state.id,'D',[ref]$id) -or $id.ToString('D') -cne $state.id -or $state.accelerator -cnotin @('whpx','tcg') -or $state.hostSecurityChanged -isnot [bool] -or $state.hostSecurityChanged -or $state.installed -isnot [bool]){throw 'Invalid VM identity'}
+    Get-VmFirmwarePaths $vm $state -VerifyInputs:$VerifyInputs | Out-Null
+    # Ownership and canonical paths are mandatory even for control-only reads;
+    # VerifyInputs adds immutable payload hashes and full seed inventory checks.
+    $disk=Assert-VmPrivateAcl (Join-Path $vm 'windows.qcow2') $vm;$diskInfo=Get-Item -LiteralPath $disk
+    if($state.disk -cne $disk -or $diskInfo.PSIsContainer -or $diskInfo.Length -lt 1 -or $diskInfo.Length -gt 80GB){throw 'Invalid owned virtual disk'}
+    $seed=Assert-LabPath $state.seed (Join-Path $labSigningRoot 'artifacts/driver-test-signing');Assert-LabPrivateAcl $seed
+    if(!(Get-Item -LiteralPath $seed).PSIsContainer){throw 'VM seed must be a private directory'}
+    $iso=Assert-LabPath (Join-Path $base 'Windows11-IoT-LTSC-2024-eval.iso') $base
+    $isoInfo=Get-Item -LiteralPath $iso
+    if($state.iso -cne $iso -or $isoInfo.PSIsContainer -or $isoInfo.Length -lt 1 -or $isoInfo.Length -gt 8GB){throw 'Invalid fixed guest ISO path/size'}
     if($VerifyInputs){
-        $disk=Assert-VmPrivateAcl (Join-Path $vm 'windows.qcow2') $vm;$diskInfo=Get-Item -LiteralPath $disk
-        if($state.disk -cne $disk -or $diskInfo.PSIsContainer -or $diskInfo.Length -lt 1 -or $diskInfo.Length -gt 80GB){throw 'Invalid owned virtual disk'}
-        $seed=Assert-LabPath $state.seed (Join-Path $labSigningRoot 'artifacts/driver-test-signing');Assert-LabPrivateAcl $seed
         $seedPath=Assert-LabPath (Join-Path $seed 'veylo-lab-seed.json') $seed;Assert-LabPrivateAcl $seedPath
         if((Get-Item -LiteralPath $seedPath).Length -gt 64KB){throw 'Oversized seed metadata'}
         $identity=Get-Content -LiteralPath $seedPath -Raw | ConvertFrom-Json
@@ -35,13 +147,18 @@ function Get-OwnedVm([string]$Directory,[switch]$VerifyInputs) {
             if((Get-Item -LiteralPath $file).Length -gt 16MB -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.Value){throw 'Seed payload checksum mismatch'}
         }
         $inventory=@(Get-ChildItem -LiteralPath $seed -Force)
-        if($inventory.Count -ne $names.Count+2){throw 'Unexpected seed files'}
+        $hasAcceptance=Test-Path -LiteralPath (Join-Path $seed 'acceptance')
+        if($hasAcceptance){Assert-VmAcceptanceSeed $seed $state.id | Out-Null}
+        $hasVersionTransition=Test-Path -LiteralPath (Join-Path $seed 'version-transition')
+        if($hasVersionTransition){Assert-VmVersionTransitionPayload (Join-Path $seed 'version-transition') $state.id | Out-Null}
+        if($inventory.Count -ne $names.Count+2+[int]$hasAcceptance+[int]$hasVersionTransition){throw 'Unexpected seed files'}
         foreach($file in $inventory){
+            if($file.Name -ceq 'acceptance' -and $hasAcceptance -and $file.PSIsContainer){continue}
+            if($file.Name -ceq 'version-transition' -and $hasVersionTransition -and $file.PSIsContainer){continue}
             if($file.Name -cnotin ($names+@('veylo-lab-seed.json','autounattend.xml')) -or $file.PSIsContainer){throw 'Unexpected seed path'}
             Assert-LabPath $file.FullName $seed | Out-Null;Assert-LabPrivateAcl $file.FullName
         }
-        $exe=Assert-LabPath (Join-Path $base 'qemu/qemu-system-x86_64.exe') $base;$iso=Assert-LabPath (Join-Path $base 'Windows11-IoT-LTSC-2024-eval.iso') $base
-        if($state.iso -cne $iso){throw 'VM ISO identity differs'}
+        $exe=Assert-LabPath (Join-Path $base 'qemu/qemu-system-x86_64.exe') $base
         $lock=Get-Content -LiteralPath (Join-Path $labSigningRoot 'driver/lab.lock.json') -Raw | ConvertFrom-Json
         foreach($item in @(@{path=$exe;hash=$lock.qemu.systemSha256},@{path=$iso;hash=$lock.windows.sha256})){
             if($item.hash -cnotmatch '^[0-9a-f]{64}$' -or (Get-FileHash -LiteralPath $item.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $item.hash){throw 'Pinned VM input mismatch'}
@@ -105,13 +222,25 @@ function Read-VmJson([string]$Directory,[string]$Name) {
     if($PSVersionTable.PSVersion -ge [Version]'7.5'){$jsonOptions.DateKind='String'}
     return $json | ConvertFrom-Json @jsonOptions
 }
-function Get-VmArguments([string]$Vm,$State,[switch]$BootInstalled) {
+function Get-VmArguments([string]$Vm,$State,[switch]$BootInstalled,[switch]$EvaluationActivationNetwork) {
+    $firmware=Get-VmFirmwarePaths $Vm $State
     $diskBoot=$BootInstalled -or $State.installed
+    if($EvaluationActivationNetwork -and !$diskBoot){throw 'Evaluation activation networking requires an explicitly installed guest disk'}
     if(!$diskBoot -and (Test-Path -LiteralPath (Join-Path $Vm 'process.json'))){throw 'Initial ISO boot is allowed once; use -BootInstalled to resume the owned disk'}
     foreach($path in @($State.disk,$State.iso,$State.seed,$Vm)){if($path.Contains(',') -or $path.Contains('"')){throw 'Unsupported VM path delimiter'}}
-    $arguments=@('-machine','q35','-accel',$State.accelerator,'-cpu','max','-smp','2','-m','6144','-display','none','-nic','none','-monitor','none','-qmp','stdio','-no-reboot',
+    # Optional user-mode NAT has no inbound forwarding, bridge, shared folders
+    # or host devices. Use only for normal evaluation activation; omit to
+    # restore the default disconnected guest on the next cold boot.
+    $nic=if($EvaluationActivationNetwork){'user,model=e1000'}else{'none'}
+    $arguments=@('-machine','q35','-accel',$State.accelerator,'-cpu','max','-smp','2','-m','6144','-display','none','-nic',$nic,'-monitor','none','-qmp','stdio','-no-reboot',
         '-serial',('file:'+(Join-Path $Vm 'serial.log')),'-smbios',('type=1,manufacturer=QEMU,product=VeyloDriverLab,uuid='+$State.id),
         '-drive',('file='+$State.disk+',format=qcow2,if=ide,index=0'))
+    if($firmware.firmware -ceq 'UEFI'){
+        # This non-secure OVMF policy applies only to the isolated guest. Never
+        # change host firmware or attach an arbitrary caller-supplied flash file.
+        $arguments+=@('-drive',('file='+$firmware.code+',format=raw,if=pflash,unit=0,readonly=on'),
+            '-drive',('file='+$firmware.vars+',format=raw,if=pflash,unit=1'))
+    }
     if(!$diskBoot){$arguments+=@('-drive',('file='+$State.iso+',media=cdrom,if=ide,index=2,readonly=on'))}
     $arguments+=@('-device','qemu-xhci','-drive',('file=fat:ro:'+$State.seed+',format=raw,if=none,id=seed,readonly=on'),'-device','usb-storage,drive=seed,removable=on','-boot',$(if($diskBoot){'order=c'}else{'order=c,once=d'}))
     return $arguments

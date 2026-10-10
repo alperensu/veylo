@@ -1,3 +1,1114 @@
+# Ready-first product bridge delivery — 2026-10-10
+
+The product worker now delivers an already-ready fresh upstream packet before
+STATUS when its conservative occupancy bound permits the existing <961-frame
+gate. The bound starts with validated CONNECT/STATUS and grows only after this
+worker's successful WRITE; capture, expiry and discard can only reduce actual
+occupancy. A closed bound still uses the same iteration's fresh STATUS. Every
+completed iteration retains STATUS and at most one successful WRITE. Failure
+and reconnect reset the bound. Capacity, reserves, 2 ms cadence, MMCSS, 50 ms
+upstream expiry, IOCTL deadlines, ABI 5 and protocol 1 are unchanged.
+
+First-underrun evidence freezes at the STATUS observation before counter
+publication, fallback delivery or optional diagnostics. Conservative dequeue
+events explicitly lack a kernel STATUS observation; the trace layout is not
+expanded. The production iteration helper is exercised with the real bounded
+PcmRing and TransferQueue plus fake I/O leaves. A delayed STATUS fixture
+distinguishes WRITE-before-STATUS from the old starvation-prone ordering; this
+does not establish the cause of a live VM failure.
+
+Passed: eight Release groups (16.90 s), eight ASan groups (18.27 s), 696 offline
+bounded driver-I/O checks and 90 offline capture-analyzer checks. Fixtures cover
+closed/fresh gates, backlog, arrival during STATUS, exact/stale expiry, failed
+WRITE/STATUS, invalid baseline/status, reconnect and freeze-before-fallback.
+Two independent read-only Sol correctness/security reviews passed without new
+findings. The kernel SYS/CAT is unchanged by this user-space worker change.
+New acceptance executable SHA256:
+31a8ae3f4bebbd6069b76f80cb7219e9c94054edc76e330b81e632081b500d60.
+Both complete Windows CI runs for ready-first code commit d77ccee passed:
+push 38064536117 and pull request 38064540651, including managed/offscreen UI,
+dependency/secret/static analysis, ASan, application ZIP and installer checks.
+The refreshed isolated-lab archive reverified SYS/CAT cryptography and fixed
+inventory, while preserving signed SYS/CAT/certificate bytes and the source
+package. Archive SHA256:
+b202dc3689c60f0a6da577b7f5ff8d809a288f15dc844408df5f942135017d8d.
+
+Passed: live ready-first normal product-bridge capture completed its requested
+60,000 ms: 38 checks/zero failures, native exit 0, all three source sessions,
+producer reconnect and client reopen. Both shared WASAPI clients had zero
+position gaps and timestamp errors, waveform stages [28,28,28], and fresh
+  silence at lifecycle boundaries. Steady underruns, overruns and transfer drops
+were zero. Maximum upstream lateness was 3 ms, WRITE completion gap 14.075 ms
+and IOCTL wall interval 3.635 ms. Optional kernel diagnostics were off. This
+is synthetic PCM32 into two clients of one process, not two applications or
+physical microphone/DSP acceptance.
+
+Findings: the subsequent diagnostics-off 3,600-second request stopped after
+535,967 ms, 38 checks/eight failures, native exit 1. One steady underrun occurred
+in source session one; the remaining lifecycle/signal stages were not reached.
+Overruns, transfer drops, both clients' position gaps and timestamp errors were
+zero; both first-invalid-packet records were null. Maximum upstream lateness
+was 15 ms, steady WRITE completion gap 31.345 ms, IOCTL wall interval 11.612 ms
+and consumer drain gap 16.440 ms. Maximum observed worker status publication
+age was 25.657 ms. Near failure the producer was 15.066 ms late and observed
+an old 636-frame snapshot; the next fresh snapshot reported 1,344 queued and
+underrun one. This proves a delivery interruption, not its scheduling/kernel
+cause or a platform fault. No buffer, reserve or acceptance gate was relaxed.
+Findings: the subsequent instrumented 600-second request stopped at 55,518 ms,
+39 checks/nine failures, native exit 1, one steady underrun in source one.
+Overruns, transfer drops and both clients' position/timestamp errors were zero.
+Maximum upstream lateness was 12 ms, WRITE completion gap 32.298 ms, IOCTL
+wall interval 11.315 ms and consumer drain gap 20.059 ms. The first kernel
+underrun requested 72 frames with 44 queued and produced 29 silent frames
+(interpolation requires queued >1). It occurred 21.4945 ms after the last
+successful kernel WRITE; maximum kernel WRITE gap was 32.7983 ms. Lifetime
+counter 1→2 includes the prior run's baseline and means one new underrun.
+
+Passed, diagnostic observation only: 128 chronological worker events froze
+at the first STATUS counter rise with zero rejected events. The tail shows
+fresh STATUS 524 → fallback dequeue 480 → successful 0.0805 ms WRITE, then
+a 20.9551 ms WAIT returning 19.2275 ms after its cadence deadline. The next
+STATUS took 11.3155 ms, including 11.3083 ms inside immediate DeviceIoControl;
+no pending-completion wait/result probe occurred. The conservative bound
+524+480=1,004 correctly closed the unchanged <961 gate, so no pre-STATUS
+dequeue was observed on that iteration. Earlier fresh upstream availability
+is not proven. This demonstrates late worker service and ring starvation,
+not whether timer firing, pre-arm descheduling, dispatch or another cause
+produced the delay. API wall time includes preemption, not kernel CPU time.
+QPC and InterruptTime absolute values were not subtracted. Producer-observed
+counter atomics are not a coherent snapshot; separate maxima are not summed
+to infer causality. The one-hour acceptance gate remains failed.
+
+Passed: current 0.5.5 guest kernel IOCTL suite, 269 checks/zero failures. A
+same-version exact-instance removal/reinstallation confirmed device absence
+before reinstalling; both tool exits were zero and the sole reinstalled
+ROOT\\MEDIA\\0000 device had ConfigManagerErrorCode 0. This is not rollback
+or production-package validation. A following normal product-bridge 10-second
+request completed 10,013 ms, 38 checks/zero failures, all three source sessions
+and waveform stages [4,3,3], with zero steady underruns, position gaps or
+timestamp errors. It does not supersede the two failed longer requests above.
+After reinstall, the guest service was Running and its image file SHA256
+still matched fae3146eeecba75994dcd04654f35151dade6f76f75d87dbe25a1c42142ff789.
+This checks the installed running
+service's image file, not an in-memory module hash.
+Passed: normal guest shutdown, absent owned QEMU/supervisor process identities,
+exclusive disk access and the preserved stopped snapshot
+ready-first-tested-stopped-20261010. No host driver, trust, security policy or
+daily audio-route change was made.
+
+Before this change, driver 0.5.5 with
+tool SHA256 2ee2dab7e1b325798e8894f997d80fb7af054e39eff73b85fb4f0bb829e6ba35
+produced two distinct results in the isolated, licensed, network-off UEFI VM:
+
+- Findings: a normal product-bridge 60-second request ended after 27,885 ms,
+  38 checks/9 failures, native exit 1, one steady/driver underrun, zero overruns
+  or transfer drops. Both clients had zero position gaps and timestamp errors,
+  but only two source sessions ran: producer reconnect and signal stage three
+  were not reached. Maximum upstream lateness was 11 ms, WRITE completion gap
+  19.403 ms, IOCTL wall interval 5.136 ms and consumer drain gap 11.803 ms.
+- Passed: a focused normal 10-second request completed 10,000 ms, 38 checks/
+  zero failures, native exit 0, all three source sessions, one producer
+  reconnect and one client reopen. Both clients had zero position gaps and
+  timestamp errors, two fresh-silence checks and waveform stages [4,3,3].
+  Steady underruns, overruns and transfer drops were zero. This verifies that
+  short full lifecycle, not the failed 60-second or one-hour acceptance.
+
+The guest installed 0.5.5 on the existing ROOT\\MEDIA\\0000 device; no duplicate
+device was created. Sole-target Code Integrity Verifier 0x021209bb was active
+according to verifier /query. Configured-registry evidence remained rejected
+for an untrusted writer; active and configured evidence are separate. HVCI
+was inactive. Existing failed runs remain evidence and are not overwritten by
+the short pass. Both GitHub Windows CI runs for e7fb988 passed (push 38063279878,
+pull request 38063283180). One hour, active HVCI, physical microphone/DSP,
+separate applications, measured performance/latency and Microsoft production
+signing remain open. VB-CABLE stays the daily route.
+
+# Producer-generation capture continuity — 2026-10-10
+
+Driver 0.5.5 fixes a deterministic loss mechanism in 0.5.4: clearing stale
+producer PCM discarded unread complete packets while retaining elapsed byte
+position, creating an artificial packet-number gap. Generation invalidation
+now clears the bounded private PCM storage without changing unread ordinals,
+first-sample timestamps, partial assembly position or pending real-drop counts.
+The OS receives retained intervals as silence. DMA publication remains owned
+by GetReadPacket and the synchronized bridge generation check is unchanged.
+Overflow and suspended-time skips still expose genuine loss.
+
+The lab harness publishes a pending resume boundary before CONNECT/prefill
+side effects, then the actual resume epoch only after the original lifecycle
+deadline is checked. All observed position gaps fail independently of waveform
+eligibility, including lifecycle guards. A review found that raw-producer
+prefill could cross the deadline; the common completion helper now rejects
+that case without changing the old schedule or pending publication.
+
+Passed: eight Release groups (17.67 s), eight ASan groups (19.46 s), 17,174
+capture-retention checks, and the subsequently rebuilt final Release/ASan
+offline analyzer with 90 checks each. The final fixtures include exact-deadline
+success and deadline-plus-one-tick rejection. Pinned EWDK compilation and
+recommended WDK analysis, InfVerif/Inf2Cat, eight package-integrity and 30 lab
+signing-integrity checks passed. The product build completed without warnings.
+Two independent read-only Sol correctness/security reviews passed after the
+P2 deadline finding was fixed. Temporary fixed-VM staging/typing preparation
+was also independently reviewed; unsupported-key and split-command issues
+were fixed before execution, with whole-command parser/character preflight.
+
+Passed: final test-only SYS/CAT cryptography, catalog membership, fixed archive
+inventory and transient private-key deletion. No host certificate store,
+driver, security policy or audio routing change was made. The stopped owned
+VM was preserved before staging. Protocol 1, ABI 5, packet capacity, buffer
+reserves and scheduling thresholds are unchanged.
+
+Final test-signed SYS SHA256:
+fae3146eeecba75994dcd04654f35151dade6f76f75d87dbe25a1c42142ff789.
+Final lab executable SHA256:
+2ee2dab7e1b325798e8894f997d80fb7af054e39eff73b85fb4f0bb829e6ba35.
+
+Live 0.5.5 results are recorded above. The prior 40.580 s failure is consistent with
+the corrected mechanism but lacks a generation/CONNECT event ledger, so its
+specific cause is not claimed proven. The prior hour-request underrun is a
+separate unresolved acceptance failure. Active HVCI, remaining current-version
+lifecycle cases, physical audio/performance/latency, separate applications and
+Microsoft production signing are still open; VB-CABLE remains the daily route.
+
+# Opt-in driver I/O phase observations — 2026-10-10
+
+Passed: lab-only worker events now distinguish DeviceIoControl issue wall
+time, a pending completion wait and the sum of GetOverlappedResult probes.
+Immediate success/failure versus ERROR_IO_PENDING, raw wait return, result
+call count and last result path are separate from timing availability.
+Win32 failure codes are captured before optional clock calls. Missing,
+backward or overflowing measurements are unavailable, not an I/O failure.
+Cancellation/grace is outside the result-duration sum. These are API wall
+intervals including thread preemption, not kernel CPU execution time.
+The default path makes no added phase clock calls. The 128-event trace stays
+below 16 KiB and three maximum-width JSON histories stay below 1 MiB.
+No kernel binary, IOCTL, protocol 1, ABI 5, reserve or acceptance gate changed.
+
+Passed: all eight Release groups (16.51 seconds) and eight ASan groups
+(17.89 seconds); 626 deterministic driver-I/O checks, 120,840 portable
+validation checks and 81 offline analyzer checks. Independent read-only Sol
+correctness and security reviews passed with no scoped findings. The normal
+product build and offline JSON parsing passed; the offline analyzer did not
+run active capture. Staged tool SHA256:
+3e8c9e7137f18dd96cba9e820ef9e46010518c4e19783781eac71def097b87ac.
+The installed driver package SYS remains
+77e13a0e6391cdeec9f783fb8b94f753281136d7e2d8365829bbb8dc459a341a.
+Both complete Windows CI runs for code commit 04aa556 passed: push
+38033847698 and pull request 38033850693, including managed/offscreen UI,
+dependency/secret/static analysis, ASan, application ZIP and installer checks.
+
+Findings: actual phase-instrumented 3,600-second request stopped after
+1,229,701 ms, 37 checks/10 failures, exit 1, with one steady underrun.
+Overruns, transfer drops, both clients' position gaps and timestamp errors
+were zero; first-invalid records were null. The first producer session
+recorded no underrun. The failure was in session two after the intentional
+first lifecycle pause, not in the healthy session-one terminal history.
+Upstream maximum lateness was 3 ms; maximum user WRITE completion gap was
+16.627 ms and maximum IOCTL wall duration 10.480 ms. Source two's kernel
+maximum WRITE gap was 15.9281 ms. Its first underrun requested 299 frames
+with 272 queued, produced 27 silent frames and occurred 12.8715 ms after
+the last successful kernel WRITE. Maximum capture call was 299 frames.
+Sole-target Code Integrity Verifier 0x021209bb was active; HVCI was not.
+
+Passed, diagnostic observation only: both histories retained 128
+chronological events, zero rejected events and no pending I/O. Session two
+froze at the first STATUS underrun rise. All 49 retained IOCTL events in that
+history returned immediate success; none waited for pending completion or
+called GetOverlappedResult. Near the failure: an immediate 0.1565 ms WRITE,
+a 4.1591 ms WAIT (3.2700 ms late), 1.1127 ms STATUS, an empty dequeue,
+7.7062 ms WAIT (6.0910 ms late), 0.4339 ms STATUS reporting 122 queued
+frames/zero underruns, a ready 480-frame dequeue and immediate 0.2229 ms
+WRITE. The following STATUS reported underrun one and took 10.4808 ms,
+of which 10.4687 ms was the immediate DeviceIoControl wall interval.
+That delayed observation is not evidence that STATUS caused the preceding
+underrun, nor a kernel CPU measurement. Absolute QPC and InterruptTime
+values were not subtracted. Scheduler/VM effects, burst capture timing and
+reserve behavior still require causal validation; no reserve or gate was
+relaxed. Evidence: io-phase-hour-serial.log.
+
+Findings: subsequent diagnostics-opt-out ordinary product-bridge request
+for 60 seconds stopped at 40,580 ms, 36 checks/six failures and exit 1.
+Steady underruns, overruns, transfer drops and timestamp errors were zero.
+Client zero had one position gap: a 480-frame packet at position 1,948,320
+followed expected position 1,947,840, flags 1; packet timestamps advanced
+20 ms instead of 10 ms. Client one's position gaps were zero and its first
+invalid record null. Two fresh-silence checks per client completed and client
+one reopened once, but the third source session, producer reconnect and
+final waveform stage did not complete.
+Maximum consumer drain gap was 10.510 ms, upstream lateness 2 ms, user
+WRITE completion gap 15.221 ms and IOCTL wall duration 3.754 ms. This
+separate packet-continuity failure cannot be attributed solely to the
+opt-in phase measurement. No kernel diagnostic query was requested.
+Evidence: io-phase-normal60-serial.log. Both failures remain visible;
+neither request counts as its completed-duration acceptance.
+
+Passed: normal guest shutdown completed after collecting both terminal
+results; both owned process identities were absent, exclusive disk access
+passed and stopped snapshot io-phase-two-failed-stopped-20261010 was preserved.
+Evidence: io-phase-normal-shutdown-serial.log. Host driver, security and audio
+defaults were unchanged.
+
+The packet gap needs a separate lifecycle ledger of source close/connect,
+phase publication, client-one reopen and nearby client packet observations.
+Generation changes deliberately invalidate unread private packets; source
+CONNECT can run before phase four is published. That is a possible mechanism,
+not a causal conclusion or reason to waive continuity. Real negotiated WASAPI
+buffer size and kernel private-packet drop/generation evidence are missing.
+The healthy session's kernel maximum WRITE gap (16.2646 ms) exceeded the
+failed session's 15.9281 ms: maximum gap alone is not a failure threshold.
+The 720-frame occupancy center is not a guaranteed reserve floor. Scheduling,
+bursty capture and reserve behavior need a separate deterministic reproduction
+and correlated operation evidence before a behavior fix is claimed.
+
+The requested hour remains failed/incomplete. No physical audio/performance,
+HVCI or production signing is claimed. [Measurement contract](DRIVER-ACCEPTANCE.md).
+
+# Opt-in bridge worker event history — 2026-10-10
+
+Passed: a preallocated 128-event worker-owned numeric history labels CONNECT,
+STATUS, WRITE, dequeue and timer waits. It preserves the first observed STATUS
+underrun rise before further delivery or DIAGNOSTICS; an explicit final query
+and stopped worker have distinct freeze reasons. Reconnect/start generations,
+overwrite/rejection counts, full-width QPC times and queue/take observations
+are retained. Export is permitted only after stop/join. The JSON first-failure
+summary references its source-session history without duplicating it; three
+full records remain below the existing 1 MiB result limit. No PCM, pointer,
+callback logging, dynamic history allocation or extra per-iteration IOCTL
+was added. Disabled mode has no extra QPC sampling. Protocol 1, ABI 5,
+driver binary, buffer reserves and acceptance gates are unchanged.
+
+Passed: 120,840 portable validation checks and 81 offline analyzer checks.
+All eight Release groups passed in 16.75 seconds and eight ASan groups in
+17.65 seconds. Independent read-only Sol correctness review found a P2
+timestamp-label issue: the pre-SetWaitableTimerEx QPC sample was labelled as
+an actual timer arm. It was renamed schedule_sample_100ns; metadata/tests
+now distinguish intended cadence deadline from actual OS expiry and include
+pre-arm descheduling/API/wake-resume time. Affected Release tests passed
+again and affected ASan tests passed 2/2 in 0.61 seconds. Both independent
+correctness/security re-reviews passed, with no remaining scoped findings.
+Final product build and actual offline JSON parsing passed (81 checks, zero
+failures, no active capture claimed). Staged capture tool SHA256:
+36484336820b2d0f67b8cd6e8b3ffc3faeec3c112cc0eaa626bca8a500884e72.
+Both complete Windows CI runs for code commit 75e1660 passed: push
+38031910415 and pull request 38031912981, including managed/offscreen UI,
+dependency/secret/static analysis, ASan, application ZIP and installer checks.
+
+Findings: actual new-tool instrumented hour request stopped at 478,756 ms,
+37 checks/nine failures, exit 1, with one steady underrun. Both shared WASAPI
+clients had zero position gaps/timestamp errors and null first-invalid records;
+overruns and transfer drops were zero. The first kernel event requested 306
+frames with 286 queued, produced 19 silent frames, and occurred 21.4403 ms
+after the last successful kernel WRITE. Maximum capture size was 425 frames.
+The kernel maximum WRITE gap was 27.7007 ms; user completion maximum was
+27.789 ms. Upstream maximum lateness was 9 ms. Sole-target Code Integrity
+Verifier 0x021209bb was active; HVCI was not.
+
+Passed: the new history was available, chronological, contained 128 events,
+reported zero rejected events and froze at the first STATUS underrun rise
+(0 to 1), before the diagnostic query. Failure-near events include an 8.4315 ms
+WAIT (7.3551 ms past the intended cadence deadline), a 1.2051 ms STATUS
+reporting 447 queued frames/underrun zero, a successful 480-frame dequeue,
+a 14.7974 ms WRITE wall interval and the next STATUS reporting underrun one.
+The previous WRITE completion to this WRITE start was 12.9916 ms; start to
+completion was 14.7974 ms. Thus the critical dequeue had a ready upstream
+packet and an open gate. These observations narrow the delayed segment but
+do not distinguish API/pending wait, preemption, spinlock contention or
+Verifier/WHPX effects. No absolute QPC-minus-InterruptTime comparison was made.
+The source contains no deliberate long WRITE wait; its elapsed interval is
+not a driver CPU execution measurement. A platform scheduler/ReadyThread,
+CSwitch and DPC/ISR trace is needed to separate these possibilities before
+a further behavior fix can be justified. No reserve, latency or acceptance
+threshold was changed. Instrumentation overhead remains part of this run.
+
+Evidence: worker-timeline-hour-serial.log. Normal guest shutdown subsequently
+completed, both owned process identities were absent, exclusive disk access
+passed and stopped snapshot worker-timeline-hour-failed-stopped-20261010 was
+preserved; worker-timeline-hour-normal-shutdown-serial.log contains the request.
+The requested hour remains failed/incomplete. HVCI, current-version remaining
+lifecycle cases, physical audio/performance and Microsoft production signing
+remain open. VB-CABLE remains the daily route; host security/audio defaults
+are unchanged.
+
+The history diagnoses elapsed worker operations, not pure kernel execution
+or physical audio latency. Its extra lab sampling and post-join report copies
+may affect timing; no reliability improvement or complete hour is claimed
+from these offline checks. [Interpretation](DRIVER-ACCEPTANCE.md).
+
+# Bridge worker monotonic cadence — 2026-10-10
+
+Passed: code commit d9e636c anchors private worker waits to monotonic QPC
+deadlines. IOCTL work consumes the existing interval instead of adding a full
+relative 2 ms delay. Missed intervals are skipped in O(1) to a strictly future
+deadline; no catch-up spin, global timer-resolution change or callback syscall
+was added. Stop precedence, timer lifetime and failed-state preservation are
+checked. Ring reserves, protocol 1, ABI 5 and acceptance thresholds are unchanged.
+Deterministic tests cover delayed work, phase preservation, long stalls,
+backward clocks, interval changes and conversion/deadline overflow. Portable
+driver validation passed 120,685 checks; eight Release groups passed in 16.55
+seconds and eight ASan groups in 17.45 seconds. Both independent read-only Sol
+correctness/security reviews passed. This scheduling improvement does not by
+itself prove the earlier VM underrun resolved.
+Both complete Windows CI runs for d9e636c passed: push 38029256566 and pull
+request 38029260951, including native/managed/UI verification, analysis,
+application ZIP and installer checks. The actual staged capture tool SHA256 is
+e3de09657ea5a503c5eb4db67feee159a25ac2531842c65b24ccf5adb96c92b4.
+
+Passed: current 0.5.4 same-version removal/reinstallation in the isolated
+guest. The exact ROOT\MEDIA\0000 instance was removed (exit 0), absence was
+confirmed, verified seed INF installation returned exit 0, and the resulting
+sole device had ConfigManagerErrorCode 0. Upgrade/rollback and sleep/resume
+are outside this result. The prior seed and disk are preserved; guest files
+were refreshed only from the already verified read-only media. Evidence:
+retained-packets-054-reinstall-serial.log. Before staging the new capture tool,
+the guest shut down normally, both process identities disappeared and exclusive
+disk access passed; snapshot retained-packets-054-events-shutdown-20261010
+and retained-packets-events-normal-shutdown-serial.log preserve that state.
+
+Passed: after that current-version reinstall, the actual new product-bridge
+capture tool completed 60,002 ms, 36 checks/zero failures and process exit 0.
+Two shared WASAPI clients in one process had zero position gaps/timestamp
+errors and null first-invalid records; reconnect and two fresh-silence checks
+per client passed. Steady underruns, overruns and transfer drops were zero;
+maximum completed WRITE gap was 13,064 us. Sole-target Code Integrity Verifier
+0x021209bb remained active, HVCI was not. Evidence:
+worker-cadence-normal-60-serial.log. This remains a short synthetic-input result,
+not physical-microphone, separate-application or actual-hour acceptance.
+
+Findings: the subsequent instrumented 3,600-second request with the new
+cadence stopped after 768,028 ms, 37 checks/10 failures and exit 1. One steady
+underrun occurred; overruns and transfer drops were zero. Both shared WASAPI
+clients had zero position gaps/timestamp errors and null first-invalid records.
+The first kernel underrun requested 52 frames with only three queued frames;
+it produced 50 silent frames, 21.7614 ms after the last successful kernel WRITE.
+Maximum capture call size was 363 frames, so this first event does not establish
+an oversized capture request. The kernel maximum WRITE gap was 21.821 ms;
+the user-side completion maximum was 22.197 ms. The untagged maximum IOCTL
+duration of 14.868 ms includes diagnostic queries and cannot be assigned to
+the failing STATUS or WRITE call. Upstream observations just before failure
+were 417 and 197 us late. These establish a feed gap, but do not distinguish
+worker scheduling, STATUS delay or WRITE delay. The cadence change alone did
+not resolve actual-hour acceptance. Evidence:
+worker-cadence-instrumented-hour-failed-serial.log. After collecting the result,
+normal guest shutdown completed; both owned process identities were absent,
+exclusive disk access passed and stopped snapshot
+worker-cadence-hour-failed-stopped-20261010 was preserved. Shutdown evidence:
+worker-cadence-hour-normal-shutdown-serial.log. No acceptance gates were relaxed.
+
+Findings: the unchanged 0.5.4 instrumented hour request emitted heartbeats
+through 120 seconds, then both owned VM process identities disappeared before
+a terminal result. Active Windows evaluation had 128,277 grace minutes at the
+preceding normal test. The stopped, exclusively unlocked disk was preserved as
+retained-packets-054-interrupted-20261010 before reboot. On reboot the guest
+recorded events 41 and 6008; the latest event 41 had BugcheckCode 0 and all four
+bugcheck parameters zero. These do not prove a driver bugcheck or explain the
+host process termination. No complete-hour result is claimed. Serial/stderr
+evidence: retained-packets-054-instrumented-no-terminal-serial.log and
+retained-packets-054-instrumented-no-terminal-qemu.log; guest event screenshots:
+retained-packets-guest-events.png and retained-packets-guest-bugcheck-fresh.png.
+
+# Driver 0.5.4 retained packets and producer-session isolation — 2026-10-10
+
+Passed: the notification path assembles PCM into a preallocated private queue
+with eight complete packets and one assembly slot. GetReadPacket publishes only
+the selected complete packet into the OS DMA buffer; retained first-sample
+timestamps survive PAUSE/RUN. MoreData exposes backlog and overflow leaves
+visible packet-number gaps. Disconnect, producer replacement and source timeout
+invalidate private audio through an internal generation check, including an
+atomic check at publication. Protocol 1 and ABI 5 are unchanged. This addresses
+a possible latest-packet-only loss mechanism; the historical intermittent
+failure is not claimed resolved without live extended acceptance.
+
+Passed: pinned EWDK build, recommended WDK analysis, InfVerif/Inf2Cat without
+warnings/errors. Eight Release groups passed in 16.23 seconds and eight ASan
+groups in 17.12 seconds. Capture retention passed 17,060 portable checks;
+driver validation passed 120,661. Eight package-integrity checks and 35 actual
+cryptographic lab-signing checks passed. The existing security pipeline passed.
+An initial ASan invocation lacked the toolchain DLL search path and exited
+0xc0000135; the corrected invocation passed, and the failed environment log is
+preserved. Two independent read-only Sol reviews found timestamp/session
+boundary issues, which were fixed, retested and independently re-reviewed.
+Both complete CI runs passed for code commit 0de5779: push 38028039375 and
+pull request 38028041702.
+
+Passed: the reviewed test-signing package verifies SYS/CAT cryptography,
+catalog membership, fixed ZIP contents and ephemeral private-key deletion.
+Signed SYS SHA256:
+77e13a0e6391cdeec9f783fb8b94f753281136d7e2d8365829bbb8dc459a341a.
+The unsigned Microsoft submission draft verifies exact archive contents and
+the matching PDB GUID/age; it is neither EV-signed nor submitted. No host
+certificate store changed. The staging helper passed independent correctness
+and security reviews before execution; the original seed files are preserved.
+
+Passed: actual guest installation and installed service SYS hash matching the
+reviewed signed package; 269 live kernel IOCTL checks with zero failures.
+Normal product-bridge capture completed 60,000 ms, 36 checks/zero failures,
+exit 0. Two shared WASAPI clients in one process, reconnect and fresh-silence
+checks passed. Steady underruns, overruns and transfer drops were zero; neither
+client had a position gap or timestamp error. Minimum observed queue was 472
+frames and maximum completed WRITE gap was 12,944 us. Sole-target Code
+Integrity Verifier 0x021209bb was active; HVCI was not. This uses synthetic
+input, not a physical microphone or separate receiving applications.
+Evidence: retained-packets-054-normal-60-serial.log,
+retained-packets-installed.png, retained-packets-ioctl.png and
+retained-packets-driver-hash.png under artifacts/driver-acceptance.
+
+Findings: the subsequent normal product-bridge hour request stopped after
+33,415 ms, 36 checks/nine failures, exit 1. One steady ring underrun occurred;
+overruns and transfer drops were zero. Both clients had zero position gaps and
+timestamp errors, with null first-invalid packet records. Maximum completed
+WRITE gap was 24,657 us; upstream producer lateness reached 9,504 us. The last
+observed pre-underrun queue was 297 frames, but that worker snapshot was already
+9,530 us old at the later observation: it is not the instantaneous queue at
+that later time. These timing observations do not establish a physical latency
+measurement or localize the scheduling delay. The short pass does not establish
+one-hour acceptance. Evidence: retained-packets-054-normal-hour-failed-serial.log
+and retained-packets-hour-terminal.png. No acceptance thresholds were relaxed.
+
+Not run / external prerequisites: active HVCI in a capable isolated platform,
+current-version final lifecycle acceptance, physical microphone/DSP and
+separate applications, physical added latency and production-package acceptance.
+The user confirmed no verified Hardware Dev Center/Partner Center organization
+account and no EV certificate. Microsoft production signing remains unavailable;
+dailyUseReady=false and VB-CABLE remains the daily route. Host security and
+audio defaults are unchanged. [Final release gates](DRIVER-RELEASE.md).
+
+# Driver 0.5.3 packet timestamps and preserved capture failures — 2026-10-10
+
+Passed: corrected GetReadPacket to report the first sample's timestamp,
+as required by the [WDK contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/portcls/nf-portcls-iminiportwavertinputstream-getreadpacket).
+The upstream calculation correlated the packet's end. Integer-only helpers
+preserve fractional PCM16/32 progress, full packet counters across 32-bit wire
+wrap, and safe QPC conversion without an overflowing intermediate product.
+Invalid metadata fails closed. Audio protocol 1, ABI 5, notification behavior,
+ring sizes and acceptance gates are unchanged. This fixes a timestamp contract
+error; it is not claimed to resolve intermittent missing packets.
+
+Passed: pinned EWDK build, recommended WDK analysis, InfVerif and Inf2Cat,
+without warnings/errors. Seven Release groups passed in 16.21 seconds and
+seven ASan groups in 17.37 seconds. Portable validation passed 120,660 checks;
+offline capture passed 78 checks. The latter includes immutable first-invalid
+packet retention and serialization; offline JSON parsing confirmed no hardware
+capture was claimed. Two independent read-only Sol correctness/security
+reviews passed. A staging-helper security finding was fixed and independently
+re-reviewed before execution: its input now requires private ACLs, a pinned
+manifest, actual SYS/CAT cryptography/catalog membership and matching signer.
+Test signing verified fixed ZIP contents and deletion of ephemeral private
+material; no host trust store changed. Signed SYS SHA256:
+29b8a30c3174db2b66864cf121c44d02cfcb6018aef88effb9d5feec0e2a58fe;
+capture tool: 7469235b6e97761607d9afac011b96bb4c04a9e81508880727e21324088868dd.
+
+Passed: actual 0.5.3 guest installation (DevCon success) and 269 live kernel
+IOCTL checks, zero failures/exit 0. The installed service image SHA256 matched
+the signed SYS above. Ordinary production-bridge capture completed 60,010 ms,
+36 checks/zero failures, process exit 0; two shared WASAPI clients in one
+process, three source sessions, consumer reconnect and both fresh-silence
+observations passed. Steady underruns, overruns and queue drops were zero;
+both clients had zero position gaps/timestamp errors and null first-invalid
+records. Minimum observed queue was 502 frames, maximum completed WRITE gap
+13,095 us, producer lateness 2 ms and maximum consumer drain gap 9,759 us.
+Active sole-target Code Integrity Verifier 0x021209bb was verified; HVCI
+remained Not run. Extra kernel diagnostics were disabled. These are synthetic
+inputs through the actual product bridge/kernel, not physical-microphone
+latency or separate-application acceptance. This short result does not
+resolve the earlier intermittent missing packet or prove an actual hour.
+Evidence: packet-time-053-normal-60-serial.log, packettime-ioctl-screen.png,
+packettime-driver-hash-screen.png and packettime-install-screen2.png.
+Normal guest shutdown was requested; both process identities were absent and
+exclusive disk access passed before preserving snapshot
+packet-time-053-normal-60-pass-20261010. The capture and shutdown serial
+evidence is packet-time-053-normal-60-shutdown-serial.log. Host driver, trust
+stores, security and audio defaults were unchanged.
+
+Passed: both complete Windows CI runs for code commit beb2692 (push
+38018640558 and pull-request 38018643237), including managed/native/UI tests,
+analysis, ASan, application packaging, installer lifecycle and checksums.
+
+Findings: the preceding 0.5.2 instrumented hour request stopped after
+197,207 ms, 37 checks/nine failures, exit 1. Steady ring underruns, overruns
+and transfer drops were zero; minimum observed queue was 441 frames.
+The invalid eligible client-0 packet had 480 frames, DATA_DISCONTINUITY
+(flags 1), device position 9,465,600 instead of expected 9,465,120:
+exactly one 10 ms packet was missing. Its QPC-HNS timestamps were
+7,203,199,758 and previous 7,202,999,738; observation 7,203,228,333.
+Maximum consumer drain gap was 16,311 us and kernel WRITE arrival gap
+178,904 HNS. No first ring underrun was recorded. These are not latency
+measurements. Client 1 was not drained after client 0 failed, so its zero
+gap count does not localize the failure to one receiver. A coalesced
+notification/latest-packet-only mechanism remains a hypothesis; DMA
+retention/notification evidence is still needed before changing delivery.
+
+Evidence: kernel-trace-hour-197s-stopped-findings-serial.log and
+kerneltrace-hour-invalid-packet.png. The initial VM exit cause was not
+established; its stopped, exclusive disk was preserved as
+kernel-trace-hour-197s-unknown-exit-20261010. The detailed guest log was then
+retrieved without rerunning capture; normal guest shutdown was requested,
+both owned process identities were absent and exclusive disk access passed
+before snapshot kernel-trace-hour-detail-retrieved-20261010. No failed run
+is counted as a complete hour. Capture JSON now retains each client's first
+invalid packet's numeric context in bounded storage without PCM recordings.
+
+# Driver 0.5.2 additive kernel diagnostics — 2026-10-09
+
+Passed: pinned EWDK build, recommended WDK analysis, InfVerif and Inf2Cat with
+no warnings/errors. Seven Release and seven ASan groups passed; the final
+capture change passed its focused Release/ASan fixtures again (75 checks).
+Safe PowerShell tests passed 698 checks, including 362 pure capture-report
+fixtures. Secret scanning found no leaks. Both independent read-only Sol
+reviews passed after fixing stale automatic-query acknowledgement and a
+terminal-query underrun that could otherwise escape the native acceptance gate.
+
+The additive owner-only, fixed 160-byte DIAGNOSTICS request preserves audio
+protocol 1 and ABI 5. It records kernel WRITE arrival gaps and the first steady
+underrun's capture context using interrupt-time 100 ns units, not QPC or audio
+latency. Capture sizes describe individual SesBridgeCapture calls, including
+their bounded chunks; they are not complete position-update/DMA-wrap batches.
+Normal application operation does not issue the extra diagnostic request.
+Instrumented lab runs query on the first underrun and each source session end,
+so their timing may differ from ordinary acceptance. All three terminal records
+must be valid and underrun-free. A failed terminal query retains an earlier
+valid first-event snapshot but never passes acceptance.
+
+Findings: after the mailbox correction, another real product-bridge request
+failed at 6,558 ms (36 checks, nine failures), with one steady underrun, no
+overruns/drops, upstream lateness 2 ms and maximum completed WRITE gap
+15,945 us. The last healthy STATUS publication had 539 queued frames; about
+11.634 ms later the first failing publication reported zero queued frames.
+The publication ages were 24 and 26 us. This is consistent with ordinary
+elapsed consumption; it does not prove a large kernel pull or the reason the
+worker's WRITE arrived late. The mailbox fix did not resolve this failure.
+Evidence: product-mailbox-7s-findings-serial.log and the preserved
+product-mailbox-7s-findings-20261009 snapshot. The VM processes were later
+absent and its disk unlocked; normal shutdown and the reason for that exit
+were not established for this run.
+
+Test-only signing verified SYS/CAT cryptography and catalog membership, fixed
+ZIP contents and deletion of transient private key material. No host trust
+store or security policy changed. These are development checks, not Microsoft
+production signing, active HVCI, an actual hour, physical microphone latency,
+or separate receiving-application acceptance. VB-CABLE remains the daily route.
+
+Passed: driver 0.5.2 installed in the existing isolated BIOS Windows guest
+(DevCon exit 0). With active sole-target Code Integrity Verifier 0x021209bb,
+the first instrumented actual-product run completed 60,036 ms and all 37
+checks (process exit 0). All three valid kernel records had no first steady
+underrun; maximum individual capture calls were 176/166/173 frames. The
+production bridge had zero steady underruns, overruns and queue drops,
+minimum observed queue 485 frames, maximum completed WRITE gap 13,365 us
+and upstream lateness 2 ms. This is synthetic input through the actual
+DriverBridge/kernel with two shared WASAPI clients in one process. Additional
+diagnostic IOCTLs were enabled, so it is separate from normal acceptance.
+It does not explain or resolve the previous intermittent failures. Evidence:
+kernel-trace-60-pass-serial.log and kerneltrace-install.png; actual capture
+tool SHA256 51d4c154c9b36bf7995a28d606426d6b38d4615b1f601ec90a3005e2164dfcd5,
+guest runner 4fe14b67ed951770271aa84b467202c852e776d18a28e3dffb8e87290cc824d0,
+test-signed SYS d39b8cac03e2145e83eed0c723ef82f38e034c36d09853b2c492b5e8f05fbbce.
+
+Findings in the first extended IOCTL test: all malformed diagnostic sizes
+were rejected, but 162 expectations incorrectly required ERROR_BAD_LENGTH
+rather than the actual ERROR_INVALID_USER_BUFFER (1784). The exact rejection
+expectations were corrected and independently re-reviewed. This initial
+269-check run is not counted as Passed. The corrected live rerun passed all
+269 checks, zero failures, exit 0. The copied tool was pinned to SHA256
+7b2a07a9a7e47db003a9ea6d3afef3db43328aafc7878b98d0442a02ad57833e before
+execution; evidence: kerneltrace-ioctl-corrected.png. It checks connected-owner
+authorization, other-handle rejection, every short output size, oversized
+output and nonzero input, in addition to the previous 104 checks.
+
+Passed: the same driver then completed a normal, non-instrumented actual
+ProductBridge run in 60,001 ms, all 36 checks with process exit 0. Steady
+underruns/overruns/queue drops were zero; minimum observed queue 479 frames,
+maximum completed WRITE gap 13,547 us and upstream lateness 2 ms. Active
+sole-target Verifier 0x021209bb remained verified. Both short results and
+normal guest shutdown were preserved; both owned process identities were
+absent and an exclusive disk open succeeded before snapshot
+kernel-trace-short-052-pass-20261009. Evidence:
+kernel-trace-normal-60-and-shutdown-serial.log. This does not establish an
+actual hour or a root-cause fix for previous intermittent underruns.
+
+# Production bridge acceptance and bounded cancellation — 2026-10-09
+
+Passed: seven native Release and seven AddressSanitizer test groups. The
+offline-only driver I/O suite passed 557 checks, including a worker whose
+cancellation never completes: stop/join finished within the one-second fixture
+guard after the 250 ms cancellation grace. A late fake completion safely wrote
+the retained request after the caller/worker was destroyed. One request and two
+private handles remain quarantined; 100 rejected restarts allocated no new
+storage or handles. This tests injected OS leaves, not a faulty live kernel.
+The native module remains loaded for the application process lifetime.
+
+Passed: 57 offline capture analyzer/CLI/flush/counter checks, and 415 safe VM
+fixtures including 79 capture-report decisions. Two independent read-only Sol
+reviews found and verified fixes for the missing post-snapshot 50 ms deadline
+check, exact three-session acceptance, and malformed scalar/array report fields.
+Secret scanning found no leaks; Clang analysis had only the two previously
+reviewed upstream miniaudio dead initial stores.
+
+The optional ProductBridge mode feeds the real application DriverBridge instead
+of replacing it with the strict synthetic producer. Both paths retain the
+existing underrun, waveform, timestamp and lifecycle acceptance gates. The
+production worker now registers MMCSS Pro Audio/HIGH and bounds cancellation
+without freeing pending I/O storage. Kernel source, protocol 1, ABI 5 and the
+normal VB-CABLE route are unchanged. Active product-bridge capture is not yet
+established at this source checkpoint; the older hour failures below remain.
+
+Findings: the first real ProductBridge 60-second request ended after 23,844 ms
+with process exit 1, 36 checks and eight failures. The actual application
+worker, upstream and consumers all registered MMCSS; TransferQueue drops=0.
+There was one steady underrun, no overruns, maximum completed WRITE gap
+25,492 us, upstream lateness 15 ms and minimum observed steady queue 236
+frames. Total connected-session silence was 2,571 frames, including priming;
+the last steady sample increased silence from 2,212 to 2,571. Two connected
+source sessions had run; the third required lifecycle stage was not reached.
+The counters and waveform test correctly rejected this result. Atomic STATUS
+snapshots may be stale, so they do not establish the exact kernel pull size
+or queue occupancy at the start of the write gap. The original output and
+normal shutdown were preserved in product-bridge-24s-findings-serial.log,
+product-bridge-24s-and-shutdown-serial.log and the owned disk snapshot
+product-bridge-24s-findings-20261009. No hour run was started after this failure.
+
+Investigation found a blocking path in the lab producer's measurement
+publication: consumer and producer share a mutex while copying the fixed
+history. A descheduled consumer can delay upstream callbacks. This is a
+test-harness issue, not proof that it caused the recorded underrun; it must
+be removed before using the harness to diagnose the production buffer.
+Kernel reserve and acceptance thresholds were not relaxed.
+
+Passed: the blocking publication was replaced in both lab producers by a fixed
+three-slot single-writer/single-reader mailbox. Sequentially consistent slot
+ownership protects plain-field copies; publication never waits for a reader,
+and snapshots make at most three attempts before using the reader's cache.
+After worker join, the uncontended terminal snapshot reads the actual last
+publication. The fixture pins a reader for at least 40 ms while 1,000 writer
+updates complete, then checks concurrent copies of the 64-entry history and
+the exact terminal publication. Bounds apply to fixture barriers as well.
+The worker now timestamps its counter publication; JSON reports independent
+publication age, not coherent kernel-counter time or measured audio latency.
+Seven Release/ASan groups passed; the final mailbox ordering and diagnostic
+checks passed again in focused Release/ASan runs (62 offline checks). Both
+independent reviews passed the final change. The kernel reserve comment was
+corrected; kernel behavior and all acceptance gates stayed the same. The
+first real failure is not explained or repaired merely by these offline passes.
+Evidence: product-mailbox-{release,asan,sc-release,sc-asan}.log,
+product-mailbox-offline.json and product-mailbox-secrets.log.
+
+Passed: exact source commit dde1d140e43bddc43df534167a7488b156df2cea completed
+both GitHub Windows workflows (37980338215 push, 37980344700 pull request),
+including managed/native/ASan tests, scanners, application packaging,
+installer lifecycle and checksum validation. Tool hash
+352dcd02583098a1cf083bfc3b920b31faa0d54821879ba9cc9e4551dc2098a3;
+guest runner hash 4f791702aa5d1b0375132500976a8daedb68fe7f5cac4d2243e904ce6b1d2b7f.
+
+Evidence: artifacts/driver-acceptance/{product-native-release.log,
+product-native-asan.log,product-capture-final-release.log,
+product-capture-final-asan.log,product-bridge-vm-fixtures.log,
+product-clang-analysis.log,product-secrets.log}.
+
+# Driver acceptance tools / source checkpoint — 2026-10-09
+
+Passed: six native and six AddressSanitizer groups; 44 offline capture checks,
+303 safe VM-control/guest-decision checks, 110 managed checks, offline WPF
+persistence/shutdown/smoke, 18 driver-helper checks in a separate output directory,
+and existing package/signing checks. The combined headless command stopped on a
+pre-existing locked helper DLL; its remaining helper and UI checks passed using
+separate output directories. Secret/dependency/static checks and analyzers passed.
+No kernel, protocol, ABI or VB-CABLE routing change was made.
+
+Passed: the evaluation VM activated normally during an explicit temporary NAT
+window, then cold-booted with networking disabled. LicenseStatus=1 and an active
+90-day evaluation were recorded. No rearm, clock manipulation or host activation
+change occurred. The older expired-watermark result below is historical.
+
+Passed: active Driver Verifier flags 0x021209bb, including Code Integrity checks,
+only SesMicrophone.sys loaded. A completed 60.010-second run passed 30 checks:
+PCM16/PCM32 followed by two shared PCM32 clients in one process, each receiving
+2,880,000 frames. Maximum producer lateness 3 ms, write completion gap 13,123 us,
+IOCTL duration 3,166 us, minimum observed steady queue 384 frames; zero steady
+underruns, overruns, timestamp errors or position gaps. Both clients observed
+fresh silence on two lifecycle changes and waveform recovery after reconnect.
+One underrun during the intentional producer pause is explicitly retained.
+These are synthetic signals through the actual guest kernel; two receiving
+applications, physical microphone processing and latency are not established.
+
+Passed: after the host reboot, a normal non-elevated guest PowerShell token
+reported ELEVATED=False. The checksum-matched capture executable ran as that
+interactive user and returned zero: 20 checks, zero findings/unsupported formats,
+one verified endpoint and both PCM16/PCM32 formats passed. This verifies the
+interactive user's kernel producer/capture access, not the full WPF microphone
+route or application compatibility. No device ACL or host permission was changed.
+
+Findings retained: the first requested hour stopped at six seconds with one
+steady underrun and 28 ms producer lateness. The test had produced and drained
+both consumers in one loop. A dedicated producer with private timer/MMCSS now
+separates that work; the subsequent 60-second result above passed. Neither run
+completes one-hour acceptance. No reserve increase or weakened gate hid the failure.
+The actual application bridge now uses a private high-resolution idle timer;
+portable stop/reopen checks passed, but this is not a full-route performance test.
+
+Passed: independent read-only correctness and security reviews and follow-up
+fixes for snapshot preservation, scheduler transitions, clock publication races
+and startup error evidence. The final registry ACL calls also received a fresh
+independent security review after an earlier review attempt hit its usage limit.
+Fixed allowlisted registry paths use Get-Acl -Path for Windows PowerShell 5.1 compatibility;
+filesystem paths retain -LiteralPath. Actual guest registry corroboration is
+recorded separately from active Verifier evidence, and neither proves HVCI.
+
+Findings fixed: the same-version reinstall preflight initially rejected the real
+DevCon instance ROOT\\MEDIA\\0000 because it confused an instance ID with the
+hardware ID ROOT\\SES_MICROPHONE. No removal occurred on that failed attempt.
+The guarded selection now accepts only the two known root instance forms, one
+exact hardware target and the exact service. Twenty-three inert identity cases
+also passed under Windows PowerShell 5.1; wildcard, foreign and duplicate device
+selections remain rejected. Culture-invariant matching preserves Windows ID
+case semantics under Turkish culture. Independent follow-up reviews passed.
+
+Passed: the corrected guest runner removed the exact ROOT\\MEDIA\\0000 instance,
+confirmed device absence, then reinstalled the verified same-version INF. Both
+DevCon commands returned zero and the resulting sole device had error code zero.
+This does not establish a different-version upgrade or rollback.
+
+Findings fixed: fresh elevated Windows-2022 CI initially rejected newly created
+inert fixture files whose default owner was Administrators. Fixtures now set their
+owner to the current user SID, matching the existing metadata fixture pattern;
+production ACL guards and guest code are unchanged. Local 149 checks and both
+independent reviews passed. Full GitHub CI passed for df9aee2 and fe8590a; the
+latest UEFI source checkpoint also passed all 181 safe VM fixtures locally.
+
+Incomplete: the subsequent hour attempt last recorded a heartbeat at 3,491
+seconds and did not publish a terminal acceptance result. The daily host later
+rebooted (current LastBootUpTime 2026-10-09T11:21:57Z); its former QEMU and
+supervisor processes no longer existed. The serial record was preserved before
+restarting the guest. This is not a completed hour or a demonstrated driver
+bugcheck. A new uninterrupted run is still required.
+
+Findings: guest HVCI configuration persisted the five requested registry values
+and both BCD launch settings, with its first baseline preserved. The subsequent
+cold boot stopped in Windows Recovery with error 0xc0000189 and a system-capability
+message. This is not a driver bugcheck or proof of driver incompatibility. The
+failed disk state was retained as hvci-boot-failed-20261009; restoring the owned
+licensed-ci-verifier-20261009 snapshot returned the guest to normal Windows boot.
+Read-only WHvGetCapability returned S_OK: host HypervisorPresent, LocalApicEmulation
+and ProcessorFeaturesBanks.Bank1.NestedVirtSupport are true. This does not prove
+QEMU's partition setup or guest VSM boot. Missing host nested/APIC support is not
+the observed explanation. The current guest has not demonstrated active VSM/HVCI. Repeating
+registry settings is not a demonstrated remedy; host security was not changed.
+
+Passed: optional new-VM UEFI preparation has fixed readonly code and private
+mutable NVRAM paths, with pinned firmware hashes verified against selective
+extraction from the checksum-pinned QEMU installer. BIOS remains default; three
+existing BIOS metadata records passed read-only compatibility checks. Inert
+expansion of the actual unattended XML verified EFI300/MSR16/Windows partition3
+and unchanged BIOS layout. The new UEFI guest subsequently installed Windows
+and reached the identity-checked pre-driver preparation phase. Its before-driver
+disk snapshot was created after both owned processes stopped. The DVD boot needed
+the installation media's key prompt; choosing the DVD and immediately sending
+Space reached the installer without firmware or host policy changes. Real HVCI
+remains unverified; UEFI boot alone is not its proof.
+
+Passed: the final two-stage hibernate runner's 103 inert/native ABI checks also
+passed under Windows PowerShell 5.1. It requires the original boot/logon/session, paired real
+S4 events, healthy original device and post-resume PCM16/PCM32 capture. Both
+independent read-only reviews passed after fixing a P2 stale-success report:
+verification now invalidates the previous result before attempt-specific reads.
+Five regression fixtures retain Findings when snapshot/ACL/hash/event/capture
+reads throw. The first real preparation rejected missing logon-SID evidence before
+any power request. The collector now reads TokenStatistics.AuthenticationId from
+the existing identity token, checks enabled Interactive/RemoteInteractive
+membership, and rejects service/anonymous identities and reserved authentication
+IDs in both collection and decision. No token is elevated, duplicated or modified.
+The final correctness and security follow-ups passed independently after
+replacing host-dependent fixture identity/session calls with deterministic mocks.
+A child-exit/Kill race seen after S4 now suppresses only confirmed process exit;
+live-process errors and timeout flags remain failures, and resources are disposed.
+Four inert stop/race checks passed. Real S4
+acceptance has not yet been established.
+
+Passed: the new UEFI guest installed the driver and passed 104 kernel IOCTL checks
+and 20 PCM16/PCM32 capture checks, with zero findings/unsupported formats. Normal
+evaluation activation produced LicenseStatus=1 and about 90 days remaining. Its
+licensed pre-HVCI disk and NVRAM were retained before the next offline-network
+boot. These results precede HVCI activation; they do not prove HVCI compatibility.
+
+Passed: a separate export of historical commit
+3ba0c2b63234948600c9da9aa3ade5901f076f6f built the actual 0.5.0.0 source using the
+pinned EWDK, then file-only test-signed its SYS/CAT. All 126 historical source
+files matched Git blobs; independent correctness review verified provenance,
+tooling hashes and the 12-file ZIP inventory. This is a genuine older kernel,
+not a changed version label. Private signing files were removed; no host trust
+store was changed. Different-version guest update/rollback is not yet accepted.
+
+Passed: the guest-only historical transition runner and stopped-VM stager are
+implemented. The initial runner passed 34 inert checks in each PowerShell runtime;
+the real 13-file prepared payload passed hash, private ACL and canonical inventory
+checks. Independent correctness/security reviews found a separator mismatch and
+a destination-exists staging preservation risk; both were fixed and re-reviewed.
+The runner requires old baseline, current upgrade, actual DiRollbackDriver and
+final current restoration, with installed version/SYS hash and PCM checks at
+each stage. Reboot or uncertain in-flight mutation cannot pass or start a recovery
+mutation. These are preparation results, not accepted real guest transitions.
+
+Passed: bounded identity settling and stage-specific failure evidence passed
+61 inert checks each under Windows PowerShell 5.1 and PowerShell 7. Independent
+correctness review found a P3 stale previous-stage observation; clearing the
+context before each operation fixed it, and independent correctness/security
+follow-ups reviewed the fix. Actual stopped-VM staging preserved the original
+manifest through default replacement refusal and an injected publication failure,
+then archived the verified old payload and published the new validated payload.
+
+Findings retained: the UEFI guest's first active-Verifier short run lost one
+480-frame PCM16 packet; its next extended run stopped at 38.265 seconds on a
+capture position gap while steady producer underruns remained zero. Another
+guest was undergoing hibernate/resume during these attempts. The test's capture
+thread lacked MMCSS registration even though its dedicated producer had it.
+Both short and extended consumers now register with MMCSS Pro Audio/HIGH or
+fail closed; detailed invalid-packet and consumer drain timing are reported.
+All previous continuity/freshness/queue/underrun limits remain unchanged. Six
+native and six ASan groups plus 44 offline checks passed. The initial kernel
+capture result is not retroactively erased.
+
+Passed: the updated consumer tool completed an isolated BIOS guest run under
+active Code Integrity Verifier: 60.001 seconds, 33 checks, zero findings or
+unsupported formats. Producer and consumers registered with MMCSS; maximum
+consumer drain gap was 11,051 us, write gap 13,392 us, IOCTL 3,081 us and minimum
+steady queue 358 frames. Both clients recovered waveform and observed fresh
+silence at both lifecycle transitions, with zero position/timestamp errors,
+steady underruns or overruns. The intentional pause retained one total underrun.
+This is a short synthetic kernel run with two clients in one process; UEFI,
+one-hour, physical microphone and separate-application acceptance remain open.
+Full GitHub push and PR CI passed for exact commit 60fab4b.
+
+Passed: the isolated UEFI guest also completed the updated consumer run under
+active Code Integrity Verifier: 60.005 seconds, 33 checks, zero findings or
+unsupported formats. Maximum consumer drain gap was 9,203 us, write gap
+12,637 us, IOCTL 2,823 us and minimum steady queue 381 frames. Both clients
+had zero position gaps/timestamp errors, recovered waveform and observed two
+fresh-silence transitions; steady underruns and overruns were zero. One total
+underrun from the intentional pause is retained. VBS was 0 and HVCI inactive;
+this run does not establish HVCI. Exact cbabf82 push and PR CI also passed.
+
+Findings: the UEFI HVCI preparation preserved its original registry/BCD baseline
+and persisted all five requested settings without a firmware lock. Cold boot
+then stopped at Windows Recovery with the same 0xc0000189 system-capability
+message seen in the BIOS guest. This is not a driver bugcheck, nor does UEFI
+alone remedy the guest VSM limitation. Active HVCI capture remains unverified;
+the failed UEFI disk and NVRAM are retained before baseline recovery. No daily
+host security or certificate settings were changed.
+
+Findings retained: the first actual historical transition completed old-version
+DevCon update with exit 0 but the immediate installed-version read differed.
+The guarded current restoration returned exit 1 (reboot required); acceptance
+halted with NeedsReboot and no old capture, upgrade or native rollback pass.
+Both logs reported successful installation, and the subsequent read showed
+0.5.1.0/oem0.inf. This does not prove the old version ever bound. The stopped
+guest disk and serial report were preserved before the next reboot.
+
+Findings retained: the next cold preflight hit a five-second CIM timeout before
+any driver or certificate mutation. A warmed retry reached old update, then
+43 bounded observations over 30.497 seconds showed old SYS file identity and
+Running service while Win32_PnPSignedDriver still reported 0.5.1.0. Capture did
+not run; current restoration returned exit 1/NeedsReboot with its process evidence
+preserved. This is a metadata discrepancy requiring native PnP corroboration,
+not an accepted old-version capture or rollback. The second disk state was
+retained as version-settle-needs-reboot-20261009.
+
+Passed: native installed-driver metadata reader preparation passed 185 inert
+checks each under Windows PowerShell 5.1 and PowerShell 7, including pure UTF-16
+parsing, x64 ABI/C# compilation, published INF path limits, request pairing,
+duplicate JSON keys and bounded child timeout. SetupDiGetDevicePropertyW runs
+only in a protected, request-paired read-only guest child with a ten-second
+limit. Installed native version plus published INF/SYS hashes and service state
+drive acceptance; WMI version remains separate diagnostic evidence. This is
+preparation. The following real guest comparison supplies that proof separately.
+
+Passed: run d430ff7c-56a1-4ae4-b729-f32ea93baac7 verified the genuine historical
+0.5.0 baseline through SetupAPI, published INF hash e9096173..., SYS hash
+0b065b41... and the original Running device, then passed 20 PCM16/PCM32 capture
+checks. WMI still reported 0.5.1.0 during that actual comparison; the provider
+metadata was stale. Current-version DevCon upgrade returned exit 1/NeedsReboot,
+so no upgrade capture, native rollback or final restoration was accepted yet.
+The immutable pending report and stopped disk state were preserved before
+booting to apply the upgrade. Exact 6126243 push and PR CI passed.
+
+Passed / preparation: explicit Resume preserves immutable raw-byte checkpoints
+for upgrade, native rollback and final restoration that require reboot. It binds
+the original VM/run/instance, frozen source, actual later boot and historical
+capture files; four ordered real captures and actual DiRollbackDriver evidence
+are required for final success. The single approved legacy upgrade report has an
+exact run/hash migration; other old reports are rejected. Both PowerShell 5.1
+and 7 passed 185 native regression and 106 Resume inert checks. Whole-number JSON
+elapsed-time portability, nonfinite/type/boundary rejection, the three-reboot
+executor chain and byte-identical checkpoint preservation are covered. Independent
+read-only correctness and security reviews passed on source fc5e5170...03333;
+the detected Int64 settling edge case was fixed and rechecked. No real guest
+Resume success is established by these fixtures. Frozen preparation:
+artifacts/driver-test-signing/version-transition-resume-final-0b8bb97ea57447fb849e89e7339d206e/.
+
+Passed / partial live transition: explicit Resume retained the original legacy
+run and verified current 0.5.1.0 identity plus 20 actual upgrade capture checks.
+The first native rollback attempt displayed Windows' default interactive dialog
+and returned a child failure; apiRollbackVerified/currentRestored remain false.
+Its serial/log screenshot and stopped guest disk are retained before restoring
+the known pre-Resume snapshot for a separate corrected attempt. The laboratory
+native call now uses Microsoft's documented ROLLBACK_FLAG_NO_UI; NeedReboot is
+still returned explicitly, and no automatic restart is added. Failed child process
+metadata and the immediate Win32 error are retained for diagnosis. This correction
+does not turn the failed attempt into success. Exact e79182e push and PR CI passed.
+[Microsoft rollback behavior](https://learn.microsoft.com/en-us/windows/win32/api/newdev/nf-newdev-dirollbackdriver).
+
+Passed / preparation: the corrected NO_UI source adb94eec...43c3 passed 191
+native and 121 Resume inert checks in each PowerShell runtime. The actual C#
+rollback body executes with inert native leaves to verify flags=1, both reboot
+outcomes, immediate error-code reporting and handle cleanup. Real Resume executor
+fixtures verify failed child exit, timeout and output-limit evidence without
+retry, restoration or false success. The previous flags=0 source fails the new
+regression. Independent read-only correctness/security reviews and 303 safe VM
+fixtures passed; no leaks found. Frozen preparation:
+artifacts/driver-test-signing/version-transition-no-ui-final-5308283600784e7bbb88ed6975739fd1/.
+
+Passed / actual different-version transition: the final serial report completed
+the original run d430ff7c-56a1-4ae4-b729-f32ea93baac7 on the same owned VM
+e49c7f67-9bb0-4984-acf8-acb088d8f799 with frozen runner adb94eec...43c3.
+Its seven ordered stages include four independent actual captures: old 0.5.0.0,
+upgraded 0.5.1.0, native-rollback 0.5.0.0 and restored 0.5.1.0. Each passed
+20 checks, both PCM16/PCM32 formats and zero failures. Actual DiRollbackDriver
+with NO_UI returned exit 0 in 5.09 seconds; forced old installation was not used
+as rollback evidence. Final current restoration returned exit 1/NeedsReboot,
+then an explicit Resume after a later boot passed the final capture. The final
+report is Passed/complete with apiRollbackVerified/currentRestored=true and
+rebootRequired/driverMutationUncertain=false; testOnly=true and
+productionReady=false remain. Cold CIM preflight failures and the earlier
+interactive-dialog failure remain preserved attempts; read-only preflight
+retry retained the immutable checkpoint without driver or trust mutation.
+An independent read-only audit matched this final evidence. Exact f074d78
+push CI 37971061744 and PR CI 37971066834 passed. Evidence:
+artifacts/driver-acceptance/version-transition-final-pass-serial.log.
+
+Passed / read-only HVCI diagnostics preparation: DeviceGuard queries now use
+a five-second operation timeout and retain typed, bounded available/required
+security capabilities with explicit unavailable or malformed states. Fixed
+Hyper-V-Hypervisor/System and DeviceGuard/Operational queries retain at most
+32 warning/error events and 512 characters per message; log-query errors remain
+Findings. Active HVCI still requires VBS status 2 and running service 2.
+All 336 safe VM fixtures passed in PowerShell 7; the 33 focused inert diagnostic
+checks passed in both Windows PowerShell 5.1 and PowerShell 7. The full host
+fixture suite uses a pre-existing .NET-only QMP transport and does not compile
+under Windows PowerShell 5.1; only the isolated guest diagnostics are claimed
+compatible there. No host CIM, event-log, registry or driver query was made by
+these inert checks. Two independent read-only correctness/security reviews passed.
+The actual restored BIOS guest collection returned Diagnostics Passed with
+VBS=0, configured/running services=[0], available properties=[7] and required
+properties=[0]; both fixed warning/error event queries were empty. CPU firmware
+virtualization, monitor extensions and SLAT still reported true. HVCI is Not run,
+not Passed. This preserved baseline has HVCI disabled and does not contain the
+failed boot's live DeviceGuard state; empty warning/error queries cannot explain
+or clear the earlier 0xc0000189 loader failure. Evidence:
+artifacts/driver-acceptance/hvci-diagnostics-actual-serial.log.
+Evidence: artifacts/driver-acceptance/hvci-diagnostics-pwsh.log,
+hvci-diagnostics-winps-focused.log and hvci-diagnostics-pwsh-focused.log.
+Passed / diagnostic telemetry capture: the frozen BD7F8877...B3A1D5 tool
+completed 60.001 seconds in the same isolated BIOS guest with active Code
+Integrity Verifier. All 33 checks passed with two shared PCM32 clients,
+PCM16/PCM32 format checks, producer/client reconnects and fresh-silence checks.
+Steady underruns/overruns, timestamp errors and position gaps were zero.
+The minimum steady queue was 158 frames; maximum write completion gap was
+18,069 us, producer lateness 8 ms, IOCTL duration 3,363 us and consumer drain gap
+8,831 us. The fixed 64-observation producer history was present. The one total
+underrun occurred during the intentional lifecycle pause, not steady capture.
+This short result does not resolve the retained 633-second failure or establish
+one-hour acceptance. Evidence:
+artifacts/driver-acceptance/telemetry-ci-60-result-serial.log.
+Findings / actual diagnostic hour attempt: the same frozen telemetry tool
+stopped at 503,706 ms with 33 checks, seven failures and process exit 1
+(507.32 seconds). Both MMCSS registrations succeeded; steady underruns=1,
+driver silence=173 frames, overruns=0, minimum steady queue=0. Maximum producer
+lateness was 14 ms, completed write gap 17,934 us, IOCTL duration 7,355 us and
+consumer drain gap 12,119 us. Both clients retained zero timestamp/position
+gaps, but each reported one discontinuity; no planned lifecycle phase had yet
+been reached. The final STATUS followed the last successful write by 21,331 us.
+Its preceding STATUS had queue=407, then one 480-frame write: at most 887 source
+frames (about 18.48 ms nominal) were available. The next STATUS observed
+queue=0, underruns=1 and silence=173; its own duration was only 276 us. This
+supports starvation during a late pending write and explains why the maximum
+completed-write gap alone did not describe the failure. Exact kernel pull sizes
+and the cause of scheduling delay remain unmeasured; no kernel fix, relaxed
+acceptance gate or completed-hour pass is claimed. Terminal serial and stopped
+disk snapshot telemetry-hour-503s-findings-20261009 were preserved after normal
+guest shutdown. An independent read-only evidence audit matched the timing and
+counter sequence. Evidence:
+artifacts/driver-acceptance/telemetry-hour-terminal-serial.log.
+Findings retained: the earlier requested one-hour run on the rebooted current
+driver stopped at 632,893 ms with one steady underrun and 22 driver silence frames. Native PnP
+reported 0.5.1.0 before capture; active Code Integrity Verifier targeted only
+SesMicrophone.sys. Producer and consumer MMCSS registrations succeeded. Maximum
+producer lateness was 10 ms, write completion gap 14,751 us, IOCTL duration
+3,613 us and consumer drain gap 12,109 us. Both clients had zero timestamp errors
+and position gaps; minimum observed queue reached zero. The final report has
+seven findings and exit 1, so this is not a completed hour. Its serial result
+and native-version screenshot are preserved. Aggregate timing does not identify
+the underrun's root cause; fixed test pacing and occupancy compensation need
+event-correlated investigation. No gate, reserve or driver package was changed.
+
+Passed: diagnostic-only capture-tool revision adds a fixed 64-observation STATUS
+history with relative QPC/deadline, write timing, queue/drift and driver counters.
+The rejected counter observation is retained before publishing failure. Existing
+10 ms pacing, priming, lifecycle and zero steady-underrun gates remain unchanged.
+Release build and all 48 offline analyzer checks passed, including four history
+capacity/wrap/failure-retention/snapshot checks; the changed analyzer's
+AddressSanitizer test passed. Independent read-only correctness and security
+reviews passed on source SHA256 c47602d1..., with no concrete findings.
+This preparation neither explains the earlier underrun nor proves a new real
+capture run. Evidence: analyzer-telemetry.{log,json}, telemetry-build.log,
+telemetry-asan-test.log and hour-current-ci-633s-underrun-serial.log.
+
+Passed / inert only: a separate ignored diagnostic harness used the actual
+PcmRing/PCM-clock headers for ten invented scheduling profiles, each advancing
+3,600 simulated seconds. All completed with exact received/capture frame counters
+and zero silence/underruns/overruns. The 14,751 us producer-gap and 8/15 ms callback
+catch-up models did not reproduce the live failure. This was about three seconds
+of host execution, not ten actual hours or observed VM scheduling. Neither these
+models nor controller correction values establish physical clock drift. Evidence:
+diagnostic-inert-sim.{cpp,jsonl} and diagnostic-inert-sim-notes.md.
+
+Passed: the second actual S4 attempt completed prepare/request (exit 0, 50.53 s),
+then resumed the same boot, user authentication ID and session 1. Kernel-Power
+42/record 1527 and Power-Troubleshooter 1/record 1537 paired Target/EffectiveState
+5 from 14:47:03.9646323Z to 14:47:48.2753064Z. HibernateVerify returned Passed
+with resumeVerified=true and post-resume PCM16/PCM32 capture: 22 checks, zero
+findings/unsupported formats, fresh silence after producer close. This is an
+actual hibernate/resume test, not cold-boot substitution. The guest exposes no
+standby state; S3 and full WPF physical microphone/application recovery are
+not established by this result.
+
+Incomplete: the first resumed S4 attempt was interrupted by a later host shutdown
+(User32 1074 at 2026-10-09T13:36:29Z). The guest disk and serial evidence were
+retained before restoring the licensed pre-test snapshot. Its original session
+could not receive final verification; this is not a passed hibernate test or an
+established driver bugcheck.
+
+Not run/completed at this source checkpoint: one-hour acceptance, active HVCI
+capture, standby/full application recovery, separate receiving applications,
+physical latency and Microsoft production signing. The guest exposes hibernate
+but no standby state; cold boot is not sleep.
+HVCI configuration preserves its first protected registry/BCD baseline and only
+reports reboot required until actual VBS/running-service evidence is collected.
+The production bridge wait after CancelIoEx was unbounded at this older
+checkpoint; the bounded-cancellation section above records its replacement.
+Daily-use readiness
+remains false; the daily host security settings and saved user state are preserved.
+
+Evidence: artifacts/driver-acceptance/{capture-ci-60-dedicated-producer-serial.log,
+capture-hour-ci-first-failed-serial.log,activation-verifier-sleep-serial.log,
+vm-fixtures-uefi-final.log,vm-fixtures-hibernate-reviewed.log,
+vm-fixtures-token-final.log,winps-token-final.log,secrets-token-final.log,
+vm-fixtures-transition-fixed.log,winps-token-transition-final.log,
+native-consumer-final.log,asan-consumer-final.log,capture-consumer-offline-final.log,
+uefi-ci-60-position-gap-serial.log,hibernate-resume-host-shutdown-incomplete-serial.log,
+standard-user-pcm-capture-serial.log,capture-hour-host-reboot-incomplete-serial.log,
+uefi-pre-driver-serial.log,uefi-initial-kernel-capture-serial.log,
+uefi-licensed-ci-before-reboot-serial.log,ci-fe8590a-passed.log,
+ci-3cfaea3-passed.log,native-tests-final.log,asan-final-tests.log,
+security-final.log,core-after-timer.log,hvci-configured-and-registry-serial.log,
+hvci-boot-lock.png,recovered-desktop.png}. See [DRIVER-ACCEPTANCE.md](DRIVER-ACCEPTANCE.md).
+
 # 0.7.5-dev / isolated signing lab — 2026-10-09
 
 Passed: file-only SYS/CAT test signing, explicit public-certificate CMS checks,

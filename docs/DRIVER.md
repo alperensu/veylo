@@ -5,15 +5,21 @@
 
 ## Mevcut durum
 
-Veylo-driver-0.5.1.0-isolated-lab.zip imzasız geliştirme çıktısıdır; günlük bilgisayara
-yüklenmemelidir. Ayrı `TEST-SIGNED-isolated-lab.zip` paketi dosya tabanlı
+Güncel sürücü geliştirme sürümü 0.5.4'tür; günlük bilgisayara yüklenmemelidir.
+`Veylo-driver-0.5.4.0-TEST-SIGNED-isolated-lab.zip` paketi dosya tabanlı
 test sertifikasıyla SYS ve CAT imzası taşır; bu Microsoft üretim imzası değildir.
-İzole Windows 11 build 26100 guest'te kurulum, 104 kernel IOCTL kontrolü ve
-PCM16/PCM32 gerçek ses aktarımı geçti. Bu test-policy sonucudur; üretim kernel
+0.5.4 ile izole Windows 11 build 26100 guest'te kurulum, 269 kernel IOCTL kontrolü,
+aynı sürümü kaldırma/yeniden kurma ve yeni zamanlamayla 60,002 saniyelik normal
+ürün aktarımı geçti. Yeni zamanlamalı bir saatlik tanılı istek 768,028 saniyede;
+olay geçmişi eklenen sonraki istek 478,756 saniyede bir tampon boşalmasıyla
+başarısız oldu. Son kayıtta paket hazırken WRITE çağrısının kapsadığı süre
+14,7974 ms'ye uzadı; kernel yürütmesi ile scheduling henüz ayrılmadı.
+[Güncel kanıt](VALIDATION.md)
+geçen kısa testleri ve başarısız uzun koşuları ayrı saklar. Bu test-policy sonucudur; üretim kernel
 politikası, HVCI, geniş yaşam döngüsü ve alıcı uygulama kabulü tamamlanmadı. Uygulama ZIP'i üretim
 sürücüsü içermez, VB-CABLE ile çalışmaya devam eder. Kur/güncelle üretim paketi yokken
 devre dışıdır. [İzole VM adımları](DRIVER-LAB.md) ve
-[Microsoft imzalama hazırlığı](https://github.com/alperensu/veylo/blob/main/docs/DRIVER-SIGNING.md) ayrı rehberlerdedir.
+[Microsoft imzalama hazırlığı](DRIVER-SIGNING.md) ve [son sürüm kabulü](DRIVER-RELEASE.md) ayrı rehberlerdedir.
 
 ## Üretim imzalı paketle normal kullanım
 
@@ -81,6 +87,16 @@ Driver Verifier yalnızca SesMicrophone.sys için laboratuvarda çalıştırıl�
 standart, özel havuz, IRQL, I/O, deadlock, security ve code integrity kontrolleri.
 VM sorununda snapshot'a dön. HVCI açık ortamda ayrıca doğrula; NX/integer kod
 ve başarılı derleme tek başına HVCI uyumluluğu kanıtı değildir.
+
+Kullanıcı alanındaki aktarım worker'ı özel zamanlayıcı ve MMCSS Pro Audio
+kullanır; ses callback'i sürücü çağrısı yapmaz. Overlapped I/O için normal
+bekleme 30 ms, iptal tamamlanması için ek bekleme en fazla 250 ms'dir.
+İptal isteği tamamlanmazsa OVERLAPPED, giriş/çıkış belleği ve iki özel handle
+tek karantina slotunda süreç kapanana kadar korunur. Uygulama kapanışı bu
+isteği sonsuza kadar beklemez; hata durumu korunur ve aynı süreçte yeni
+sürücü bağlantısı reddedilir. Yeniden denemek için uygulamayı yeniden açmak
+gerekir. Bu sınır native modülün süreç boyunca yüklü kalmasını gerektirir;
+mevcut uygulama native DLL'yi boşaltıp yeniden yüklemez.
 
 Kabul matrisi: açılış/gizli açılış, eski ayarlar, iki mikrofon, çıkar/tak,
 uyku/uyanma, üretici kapat/çökert, kur/güncelle/geri al/kaldır/reboot; PCM16/32;

@@ -5,7 +5,11 @@ paketlemez; günlük uygulama mevcut VB-CABLE ile çalışır. Dosya düzeyinde 
 imzalı SYS/CAT ve içerik doğrulamaları tamamlandı. İzole Windows 11 build 26100
 guest'te kurulum, 104 IOCTL kontrolü ve PCM16/PCM32 gerçek WASAPI capture geçti.
 Driver Verifier standart kontrolleri açıkken aynı kısa testler geçti.
-HVCI, uzun süreli testler ve alıcı uygulama kabulü henüz **Not run** durumundadır;
+Genişletilmiş araçla Code Integrity dahil `0x021209bb` açıkken 60 saniyelik
+iki istemci capture ve yeniden bağlantı kontrolü de geçti. İstemciler aynı
+süreçtedir. [Genişletilmiş kabul rehberi](DRIVER-ACCEPTANCE.md) ayrı HVCI ve
+saatlik test kanıtlarının nasıl toplandığını açıklar.
+HVCI, saatlik test ve alıcı uygulama kabulü henüz tamamlanmış sayılmaz;
 günlük kullanıma hazır olunduğu anlamına gelmez. [Güncel kanıt ve sınırlar](https://github.com/alperensu/veylo/blob/main/docs/VALIDATION.md).
 
 ## Host üzerinde hazırlanabilen çıktılar
@@ -89,6 +93,20 @@ en az 40 GB boş çalışma alanı ister. Mevcut host diskleri veya VM'ler bu di
 olarak kullanılmaz. Varsayılan hızlandırıcı `whpx`'tir; hazır ve kullanılabilir
 WHPX yerine CPU emülasyonu gerektiğinde örnekteki `tcg` seçilir. Betikler host
 Windows özelliklerini etkinleştirmez. TCG sonucu performans kabulü sayılmaz.
+
+Yeni UEFI laboratuvarı gerekiyorsa hazırlama komutuna `-Firmware UEFI` ekle.
+Varsayılan `BIOS` ve eski VM kayıtları korunur; mevcut diski UEFI'ye dönüştürmez.
+UEFI hazırlığı yeni diskte 300 MB FAT32 EFI, 16 MB MSR ve kalan NTFS Windows
+bölümünü oluşturacak kurulum dosyası üretir. Windows üçüncü bölüme kurulur.
+[Microsoft bölüm gereksinimleri](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/configure-uefigpt-based-hard-drive-partitions?view=windows-11).
+
+Firmware kodu sabitlenmiş QEMU paketindeki `edk2-x86_64-code.fd` dosyasından
+salt okunur bağlanır. `edk2-i386-vars.fd` şablonunun doğrulanmış kopyası yalnız
+yeni VM'nin korumalı `uefi-vars.fd` dosyasıdır; guest'in NVRAM değişiklikleri burada
+kalır. İlk şablon ve kod hash'leri kilit dosyasındadır; açılışta kod hash'i,
+NVRAM'ın sabit yolu, sahipliği ve boyutu denetlenir. Bu laboratuvar firmware'i
+guest Secure Boot'u etkinleştirmez; host firmware/güvenlik ayarlarını değiştirmez.
+UEFI'nin seçilmesi, VSM/HVCI'nin gerçekten çalıştığını kanıtlamaz.
 
 VM başlatma/kontrol betikleri PowerShell 7 ister. Çıktıdaki gerçek `vm-...`
 klasörünü kullanarak ilk açılışı yap:
@@ -181,8 +199,9 @@ Host üzerinde güvenli `ses_driver_capture_lab_tests.exe --self-test` yalnız
 analizör/PCM/tampon kontrolleridir; gerçek endpoint veya kernel capture kanıtı
 değildir. Guest raporları `C:\VeyloLab\result.json`, `capture.json`, `install.log`,
 `ioctl.log`, `capture.log` altındadır; seri çıktı VM klasöründeki `serial.log`'a
-yazılır. Süreç başladı diye testi geçmiş sayma. Bu sürümde kısa izole kernel
-ve capture testleri geçti; HVCI, uzun süreli testler ve uygulama kabulü bekliyor.
+yazılır. Süreç başladı diye testi geçmiş sayma. Genişletilmiş sonuçlar
+`C:\VeyloAcceptance` altındadır; [güncel kanıt](VALIDATION.md) yalnız tamamlanmış
+koşuları kabul sonucu olarak gösterir.
 
 ## Tamamlanacak kabul matrisi
 

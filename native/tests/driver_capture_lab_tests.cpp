@@ -5,6 +5,7 @@
 #include <initguid.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
+#include <avrt.h>
 #include <devicetopology.h>
 #include <cfgmgr32.h>
 #include <devpkey.h>
@@ -20,8 +21,16 @@
 #include <limits>
 #include <string>
 #include <vector>
+#include <array>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <type_traits>
 #include "../../driver/shared/ses_driver_protocol.h"
 #include "../../driver/shared/pcm_ring.h"
+#include "../src/driver_bridge.hpp"
 
 namespace {
 constexpr double pi = 3.14159265358979323846;
@@ -30,9 +39,202 @@ constexpr unsigned rate = 48000;
 constexpr unsigned minSignalFrames = 24000;
 constexpr unsigned minSilenceFrames = 4800;
 constexpr size_t maxCaptureFrames = 96000;
+struct InvalidPacketEvidence {
+    bool present=false;
+    uint32_t frames=0,flags=0;
+    uint64_t position=0,expectedPosition=0,stamp=0,previousStamp=0,observedAt=0,drainGap100ns=0;
+    bool hadPrevious=false,eligible=false;
+    void retain(const InvalidPacketEvidence& value){if(!present)*this=value;}
+};
+bool writeInvalidPacket(FILE* file,const InvalidPacketEvidence& p) {
+    if(!p.present)return std::fprintf(file,"null")>0;
+    return std::fprintf(file,"{\"frames\":%u,\"flags\":%u,\"position_frames\":%llu,\"expected_position_frames\":%llu,"
+        "\"timestamp_hns\":%llu,\"previous_timestamp_hns\":%llu,\"observed_at_qpc_hns\":%llu,"
+        "\"max_consumer_drain_gap_us\":%llu,\"had_previous\":%s,\"eligible\":%s}",p.frames,p.flags,
+        static_cast<unsigned long long>(p.position),static_cast<unsigned long long>(p.expectedPosition),
+        static_cast<unsigned long long>(p.stamp),static_cast<unsigned long long>(p.previousStamp),
+        static_cast<unsigned long long>(p.observedAt),static_cast<unsigned long long>(p.drainGap100ns/10),
+        p.hadPrevious?"true":"false",p.eligible?"true":"false")>0;
+}
+struct ExtendedClientEvidence {
+    uint64_t packets=0, frames=0, discontinuities=0, timestampErrors=0, gaps=0;
+    unsigned windows[3]{}, silenceChecks=0, reconnects=0;
+    InvalidPacketEvidence firstInvalid;
+};
+struct ProducerStatusObservation {
+    uint64_t sample=0,elapsed100ns=0,due100ns=0,lateness100ns=0,statusDuration100ns=0;
+    uint64_t lastWriteGap100ns=0,sinceWrite100ns=0,received=0,silence=0;
+    uint64_t workerPublicationAge100ns=0;
+    uint32_t queued=0,underruns=0,overruns=0;
+    int32_t drift=0;
+    unsigned phase=0;
+    bool steady=false;
+};
+// Retain the failure-near history without allocating or logging on the audio worker.
+// Readers receive this storage through the existing publication snapshot.
+struct ProducerStatusHistory {
+    static constexpr size_t capacity=64;
+    std::array<ProducerStatusObservation,capacity> observations{};
+    size_t count=0,next=0;
+    void append(const ProducerStatusObservation& observation) {
+        observations[next]=observation;next=(next+1)%capacity;
+        if(count<capacity)++count;
+    }
+    const ProducerStatusObservation& oldest(size_t index)const {
+        return observations[(next+capacity-count+index)%capacity];
+    }
+};
+struct KernelDiagnosticRecord {
+    uint32_t sourceSession=0,queryError=ERROR_NOT_READY;
+    bool available=false;
+    SesDriverDiagnostics data{};
+    bool timelineAvailable=false;
+    ses::WorkerTrace timeline;
+};
+const char* workerTraceKind(ses::WorkerTraceKind kind){
+    switch(kind){
+    case ses::WorkerTraceKind::Connect:return "CONNECT";
+    case ses::WorkerTraceKind::Status:return "STATUS";
+    case ses::WorkerTraceKind::Write:return "WRITE";
+    case ses::WorkerTraceKind::Dequeue:return "DEQUEUE";
+    case ses::WorkerTraceKind::Wait:return "WAIT";
+    case ses::WorkerTraceKind::Connection:return "CONNECTED_GENERATION";
+    }
+    return "invalid";
+}
+const char* workerTraceFreeze(ses::WorkerTraceFreeze reason){
+    switch(reason){
+    case ses::WorkerTraceFreeze::None:return "none";
+    case ses::WorkerTraceFreeze::FirstUnderrun:return "first_STATUS_underrun_rise";
+    case ses::WorkerTraceFreeze::TerminalRequest:return "explicit_terminal_request_before_DIAGNOSTICS";
+    case ses::WorkerTraceFreeze::WorkerStopped:return "worker_stopped_without_earlier_freeze";
+    }
+    return "invalid";
+}
+bool writeWorkerTimeline(FILE* file,const KernelDiagnosticRecord& record){
+    const auto& trace=record.timeline;
+    const bool available=record.timelineAvailable&&trace.enabled()&&trace.isStopped();
+    bool ok=std::fprintf(file,"{\"available\":%s,\"capacity\":%zu,\"count\":%zu,"
+        "\"clock\":\"QPC_monotonic_100ns\",\"time_units\":\"100ns\",\"queue_units\":\"frames\","
+        "\"read_contract\":\"after_worker_stop_join_only\","
+        "\"timing_effect\":\"extra_worker_QPC_and_queue_samples_until_freeze_bounded_ring_append_and_postjoin_evidence_copies\","
+        "\"operation_duration_scope\":\"worker_wall_elapsed_includes_API_wait_and_thread_preemption_not_pure_kernel_execution\","
+        "\"io_phase_scope\":\"observed_API_wall_100ns_includes_preemption_not_kernel_CPU_issue_path_0_absent_1_immediate_success_2_immediate_failure_3_pending_result_path_0_absent_1_success_2_failure_3_incomplete_result_duration_sums_probes_excludes_cancel_grace\","
+        "\"deadline_scope\":\"intended_QPC_cadence_deadline_before_SetWaitableTimerEx_not_actual_OS_timer_expiry\","
+        "\"wake_lateness_scope\":\"QPC_wake_minus_intended_deadline_includes_prearm_descheduling_API_execution_and_wake_resume_not_only_postexpiry_scheduler_delay\","
+        "\"generation_scope\":\"CONNECT_attempt_precedes_CONNECTED_GENERATION_marker_other_events_use_current_successful_connection\","
+        "\"queue_scope\":\"independent_transfer_queue_samples_and_last_STATUS_kernel_queue_not_simultaneous_current_state\","
+        "\"result_scope\":\"IOCTL_Win32_error_or_WAIT_return_code_DEQUEUE_take_0_not_attempted_1_empty_or_expired_2_packet\","
+        "\"start_generation\":%llu,\"connection_generation\":%u,\"overwritten_events\":%llu,\"rejected_events\":%llu,"
+        "\"freeze_reason\":\"%s\",\"freeze_100ns\":%llu,\"freeze_old_underruns\":%u,\"freeze_new_underruns\":%u,\"events\":[",
+        available?"true":"false",ses::WorkerTrace::capacity,available?trace.count():0,
+        static_cast<unsigned long long>(trace.startGeneration()),trace.connectionGeneration(),
+        static_cast<unsigned long long>(trace.overwritten()),static_cast<unsigned long long>(trace.rejected()),
+        workerTraceFreeze(trace.reason()),static_cast<unsigned long long>(trace.freeze100ns()),
+        trace.freezeOldUnderruns(),trace.freezeNewUnderruns())>0;
+    if(available)for(size_t i=0;i<trace.count();++i){
+        ses::WorkerTraceEvent event{};
+        if(!trace.readAfterStop(i,event))return false;
+        ok=std::fprintf(file,"%s{\"kind\":\"%s\",\"begin_100ns\":%llu,\"end_100ns\":%llu,"
+            "\"connection_generation\":%u,\"result\":%u,\"wait_error\":%u,"
+            "\"kernel_STATUS_available\":%s,\"upstream_samples_available\":%s,"
+            "\"kernel_queued_STATUS_frames\":%u,\"underruns\":%u,"
+            "\"upstream_before_frames\":%u,\"upstream_after_frames\":%u,\"gate_open\":%s,\"take\":%u,"
+            "\"timer_deadline_available\":%s,\"schedule_sample_100ns\":%llu,\"deadline_100ns\":%llu,"
+            "\"wake_lateness_available\":%s,\"wake_lateness_100ns\":%llu",
+            i?",":"",workerTraceKind(event.kind),static_cast<unsigned long long>(event.begin100ns),
+            static_cast<unsigned long long>(event.end100ns),event.connectionGeneration,event.result,event.waitError,
+            event.kernelStatusAvailable?"true":"false",event.upstreamSamplesAvailable?"true":"false",
+            event.kernelQueued,event.underruns,event.upstreamBefore,event.upstreamAfter,event.gateOpen?"true":"false",
+            static_cast<uint32_t>(event.take),event.deadlineAvailable?"true":"false",
+            static_cast<unsigned long long>(event.scheduleSample100ns),static_cast<unsigned long long>(event.deadline100ns),
+            event.wakeLatenessAvailable?"true":"false",static_cast<unsigned long long>(event.wakeLateness100ns))>0&&ok;
+        if(event.kind==ses::WorkerTraceKind::Connect||event.kind==ses::WorkerTraceKind::Status||event.kind==ses::WorkerTraceKind::Write){
+            const auto& phases=event.ioPhases;
+            ok=std::fprintf(file,",\"io_issue_path\":%u,\"io_issue_duration_available\":%s,\"io_issue_100ns\":%llu,"
+                "\"io_wait_observed\":%s,\"io_wait_return\":%u,\"io_wait_duration_available\":%s,\"io_wait_100ns\":%llu,"
+                "\"io_result_calls\":%u,\"io_result_last_path\":%u,\"io_result_duration_available\":%s,\"io_result_sum_100ns\":%llu",
+                static_cast<unsigned>(phases.issuePath),(phases.observations&ses::DriverIoPhases::issueAvailable)?"true":"false",
+                static_cast<unsigned long long>(phases.issue100ns),(phases.observations&ses::DriverIoPhases::waitAttempted)?"true":"false",
+                phases.waitReturn,(phases.observations&ses::DriverIoPhases::waitAvailable)?"true":"false",
+                static_cast<unsigned long long>(phases.wait100ns),static_cast<unsigned>(phases.resultCalls),static_cast<unsigned>(phases.resultPath),
+                (phases.observations&ses::DriverIoPhases::resultAvailable)?"true":"false",static_cast<unsigned long long>(phases.result100ns))>0&&ok;
+        }
+        ok=std::fprintf(file,"}")>0&&ok;
+    }
+    return std::fprintf(file,"]}")>0&&ok;
+}
+bool validKernelDiagnostics(const SesDriverDiagnostics& d) {
+    return d.version==SES_DRIVER_DIAGNOSTICS_VERSION&&d.size==sizeof(d)&&d.reserved0==0&&d.reserved1==0&&
+        d.first_underrun_present<=1&&d.max_pull_chunk_frames<=SES_DRIVER_FRAMES&&
+        d.last_capture_queued_before<=SES_DRIVER_CAPACITY&&d.last_capture_queued_after<=SES_DRIVER_CAPACITY&&
+        (!d.first_underrun_present||(d.first_underrun_queued_before<=SES_DRIVER_CAPACITY&&
+            d.first_underrun_chunk_frames>0&&d.first_underrun_chunk_frames<=SES_DRIVER_FRAMES&&
+            d.first_underrun_remaining_frames>=d.first_underrun_chunk_frames&&
+            d.first_underrun_capture_frames>=d.first_underrun_remaining_frames&&
+            d.first_underrun_new_count>d.first_underrun_old_count));
+}
+bool writeKernelDiagnosticRecord(FILE* file,const KernelDiagnosticRecord& record,bool includeTimeline=true) {
+    bool ok=std::fprintf(file,"{\"source_session\":%u,\"available\":%s,\"query_error\":%u,\"data\":{",
+        record.sourceSession,record.available?"true":"false",record.queryError)>0;
+    const auto& d=record.data;bool first=true;
+    auto field=[&](const char* name,uint64_t value) {
+        ok=std::fprintf(file,"%s\"%s\":%llu",first?"":",",name,static_cast<unsigned long long>(value))>0&&ok;first=false;
+    };
+#define SES_DIAGNOSTIC_FIELD(name) field(#name,d.name)
+    SES_DIAGNOSTIC_FIELD(version);SES_DIAGNOSTIC_FIELD(size);SES_DIAGNOSTIC_FIELD(capture_calls);
+    SES_DIAGNOSTIC_FIELD(total_requested_frames);SES_DIAGNOSTIC_FIELD(max_capture_frames);SES_DIAGNOSTIC_FIELD(max_pull_chunk_frames);
+    SES_DIAGNOSTIC_FIELD(last_capture_queued_before);SES_DIAGNOSTIC_FIELD(last_capture_queued_after);
+    SES_DIAGNOSTIC_FIELD(last_capture_frames);SES_DIAGNOSTIC_FIELD(reserved0);SES_DIAGNOSTIC_FIELD(last_capture_tick_hns);
+    SES_DIAGNOSTIC_FIELD(last_successful_write_tick_hns);SES_DIAGNOSTIC_FIELD(last_successful_write_gap_hns);
+    SES_DIAGNOSTIC_FIELD(max_successful_write_gap_hns);SES_DIAGNOSTIC_FIELD(first_underrun_present);
+    SES_DIAGNOSTIC_FIELD(first_underrun_queued_before);SES_DIAGNOSTIC_FIELD(first_underrun_chunk_frames);
+    SES_DIAGNOSTIC_FIELD(first_underrun_remaining_frames);SES_DIAGNOSTIC_FIELD(first_underrun_capture_frames);
+    SES_DIAGNOSTIC_FIELD(first_underrun_old_count);SES_DIAGNOSTIC_FIELD(first_underrun_new_count);SES_DIAGNOSTIC_FIELD(reserved1);
+    SES_DIAGNOSTIC_FIELD(first_underrun_tick_hns);SES_DIAGNOSTIC_FIELD(first_underrun_since_successful_write_hns);
+    SES_DIAGNOSTIC_FIELD(first_underrun_successful_write_tick_hns);SES_DIAGNOSTIC_FIELD(first_underrun_received_frames);
+    SES_DIAGNOSTIC_FIELD(first_underrun_silence_before);SES_DIAGNOSTIC_FIELD(first_underrun_silence_after);
+#undef SES_DIAGNOSTIC_FIELD
+    ok=std::fprintf(file,"}")>0&&ok;
+    if(includeTimeline){
+        ok=std::fprintf(file,",\"worker_timeline\":")>0&&ok;
+        ok=writeWorkerTimeline(file,record)&&ok;
+    }else ok=std::fprintf(file,",\"worker_timeline_record_source_session\":%u",record.sourceSession)>0&&ok;
+    return std::fprintf(file,"}")>0&&ok;
+}
+struct ExtendedEvidence {
+    bool requested=false, ran=false;
+    bool product=false,workerMmcss=false;
+    uint64_t submittedPackets=0;
+    uint64_t maxWorkerPublicationAge100ns=0;
+    uint32_t queueDrops=0,sourceSessions=0,bridgeStatus=0,bridgeLastError=0;
+    unsigned requestedSeconds=0;
+    uint64_t elapsedMs=0, writes=0, maxLatenessMs=0, maxWriteGap100ns=0, maxIoctl100ns=0;
+    uint32_t minimumQueuedSteady=std::numeric_limits<uint32_t>::max();
+    bool mmcss=false,consumerMmcss=false;
+    uint64_t maxConsumerDrainGap100ns=0;
+    unsigned statusSamples=0, producerReconnects=0;
+    uint64_t driverReceivedFrames=0, driverSilenceFrames=0;
+    uint32_t driverUnderruns=0, driverOverruns=0, steadyUnderruns=0;
+    bool kernelDiagnostics=false;
+    unsigned diagnosticCount=0;
+    std::array<KernelDiagnosticRecord,3> diagnostics{};
+    ProducerStatusHistory statusHistory;
+    ExtendedClientEvidence clients[2];
+};
+bool completeKernelDiagnostics(const ExtendedEvidence& e) {
+    if(e.diagnosticCount!=e.diagnostics.size())return false;
+    for(unsigned i=0;i<e.diagnosticCount;++i) {
+        const auto& record=e.diagnostics[i];
+        if(record.sourceSession!=i+1||!record.available||record.queryError!=ERROR_SUCCESS||
+           !validKernelDiagnostics(record.data)||record.data.first_underrun_present)return false;
+    }
+    return true;
+}
 struct Report {
     unsigned checks=0, failures=0, unsupported=0, selfTests=0, verifiedEndpoints=0;
     unsigned formatsPassed=0, packetsWritten=0, packetsCaptured=0, signalFrames=0, silenceFrames=0;
+    ExtendedEvidence extended;
     void check(bool ok, const char* label) {
         ++checks;
         if (!ok) ++failures;
@@ -44,10 +246,86 @@ struct Report {
         const int n = std::fprintf(file,
             "{\"schema\":1,\"checks\":%u,\"failures\":%u,\"unsupported\":%u,"
             "\"self_tests\":%u,\"verified_endpoints\":%u,\"formats_passed\":%u,"
-            "\"packets_written\":%u,\"packets_captured\":%u,\"signal_frames\":%u,\"silence_frames\":%u}\n",
+            "\"packets_written\":%u,\"packets_captured\":%u,\"signal_frames\":%u,\"silence_frames\":%u,",
             checks, failures, unsupported, selfTests, verifiedEndpoints, formatsPassed,
             packetsWritten, packetsCaptured, signalFrames, silenceFrames);
-        return std::fclose(file) == 0 && n > 0;
+        bool ok=n>0;
+        const auto& e=extended;
+        ok=std::fprintf(file,"\"extended_kernel_capture\":{\"requested\":%s,\"ran\":%s,"
+            "\"mode\":\"%s\","
+            "\"scope\":\"two_shared_WASAPI_clients_one_process_PCM32_not_two_applications\","
+            "\"requested_seconds\":%u,\"elapsed_ms\":%llu,\"writes\":%llu,\"maximum_producer_lateness_ms\":%llu,"
+            "\"maximum_steady_write_completion_gap_us\":%llu,\"maximum_ioctl_duration_us\":%llu,"
+            "\"minimum_queued_frames_steady\":%u,\"producer_mmcss_pro_audio\":%s,"
+            "\"consumer_mmcss_pro_audio\":%s,\"max_consumer_drain_gap_us\":%llu,"
+            "\"status_samples\":%u,\"producer_reconnects\":%u,\"driver_received_frames\":%llu,"
+            "\"driver_silence_frames\":%llu,\"driver_underruns\":%u,\"driver_overruns\":%u,\"steady_underruns\":%u,\"clients\":[",
+            e.requested?"true":"false",e.ran?"true":"false",e.product?"production_driver_bridge":"strict_synthetic_producer",e.requestedSeconds,
+            static_cast<unsigned long long>(e.elapsedMs),static_cast<unsigned long long>(e.writes),
+            static_cast<unsigned long long>(e.maxLatenessMs),static_cast<unsigned long long>(e.maxWriteGap100ns/10),
+            static_cast<unsigned long long>(e.maxIoctl100ns/10),
+            e.minimumQueuedSteady==std::numeric_limits<uint32_t>::max()?0:e.minimumQueuedSteady,e.mmcss?"true":"false",
+            e.consumerMmcss?"true":"false",static_cast<unsigned long long>(e.maxConsumerDrainGap100ns/10),
+            e.statusSamples,e.producerReconnects,
+            static_cast<unsigned long long>(e.driverReceivedFrames),static_cast<unsigned long long>(e.driverSilenceFrames),
+            e.driverUnderruns,e.driverOverruns,e.steadyUnderruns)>0&&ok;
+        for(unsigned i=0;i<2;++i) {
+            const auto& c=e.clients[i];
+            ok=std::fprintf(file,"%s{\"packets\":%llu,\"frames\":%llu,\"discontinuities\":%llu,\"timestamp_errors\":%llu,"
+                "\"position_gaps\":%llu,\"waveform_windows_by_signal_stage\":[%u,%u,%u],\"fresh_silence_checks\":%u,\"reconnects\":%u,\"first_invalid_packet\":",
+                i?",":"",static_cast<unsigned long long>(c.packets),static_cast<unsigned long long>(c.frames),
+                static_cast<unsigned long long>(c.discontinuities),static_cast<unsigned long long>(c.timestampErrors),
+                static_cast<unsigned long long>(c.gaps),c.windows[0],c.windows[1],c.windows[2],c.silenceChecks,c.reconnects)>0&&ok;
+            ok=writeInvalidPacket(file,c.firstInvalid)&&ok;
+            ok=std::fprintf(file,"}")>0&&ok;
+        }
+        ok=std::fprintf(file,"],\"producer_status_history\":{\"capacity\":%zu,\"count\":%zu,"
+            "\"time_origin\":\"producer_measured_QPC_begin\",\"source\":\"%s\",\"status_duration_available\":%s,"
+            "\"worker_publication_age_available\":%s,\"observations\":[",
+            ProducerStatusHistory::capacity,e.statusHistory.count,e.product?"bridge_worker_atomic_snapshot":"strict_producer_STATUS_ioctl",
+            e.product?"false":"true",e.product?"true":"false")>0&&ok;
+        for(size_t i=0;i<e.statusHistory.count;++i) {
+            const auto& o=e.statusHistory.oldest(i);
+            ok=std::fprintf(file,"%s{\"sample\":%llu,\"elapsed_us\":%llu,\"due_us\":%llu,\"lateness_us\":%llu,"
+                "\"status_duration_us\":%llu,\"worker_status_publication_age_us\":%llu,"
+                "\"last_write_completion_gap_us\":%llu,\"since_last_write_completion_us\":%llu,"
+                "\"phase\":%u,\"steady\":%s,\"queued_frames\":%u,\"drift_ppm\":%d,"
+                "\"driver_received_frames\":%llu,\"driver_silence_frames\":%llu,\"driver_underruns\":%u,\"driver_overruns\":%u}",
+                i?",":"",static_cast<unsigned long long>(o.sample),static_cast<unsigned long long>(o.elapsed100ns/10),
+                static_cast<unsigned long long>(o.due100ns/10),static_cast<unsigned long long>(o.lateness100ns/10),
+                static_cast<unsigned long long>(o.statusDuration100ns/10),static_cast<unsigned long long>(o.workerPublicationAge100ns/10),
+                static_cast<unsigned long long>(o.lastWriteGap100ns/10),
+                static_cast<unsigned long long>(o.sinceWrite100ns/10),o.phase,o.steady?"true":"false",o.queued,o.drift,
+                static_cast<unsigned long long>(o.received),static_cast<unsigned long long>(o.silence),o.underruns,o.overruns)>0&&ok;
+        }
+        ok=std::fprintf(file,"]},\"product_bridge\":{\"requested\":%s,\"ran\":%s,"
+            "\"source\":\"native/src/driver_bridge.hpp\",\"upstream_packet_frames\":480,\"upstream_packet_period_us\":10000,"
+            "\"transfer_queue_capacity_packets\":4,\"worker_period_us\":2000,\"driver_write_threshold_frames\":961,"
+            "\"worker_mmcss_pro_audio\":%s,\"queue_drops\":%u,\"submitted_packets\":%llu,\"source_sessions\":%u,"
+            "\"last_observed_status\":%u,\"last_observed_error\":%u,"
+            "\"maximum_worker_status_publication_age_us\":%llu,"
+            "\"driver_counter_scope\":\"sum_of_connected_source_session_deltas_excludes_disconnected_holds\","
+            "\"bounded_flush_deadline_ms\":150,",e.product&&e.requested?"true":"false",e.product&&e.ran?"true":"false",
+            e.workerMmcss?"true":"false",e.queueDrops,static_cast<unsigned long long>(e.submittedPackets),e.sourceSessions,
+            e.bridgeStatus,e.bridgeLastError,static_cast<unsigned long long>(e.maxWorkerPublicationAge100ns/10))>0&&ok;
+        ok=std::fprintf(file,"\"kernel_diagnostics\":{\"requested\":%s,\"mode\":\"optional_instrumented_driver_bridge\","
+            "\"source\":\"SES_IOCTL_DIAGNOSTICS_on_production_worker_owner_handle\",\"clock\":\"interrupt_time_100ns\","
+            "\"scope\":\"kernel_trace_connected_source_sessions\","
+            "\"first_underrun_counter_scope\":\"original_ring_lifetime_counters\","
+            "\"timing_effect\":\"additional_bounded_ioctls_on_first_underrun_and_each_source_session_end_or_failure\","
+            "\"not_audio_latency\":true,\"query_deadline_ms\":100,\"record_capacity\":3,\"record_count\":%u,\"records\":[",
+            e.kernelDiagnostics?"true":"false",e.diagnosticCount)>0&&ok;
+        const KernelDiagnosticRecord* firstFailure=nullptr;
+        for(unsigned i=0;i<e.diagnosticCount&&i<e.diagnostics.size();++i) {
+            if(i)ok=std::fprintf(file,",")>0&&ok;
+            ok=writeKernelDiagnosticRecord(file,e.diagnostics[i])&&ok;
+            if(!firstFailure&&validKernelDiagnostics(e.diagnostics[i].data)&&e.diagnostics[i].data.first_underrun_present)firstFailure=&e.diagnostics[i];
+        }
+        ok=std::fprintf(file,"],\"first_failure_record\":")>0&&ok;
+        if(firstFailure)ok=writeKernelDiagnosticRecord(file,*firstFailure,false)&&ok;
+        else ok=std::fprintf(file,"null")>0&&ok;
+        ok=std::fprintf(file,"}}}}\n")>0&&ok;
+        return std::fclose(file)==0&&ok;
     }
 };
 template<class T> struct Com {
@@ -70,6 +348,15 @@ struct PropertyValue { PROPVARIANT value{}; ~PropertyValue(){PropVariantClear(&v
 struct ComApartment {
     HRESULT result=CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     ~ComApartment(){if(SUCCEEDED(result))CoUninitialize();}
+};
+struct MmcssAudio {
+    DWORD index=0;
+    HANDLE task=AvSetMmThreadCharacteristicsW(L"Pro Audio",&index);
+    bool ready=task&&AvSetMmThreadPriority(task,AVRT_PRIORITY_HIGH);
+    MmcssAudio()=default;
+    MmcssAudio(const MmcssAudio&)=delete;
+    MmcssAudio& operator=(const MmcssAudio&)=delete;
+    ~MmcssAudio(){if(task)AvRevertMmThreadCharacteristics(task);}
 };
 uint64_t qpc100ns() {
     LARGE_INTEGER counter{}, frequency{};
@@ -178,6 +465,23 @@ void selfTest(Report& r) {
     check(freshPacket(2500000,2500000,AUDCLNT_BUFFERFLAGS_SILENT),"timestamp gate accepts new silent packets");
     check(!freshPacket(3000000,2500000,AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR),"timestamp gate rejects invalid timestamp");
     check(!freshPacket(3000000,2500000,AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY),"timestamp gate rejects discontinuity");
+    InvalidPacketEvidence invalid;
+    invalid.retain({true,480,1,9465600,9465120,7203199758,7202999738,7203228333,163110,true,true});
+    invalid.retain({true,1,0,0,0,0,0,0,0,false,false});
+    check(invalid.frames==480&&invalid.position==9465600&&invalid.expectedPosition==9465120,
+        "First invalid packet remains immutable across subsequent failures");
+    FILE* scratch=std::tmpfile();
+    check(scratch!=nullptr,"Offline packet diagnostics scratch file opens");
+    if(scratch){
+        const bool wrote=writeInvalidPacket(scratch,invalid);std::rewind(scratch);
+        std::array<char,1024> output{};const size_t bytesRead=std::fread(output.data(),1,output.size()-1,scratch);
+        check(wrote&&bytesRead>0&&std::strstr(output.data(),"\"position_frames\":9465600")&&
+            std::strstr(output.data(),"\"expected_position_frames\":9465120")&&
+            std::strstr(output.data(),"\"flags\":1")&&std::strstr(output.data(),"\"max_consumer_drain_gap_us\":16311")&&
+            std::strstr(output.data(),"\"had_previous\":true,\"eligible\":true"),
+            "Serialized failure retains exact packet positions, flags, timestamp context and units");
+        std::fclose(scratch);
+    }
     BYTE bytes[4]{};int32_t v32=pcm32(19);std::memcpy(bytes,&v32,4);
     check(std::abs(decode(bytes,32,0)-waveform(19))<1e-8,"PCM32 decoder preserves injected amplitude");
     int16_t v16=static_cast<int16_t>(v32/65536);std::memcpy(bytes,&v16,2);
@@ -347,6 +651,9 @@ bool runFormat(IMMDevice* device,unsigned bits,Report& r) {
         TIMER_MODIFY_STATE|SYNCHRONIZE);
     r.check(pollTimer.h!=nullptr,"create private high-resolution capture test timer");
     if(!pollTimer.h)return false;
+    MmcssAudio consumerMmcss;
+    r.check(consumerMmcss.ready,"register capture consumer with MMCSS Pro Audio priority");
+    if(!consumerMmcss.ready)return false;
     AudioStop stop{client.p};hr=client->Start();stop.started=SUCCEEDED(hr);
     r.check(stop.started,"start only the verified virtual microphone capture");
     if(!stop.started)return false;
@@ -429,21 +736,1118 @@ bool runFormat(IMMDevice* device,unsigned bits,Report& r) {
     r.check(disconnected&&silence(quiet),"producer close yields 100 ms fresh silence after 250 ms guard");
     if(r.failures==before){++r.formatsPassed;return true;}return false;
 }
+
+// The analyzer receives at most four fixed-size blocks. It never calls COM or
+// the driver, and cannot cause the producer to miss its existing 50 ms limit.
+struct StreamingAnalyzer {
+    static constexpr size_t blockFrames=32768, queueBound=4;
+    struct Block { unsigned client,stage;std::vector<double> samples; };
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::deque<Block> queue;
+    std::atomic<bool> failed{false};
+    std::atomic<bool> finished{false};
+    std::array<std::array<std::atomic<unsigned>,3>,2> windows{};
+    bool stopping=false;
+    std::thread worker;
+    StreamingAnalyzer():worker([this] {
+        for(;;) {
+            Block block{};
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                wake.wait(lock,[this]{return stopping||!queue.empty();});
+                if(queue.empty()){finished=true;return;}
+                block=std::move(queue.front());queue.pop_front();
+            }
+            if(!faithful(block.samples))failed=true;
+            else ++windows[block.client][block.stage];
+        }
+    }){}
+    bool submit(unsigned client,unsigned stage,std::vector<double>& samples) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if(stopping||queue.size()>=queueBound||samples.size()!=blockFrames)return false;
+        queue.push_back({client,stage,std::move(samples)});
+        samples=std::vector<double>();samples.reserve(blockFrames);wake.notify_one();return true;
+    }
+    void finish() {
+        {std::lock_guard<std::mutex> lock(mutex);stopping=true;wake.notify_one();}
+        if(worker.joinable()) {
+            // A thread cannot safely be detached while it owns this object.
+            // Fail closed if analysis cannot finish its bounded queue in 10 s.
+            const uint64_t end=GetTickCount64()+10000;
+            while(!finished&&GetTickCount64()<end)Sleep(1);
+            if(!finished){std::puts("Findings analyzer shutdown deadline exceeded; process terminates.");std::fflush(stdout);ExitProcess(5);}
+            worker.join();
+        }
+    }
+    ~StreamingAnalyzer(){finish();}
+};
+struct ExtendedCapture {
+    Com<IAudioClient> client;
+    Com<IAudioCaptureClient> capture;
+    bool started=false,hadPacket=false;
+    uint64_t previousPosition=0,previousStamp=0,cutoff=0,lastPacketMs=0,lastDrain100ns=0;
+    std::vector<double> signal,quiet;
+    ExtendedCapture(){signal.reserve(StreamingAnalyzer::blockFrames);quiet.reserve(minSilenceFrames);}
+    void close() {
+        if(started)client->Stop();started=false;
+        if(capture.p){capture.p->Release();capture.p=nullptr;}
+        if(client.p){client.p->Release();client.p=nullptr;}
+        hadPacket=false;signal.clear();quiet.clear();
+        lastDrain100ns=0;
+    }
+    ~ExtendedCapture(){close();}
+    bool open(IMMDevice* device) {
+        close();
+        WAVEFORMATEXTENSIBLE format{};
+        format.Format={WAVE_FORMAT_EXTENSIBLE,1,rate,rate*4,4,32,22};
+        format.Samples.wValidBitsPerSample=32;format.dwChannelMask=SPEAKER_FRONT_CENTER;format.SubFormat=pcmSubtype;
+        WaveMemory closest;
+        if(FAILED(device->Activate(__uuidof(IAudioClient),CLSCTX_ALL,nullptr,reinterpret_cast<void**>(client.out())))||
+            client->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED,&format.Format,&closest.p)!=S_OK||
+            FAILED(client->Initialize(AUDCLNT_SHAREMODE_SHARED,0,1000000,0,&format.Format,nullptr))||
+            FAILED(client->GetService(__uuidof(IAudioCaptureClient),reinterpret_cast<void**>(capture.out()))))return false;
+        started=SUCCEEDED(client->Start());lastPacketMs=GetTickCount64();return started;
+    }
+};
+bool statusValid(const SesDriverStatus& status,DWORD bytes) {
+    return bytes==sizeof(status)&&status.version==SES_DRIVER_PROTOCOL&&status.size==sizeof(status)&&
+        status.connected<=1&&status.queued_frames<=SES_DRIVER_CAPACITY&&status.reserved==0&&
+        status.drift_ppm>=-5005&&status.drift_ppm<=5005;
+}
+// All times are QPC 100 ns units. Intentional lifecycle gaps are excluded only
+// from write-gap diagnostics; scheduler lateness and driver counters still fail.
+struct ProducerSchedule {
+    static constexpr uint64_t packetPeriod=100000, pauseDuration=5500000, lifecycleGuard=10000000;
+    uint64_t began=0, end=0, nextWrite=0, phaseEpoch=0;
+    unsigned phase=0; // 0 signal, 1 paused, 2 signal, 3 closed, 4 signal
+    explicit ProducerSchedule(uint64_t now,unsigned seconds):began(now),end(now+seconds*10000000ULL),
+        nextWrite(now+packetPeriod),phaseEpoch(now){}
+    bool paused()const{return phase==1||phase==3;}
+    bool pauseDue(uint64_t now)const {
+        return !paused()&&phase<4&&now-began>=(end-began)*(phase/2+1)/3;
+    }
+    void pause(uint64_t now){++phase;phaseEpoch=now;}
+    bool resumeDue(uint64_t now,unsigned permit)const {
+        return paused()&&permit>=phase&&now-phaseEpoch>=pauseDuration;
+    }
+    bool lifecycleExpired(uint64_t now)const{return paused()&&now-phaseEpoch>lifecycleGuard;}
+    bool schedulerExpired(uint64_t now)const{return !paused()&&now>nextWrite&&now-nextWrite>500000;}
+    bool pauseAllowed(uint64_t now)const{return !schedulerExpired(now)&&pauseDue(now);}
+    void resume(uint64_t now){++phase;phaseEpoch=now;nextWrite=now+packetPeriod;}
+};
+bool lifecycleAcknowledgementExpired(uint64_t now,uint64_t epoch) {
+    return now>=epoch&&now-epoch>ProducerSchedule::lifecycleGuard;
+}
+bool silenceObservationReady(uint64_t now,uint64_t epoch,size_t first,size_t second) {
+    return now>=epoch&&now-epoch>=5000000&&first>=minSilenceFrames&&second>=minSilenceFrames;
+}
+struct ProducerPublication {
+    ExtendedEvidence evidence;
+    uint64_t began=0,phaseEpoch=0;
+    unsigned phase=0;
+    bool ready=false,done=false,resumePending=false;
+    const char* failure=nullptr;
+};
+// Exactly one publisher and one reader. A preempted reader can pin an old
+// slot, but the writer always has a different non-latest slot available.
+// Unlike a seqlock over plain fields, every copy has exclusive slot ownership.
+// SC ordering also prevents stale latest reads from moving the reader across
+// both writer candidates between the two bounded CAS attempts.
+class ProducerMailbox {
+    struct Slot {
+        std::atomic<bool> owned{false};
+        ProducerPublication publication{};
+    };
+    std::array<Slot,3> slots{};
+    std::atomic<unsigned> latest{0};
+    ProducerPublication cached{}; // Reader-owned, never accessed by the writer.
+public:
+    static_assert(std::is_trivially_copyable_v<ProducerPublication>);
+    static_assert(std::atomic<bool>::is_always_lock_free&&std::atomic<unsigned>::is_always_lock_free);
+    bool publish(const ProducerPublication& publication) noexcept {
+        const unsigned current=latest.load(std::memory_order_seq_cst);
+        for(unsigned offset=1;offset<3;++offset) {
+            const unsigned index=(current+offset)%3;bool expected=false;
+            if(!slots[index].owned.compare_exchange_strong(expected,true,std::memory_order_seq_cst))continue;
+            slots[index].publication=publication;
+            latest.store(index,std::memory_order_seq_cst);
+            slots[index].owned.store(false,std::memory_order_seq_cst);
+            return true;
+        }
+        return false; // Only a violation of the single-reader contract can exhaust both slots.
+    }
+    ProducerPublication snapshot(void(*onReadAcquired)(void*) noexcept=nullptr,void* context=nullptr) noexcept {
+        for(unsigned attempt=0;attempt<3;++attempt) {
+            const unsigned index=latest.load(std::memory_order_seq_cst);bool expected=false;
+            if(!slots[index].owned.compare_exchange_strong(expected,true,std::memory_order_seq_cst))continue;
+            // The optional hook is used only by offline preemption fixtures.
+            if(onReadAcquired)onReadAcquired(context);
+            cached=slots[index].publication;
+            slots[index].owned.store(false,std::memory_order_seq_cst);
+            return cached;
+        }
+        return cached;
+    }
+};
+// Publish the upcoming phase before CONNECT or prefill can change captured
+// PCM. Keep the scheduler paused until the operation actually finishes: the
+// original lifecycle deadline remains in force throughout the transition.
+void publishResumeBoundary(ProducerMailbox& mailbox,ProducerPublication& state,const ProducerSchedule& schedule,uint64_t now) {
+    state.phase=schedule.phase+1;state.phaseEpoch=now;state.resumePending=true;
+    if(!mailbox.publish(state))std::terminate();
+}
+bool publishResumeComplete(ProducerMailbox& mailbox,ProducerPublication& state,ProducerSchedule& schedule,uint64_t now) {
+    if(schedule.lifecycleExpired(now))return false;
+    schedule.resume(now);state.phase=schedule.phase;state.phaseEpoch=schedule.phaseEpoch;state.resumePending=false;
+    if(!mailbox.publish(state))std::terminate();
+    return true;
+}
+bool packetPositionContiguous(bool hadPacket,uint64_t position,uint64_t expected) {
+    return !hadPacket||position==expected;
+}
+bool zeroPositionGaps(const ExtendedClientEvidence& client){return client.gaps==0;}
+bool packetEligible(uint64_t stamp,uint64_t cutoff,const ProducerPublication& published,unsigned phase,uint64_t epoch) {
+    return stamp>=cutoff&&!published.resumePending&&published.phase==phase&&published.phaseEpoch==epoch;
+}
+bool productDeliveryComplete(uint64_t submitted,uint64_t sent,uint64_t received,uint64_t baseline) {
+    return submitted<=std::numeric_limits<uint64_t>::max()/SES_DRIVER_FRAMES&&received>=baseline&&
+        sent==submitted*SES_DRIVER_FRAMES&&received-baseline==sent;
+}
+uint64_t workerPublicationAge(uint64_t sampled,uint64_t published){
+    // Independent publication timestamp; the separate counter atomics are
+    // not a coherent kernel snapshot. Missing/newer timestamps have no age.
+    return published&&sampled>=published?sampled-published:0;
+}
+bool productFlushComplete(uint64_t submitted,uint64_t sent,uint64_t received,uint64_t baseline,
+    uint64_t now,uint64_t deadline) {
+    return now<=deadline&&productDeliveryComplete(submitted,sent,received,baseline);
+}
+bool productTelemetryHealthy(uint32_t status,uint32_t protocol,bool workerMmcss,uint32_t queueDrops,
+    uint32_t overruns,uint32_t steadyUnderruns) {
+    return status==2&&protocol==SES_DRIVER_PROTOCOL&&workerMmcss&&queueDrops==0&&overruns==0&&steadyUnderruns==0;
+}
+struct ExtendedProducer {
+    ProducerMailbox publication;
+    std::atomic<bool> stop{false},finished{false};
+    std::atomic<unsigned> resumePermit{0};
+    std::thread worker;
+    ExtendedProducer(unsigned seconds,bool=false):worker([this,seconds]{run(seconds);}){}
+    ProducerPublication snapshot(){return publication.snapshot();}
+    void publish(const ProducerPublication& state){if(!publication.publish(state))std::terminate();}
+    void finish() {
+        stop=true;
+        if(worker.joinable()) {
+            const uint64_t deadline=GetTickCount64()+1000;
+            while(!finished&&GetTickCount64()<deadline)Sleep(1);
+            if(!finished){std::puts("Findings producer shutdown deadline exceeded; process terminates.");std::fflush(stdout);ExitProcess(5);}
+            worker.join();
+        }
+    }
+    ~ExtendedProducer(){finish();}
+    void run(unsigned seconds) {
+        // Driver handle, IOCTL buffers, sequence and status never leave this
+        // worker. COM capture/decode and analyzer queue locks run elsewhere.
+        ProducerPublication state{};auto& e=state.evidence;
+        Handle driver,timer;MmcssAudio mmcss;e.mmcss=mmcss.ready;
+        SesDriverStatus status{},baseline{},previous{};DWORD bytes=0;
+        uint64_t sequence=0,lastCompletion=0,lastWriteGap=0;bool haveSteadyStatus=false;
+        std::array<std::array<int32_t,SES_DRIVER_FRAMES>,4> pcm{};
+        for(unsigned p=0;p<4;++p)for(unsigned i=0;i<SES_DRIVER_FRAMES;++i)pcm[p][i]=pcm32(p*SES_DRIVER_FRAMES+i);
+        auto call=[&](DWORD code,void* input,DWORD inputBytes,void* output,DWORD outputBytes) {
+            const uint64_t started=qpc100ns();
+            const bool ok=ioctl(driver.h,code,input,inputBytes,output,outputBytes,bytes);
+            e.maxIoctl100ns=std::max(e.maxIoctl100ns,qpc100ns()-started);return ok;
+        };
+        auto connect=[&]() {
+            driver.close();driver.h=CreateFileW(SES_DRIVER_PATH,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,
+                nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED,nullptr);
+            SesDriverHello hello{SES_DRIVER_PROTOCOL,sizeof(hello),rate,1,32,SES_DRIVER_FRAMES};sequence=0;
+            return driver.h!=INVALID_HANDLE_VALUE&&call(SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status))&&
+                statusValid(status,bytes)&&status.connected==1&&status.queued_frames==0;
+        };
+        auto write=[&](bool measureGap) {
+            SesDriverPacket packet{SES_DRIVER_PROTOCOL,sizeof(packet),SES_DRIVER_FRAMES,0,sequence,{}};
+            std::memcpy(packet.pcm,pcm[sequence%4].data(),sizeof(packet.pcm));
+            if(e.writes>=seconds*100ULL+16||!call(SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0))return false;
+            const uint64_t completed=qpc100ns();
+            lastWriteGap=measureGap&&lastCompletion?completed-lastCompletion:0;
+            if(measureGap&&lastCompletion)e.maxWriteGap100ns=std::max(e.maxWriteGap100ns,lastWriteGap);
+            lastCompletion=completed;++sequence;++e.writes;return true;
+        };
+        auto readStatus=[&](bool steady,uint64_t began,uint64_t due,unsigned phase) {
+            const uint64_t started=qpc100ns();
+            if(!call(SES_IOCTL_STATUS,nullptr,0,&status,sizeof(status))||!statusValid(status,bytes)||status.connected!=1||
+                status.received_frames<previous.received_frames||status.silence_frames<previous.silence_frames||
+                status.underruns<previous.underruns||status.overruns<previous.overruns)return false;
+            ++e.statusSamples;e.driverReceivedFrames=status.received_frames-baseline.received_frames;
+            e.driverSilenceFrames=status.silence_frames-baseline.silence_frames;
+            e.driverUnderruns=status.underruns-baseline.underruns;e.driverOverruns=status.overruns-baseline.overruns;
+            const uint64_t completed=qpc100ns();
+            ProducerStatusObservation observation{};
+            observation.sample=e.statusSamples;observation.elapsed100ns=completed>=began?completed-began:0;
+            observation.due100ns=due>=began?due-began:0;observation.lateness100ns=started>=due?started-due:0;
+            observation.statusDuration100ns=completed>=started?completed-started:0;
+            observation.lastWriteGap100ns=lastWriteGap;
+            observation.sinceWrite100ns=lastCompletion&&completed>=lastCompletion?completed-lastCompletion:0;
+            observation.phase=phase;observation.steady=steady;observation.queued=status.queued_frames;
+            observation.drift=status.drift_ppm;observation.received=e.driverReceivedFrames;observation.silence=e.driverSilenceFrames;
+            observation.underruns=e.driverUnderruns;observation.overruns=e.driverOverruns;
+            // Append before the counter gate, so the rejected observation survives fail().
+            e.statusHistory.append(observation);
+            if(steady) {
+                e.minimumQueuedSteady=std::min(e.minimumQueuedSteady,status.queued_frames);
+                if(haveSteadyStatus)e.steadyUnderruns+=status.underruns-previous.underruns;
+            }
+            previous=status;haveSteadyStatus=steady;
+            return e.driverOverruns==0&&e.steadyUnderruns==0;
+        };
+        auto fail=[&](const char* reason){state.failure=reason;publish(state);};
+        timer.h=CreateWaitableTimerExW(nullptr,nullptr,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_MODIFY_STATE|SYNCHRONIZE);
+        if(!timer.h||!mmcss.ready)fail("producer private high-resolution timer or MMCSS Pro Audio registration");
+        else if(!connect())fail("producer initial connection validates protocol status");
+        else {
+            baseline=previous=status;bool prefilled=true;
+            for(unsigned i=0;i<3;++i)if(!write(false)){prefilled=false;break;}
+            if(!prefilled)fail("producer initial bounded prefill");
+            else {
+                ProducerSchedule schedule(qpc100ns(),seconds);state.began=schedule.began;state.ready=true;
+                state.phaseEpoch=schedule.phaseEpoch;publish(state);
+                while(!stop&&!state.failure&&qpc100ns()<schedule.end) {
+                    uint64_t now=qpc100ns();
+                    if(!schedule.paused()&&now>=schedule.nextWrite)
+                        e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
+                    // A lifecycle boundary cannot erase an expired steady write
+                    // deadline, including time spent reading its final status.
+                    if(schedule.schedulerExpired(now)){fail("producer scheduler exceeds existing 50 ms deadline before lifecycle");break;}
+                    if(schedule.pauseAllowed(now)) {
+                        if(!readStatus(true,schedule.began,schedule.nextWrite,schedule.phase)){fail("driver counters before lifecycle change");break;}
+                        now=qpc100ns();
+                        if(now>=schedule.nextWrite)e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
+                        if(schedule.schedulerExpired(now)){fail("producer lifecycle STATUS consumes existing 50 ms scheduler deadline");break;}
+                        if(schedule.phase==2)driver.close();
+                        schedule.pause(qpc100ns());haveSteadyStatus=false;lastCompletion=0;lastWriteGap=0;
+                        state.phase=schedule.phase;state.phaseEpoch=schedule.phaseEpoch;publish(state);
+                    }
+                    now=qpc100ns();
+                    if(schedule.lifecycleExpired(now)){fail("consumer silence/reconnect lifecycle acknowledgement deadline");break;}
+                    if(schedule.resumeDue(now,resumePermit.load())) {
+                        publishResumeBoundary(publication,state,schedule,qpc100ns());
+                        if(schedule.phase==3) {
+                            if(!connect()){fail("producer reconnect protocol status");break;}
+                            ++e.producerReconnects;
+                        }
+                        bool prefilled=true;for(unsigned i=0;i<3;++i)if(!write(false)){prefilled=false;break;}
+                        if(!prefilled){fail("producer resume bounded prefill");break;}
+                        if(!publishResumeComplete(publication,state,schedule,qpc100ns())) {
+                            fail("producer reconnect or prefill exceeds existing lifecycle deadline");break;}
+                        haveSteadyStatus=false;
+                    }
+                    now=qpc100ns();
+                    if(!schedule.paused()&&now>=schedule.nextWrite) {
+                        e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
+                        if(schedule.schedulerExpired(now)){fail("producer scheduler exceeds existing 50 ms deadline");break;}
+                        if(!readStatus(now-schedule.phaseEpoch>=2500000,schedule.began,schedule.nextWrite,schedule.phase)){fail("periodic driver counters, overruns or steady underruns");break;}
+                        // STATUS itself can consume the deadline; check again
+                        // immediately before the write instead of hiding it.
+                        now=qpc100ns();e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
+                        if(schedule.schedulerExpired(now)){fail("producer IOCTL consumes existing 50 ms scheduler deadline");break;}
+                        if(!write(true)){fail("bounded producer write");break;}
+                        schedule.nextWrite+=ProducerSchedule::packetPeriod;publish(state);
+                    }
+                    now=qpc100ns();
+                    const uint64_t next=schedule.paused()?now+10000:std::min(schedule.nextWrite,schedule.end);
+                    if(next>now) {
+                        LARGE_INTEGER due{};due.QuadPart=-static_cast<LONGLONG>(next-now);
+                        if(!SetWaitableTimerEx(timer.h,&due,0,nullptr,nullptr,nullptr,0)||WaitForSingleObject(timer.h,200)!=WAIT_OBJECT_0) {
+                            fail("producer bounded private timer wait");break;
+                        }
+                    }
+                }
+                if(!state.failure&&driver.h!=INVALID_HANDLE_VALUE&&!readStatus(!schedule.paused()&&qpc100ns()-schedule.phaseEpoch>=2500000,
+                    schedule.began,schedule.nextWrite,schedule.phase))
+                    fail("final driver counters, overruns or steady underruns");
+            }
+        }
+        driver.close();state.done=true;publish(state);finished=true;
+    }
+};
+// This producer only supplies the application's 480-frame upstream callback.
+// The actual DriverBridge owns TransferQueue, PCM conversion, IOCTLs and its
+// private 2 ms cadence; no lab implementation substitutes for that worker.
+struct ProductBridgeProducer {
+    ProducerMailbox publication;
+    std::atomic<bool> stop{false},finished{false};
+    std::atomic<unsigned> resumePermit{0};
+    std::thread worker;
+    ProductBridgeProducer(unsigned seconds,bool kernelDiagnostics=false):worker([this,seconds,kernelDiagnostics]{run(seconds,kernelDiagnostics);}){}
+    ProducerPublication snapshot(){return publication.snapshot();}
+    void publish(const ProducerPublication& state){if(!publication.publish(state))std::terminate();}
+    void finish() {
+        stop=true;
+        if(worker.joinable()) {
+            const uint64_t deadline=GetTickCount64()+1000;
+            while(!finished&&GetTickCount64()<deadline)Sleep(1);
+            if(!finished){std::puts("Findings product producer shutdown deadline exceeded; process terminates.");std::fflush(stdout);ExitProcess(5);}
+            worker.join();
+        }
+    }
+    ~ProductBridgeProducer(){finish();}
+    void run(unsigned seconds,bool kernelDiagnostics) {
+        ProducerPublication state{};auto& e=state.evidence;e.product=true;e.workerMmcss=true;e.kernelDiagnostics=kernelDiagnostics;
+        ses::DriverBridge bridge;Handle timer;MmcssAudio mmcss;e.mmcss=mmcss.ready;
+        bridge.diagnosticCaptureEnabled=kernelDiagnostics;
+        uint64_t baselineReceived=0,baselineSilence=0,sessionSubmitted=0;
+        uint64_t previousReceived=0,previousSilence=0;
+        uint32_t baselineUnderruns=0,baselineOverruns=0,previousUnderruns=0,previousOverruns=0;
+        uint64_t totalReceived=0,totalSilence=0,totalSent=0;
+        uint32_t totalUnderruns=0,totalOverruns=0,totalDrops=0;
+        bool sessionOpen=false,haveSteady=false;
+        std::array<std::array<float,SES_DRIVER_FRAMES>,4> pcm{};
+        for(unsigned p=0;p<4;++p)for(unsigned i=0;i<SES_DRIVER_FRAMES;++i)
+            pcm[p][i]=static_cast<float>(waveform(p*SES_DRIVER_FRAMES+i));
+        auto fail=[&](const char* reason){state.failure=reason;publish(state);};
+        auto stopAndCollect=[&]() {
+            bool withinDeadline=false;
+            if(kernelDiagnostics&&bridge.status==2) {
+                const uint64_t ticket=bridge.requestDiagnostics(),deadline=qpc100ns()+1000000;
+                while(bridge.diagnosticCompletedSequence!=ticket&&qpc100ns()<deadline)Sleep(1);
+                withinDeadline=bridge.diagnosticCompletedSequence==ticket&&qpc100ns()<=deadline;
+            }
+            bridge.stop(); // capturedDiagnostics is worker-owned until this join.
+            e.maxIoctl100ns=std::max(e.maxIoctl100ns,bridge.maxIoctl100ns.load());
+            sessionOpen=false;
+            if(kernelDiagnostics&&e.diagnosticCount<e.diagnostics.size()) {
+                auto& record=e.diagnostics[e.diagnosticCount++];record.sourceSession=e.sourceSessions;
+                record.timelineAvailable=bridge.copyWorkerTraceAfterStop(record.timeline);
+                record.queryError=bridge.diagnosticError.load();
+                if(!withinDeadline&&record.queryError==ERROR_NOT_READY)record.queryError=ERROR_TIMEOUT;
+                // Preserve an earlier successful automatic first-event query
+                // even if the explicit terminal query failed. The record's
+                // unavailable/error fields still reject capture acceptance.
+                if(validKernelDiagnostics(bridge.capturedDiagnostics))record.data=bridge.capturedDiagnostics;
+                record.available=withinDeadline&&bridge.diagnosticReady&&record.queryError==ERROR_SUCCESS&&validKernelDiagnostics(record.data);
+                if(bridge.diagnosticReady&&record.queryError==ERROR_SUCCESS&&!record.available)
+                    record.queryError=withinDeadline?ERROR_INVALID_DATA:ERROR_TIMEOUT;
+            }
+        };
+        auto connect=[&]() {
+            bridge.start();const uint64_t deadline=qpc100ns()+2000000;
+            while(!stop&&bridge.status!=2&&bridge.status!=6&&qpc100ns()<deadline)Sleep(1);
+            e.bridgeStatus=bridge.status.load();e.bridgeLastError=bridge.lastError.load();
+            if(stop||bridge.status!=2||bridge.protocol!=SES_DRIVER_PROTOCOL||!bridge.workerMmcss||bridge.queued!=0)return false;
+            baselineReceived=previousReceived=bridge.received.load();baselineSilence=previousSilence=bridge.silence.load();
+            baselineUnderruns=previousUnderruns=bridge.underruns.load();baselineOverruns=previousOverruns=bridge.overruns.load();
+            sessionSubmitted=0;haveSteady=false;sessionOpen=true;++e.sourceSessions;return true;
+        };
+        auto readStatus=[&](bool steady,uint64_t began,uint64_t due,unsigned phase) {
+            const uint64_t sampled=qpc100ns();
+            const uint64_t received=bridge.received.load(),quiet=bridge.silence.load(),sent=bridge.sent.load();
+            const uint32_t underruns=bridge.underruns.load(),overruns=bridge.overruns.load(),drops=bridge.queueDrops.load();
+            const uint32_t queued=bridge.queued.load();const int32_t drift=bridge.drift.load();
+            e.workerMmcss=e.workerMmcss&&bridge.workerMmcss.load();
+            e.bridgeStatus=bridge.status.load();e.bridgeLastError=bridge.lastError.load();
+            const bool valid=e.bridgeStatus==2&&bridge.protocol==SES_DRIVER_PROTOCOL&&e.workerMmcss&&queued<=SES_DRIVER_CAPACITY&&
+                drift>=-5005&&drift<=5005&&received>=previousReceived&&quiet>=previousSilence&&
+                underruns>=previousUnderruns&&overruns>=previousOverruns&&sent%SES_DRIVER_FRAMES==0;
+            if(received<baselineReceived||quiet<baselineSilence||underruns<baselineUnderruns||overruns<baselineOverruns)return false;
+            e.writes=(totalSent+sent)/SES_DRIVER_FRAMES;e.queueDrops=totalDrops+drops;
+            e.driverReceivedFrames=totalReceived+received-baselineReceived;
+            e.driverSilenceFrames=totalSilence+quiet-baselineSilence;
+            e.driverUnderruns=totalUnderruns+underruns-baselineUnderruns;
+            e.driverOverruns=totalOverruns+overruns-baselineOverruns;
+            e.maxWriteGap100ns=std::max(e.maxWriteGap100ns,bridge.maxWriteGap100ns.load());
+            e.maxIoctl100ns=std::max(e.maxIoctl100ns,bridge.maxIoctl100ns.load());
+            ProducerStatusObservation observation{};observation.sample=++e.statusSamples;
+            observation.elapsed100ns=sampled>=began?sampled-began:0;observation.due100ns=due>=began?due-began:0;
+            observation.lateness100ns=sampled>=due?sampled-due:0;
+            observation.workerPublicationAge100ns=workerPublicationAge(sampled,bridge.statusObserved100ns.load());
+            e.maxWorkerPublicationAge100ns=std::max(e.maxWorkerPublicationAge100ns,observation.workerPublicationAge100ns);
+            // STATUS timings are unavailable as an isolated operation: this
+            // history samples genuine worker counters, with no lab STATUS call.
+            const uint64_t completion=bridge.lastWriteCompletion100ns.load();
+            observation.lastWriteGap100ns=bridge.lastWriteGap100ns.load();
+            observation.sinceWrite100ns=completion&&sampled>=completion?sampled-completion:0;
+            observation.phase=phase;observation.steady=steady;observation.queued=queued;observation.drift=drift;
+            observation.received=e.driverReceivedFrames;observation.silence=e.driverSilenceFrames;
+            observation.underruns=e.driverUnderruns;observation.overruns=e.driverOverruns;
+            e.statusHistory.append(observation);
+            if(steady){e.minimumQueuedSteady=std::min(e.minimumQueuedSteady,queued);
+                if(haveSteady)e.steadyUnderruns+=underruns-previousUnderruns;}
+            previousReceived=received;previousSilence=quiet;previousUnderruns=underruns;previousOverruns=overruns;haveSteady=steady;
+            return valid&&productTelemetryHealthy(e.bridgeStatus,bridge.protocol.load(),e.workerMmcss,
+                e.queueDrops,e.driverOverruns,e.steadyUnderruns);
+        };
+        auto closeSession=[&](bool steady,uint64_t began,uint64_t due,unsigned phase) {
+            // Every accepted callback must reach a successful production WRITE
+            // and a later independently observed kernel received counter.
+            const uint64_t deadline=qpc100ns()+1500000;
+            while(bridge.status==2&&qpc100ns()<deadline&&
+                !productDeliveryComplete(sessionSubmitted,bridge.sent.load(),bridge.received.load(),baselineReceived))Sleep(1);
+            const bool flushed=productFlushComplete(sessionSubmitted,bridge.sent.load(),bridge.received.load(),baselineReceived,
+                qpc100ns(),deadline);
+            const bool observed=readStatus(steady,began,due,phase);
+            const bool ok=flushed&&observed;
+            totalSent=e.writes*SES_DRIVER_FRAMES;
+            totalReceived=e.driverReceivedFrames;totalSilence=e.driverSilenceFrames;
+            totalUnderruns=e.driverUnderruns;totalOverruns=e.driverOverruns;totalDrops=e.queueDrops;
+            stopAndCollect();return ok;
+        };
+        timer.h=CreateWaitableTimerExW(nullptr,nullptr,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_MODIFY_STATE|SYNCHRONIZE);
+        if(!timer.h||!mmcss.ready)fail("product upstream private high-resolution timer or MMCSS Pro Audio registration");
+        else if(!connect())fail("real DriverBridge initial connection, ownership, protocol or worker MMCSS");
+        else {
+            ProducerSchedule schedule(qpc100ns(),seconds);state.began=schedule.began;state.ready=true;
+            state.phaseEpoch=schedule.phaseEpoch;publish(state);
+            while(!stop&&!state.failure&&qpc100ns()<schedule.end) {
+                uint64_t now=qpc100ns();
+                if(!schedule.paused()&&now>=schedule.nextWrite)e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
+                if(schedule.schedulerExpired(now)){fail("product upstream exceeds existing 50 ms scheduler deadline");break;}
+                if(schedule.pauseAllowed(now)) {
+                    if(!closeSession(true,schedule.began,schedule.nextWrite,schedule.phase)){fail("product lifecycle flush, queue drops or real driver counters");break;}
+                    now=qpc100ns();
+                    if(schedule.schedulerExpired(now)){fail("product lifecycle flush consumes existing 50 ms scheduler deadline");break;}
+                    schedule.pause(now);state.phase=schedule.phase;state.phaseEpoch=schedule.phaseEpoch;publish(state);
+                }
+                now=qpc100ns();
+                if(schedule.lifecycleExpired(now)){fail("product consumer silence/reconnect lifecycle acknowledgement deadline");break;}
+                if(schedule.resumeDue(now,resumePermit.load())) {
+                    publishResumeBoundary(publication,state,schedule,qpc100ns());
+                    if(!connect()){fail("real DriverBridge reconnect, ownership, protocol or worker MMCSS");break;}
+                    if(schedule.lifecycleExpired(qpc100ns())){fail("product bridge reconnect exceeds existing lifecycle deadline");break;}
+                    if(schedule.phase==3)++e.producerReconnects;
+                    if(!publishResumeComplete(publication,state,schedule,qpc100ns())) {
+                        fail("product bridge resume publication exceeds existing lifecycle deadline");break;}
+                }
+                now=qpc100ns();
+                if(!schedule.paused()&&now>=schedule.nextWrite) {
+                    e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
+                    if(schedule.schedulerExpired(now)){fail("product upstream deadline before TransferQueue callback");break;}
+                    if(!readStatus(now-schedule.phaseEpoch>=2500000,schedule.began,schedule.nextWrite,schedule.phase)) {
+                        fail("real DriverBridge counters, worker MMCSS, queue drops or steady underruns");break;}
+                    if(e.submittedPackets>=seconds*100ULL+16){fail("product upstream packet count bound");break;}
+                    // Counter sampling or preemption must not consume the
+                    // callback's deadline and then enqueue expired audio.
+                    now=qpc100ns();e.maxLatenessMs=std::max(e.maxLatenessMs,(now-schedule.nextWrite)/10000);
+                    if(schedule.schedulerExpired(now)){fail("product counter sampling consumes existing 50 ms scheduler deadline");break;}
+                    bridge.push(pcm[sessionSubmitted%4].data());++sessionSubmitted;++e.submittedPackets;
+                    schedule.nextWrite+=ProducerSchedule::packetPeriod;publish(state);
+                }
+                now=qpc100ns();const uint64_t next=schedule.paused()?now+10000:std::min(schedule.nextWrite,schedule.end);
+                if(next>now) {
+                    LARGE_INTEGER due{};due.QuadPart=-static_cast<LONGLONG>(next-now);
+                    if(!SetWaitableTimerEx(timer.h,&due,0,nullptr,nullptr,nullptr,0)||WaitForSingleObject(timer.h,200)!=WAIT_OBJECT_0) {
+                        fail("product bounded private upstream timer wait");break;}
+                }
+            }
+            if(sessionOpen&&!state.failure&&!closeSession(!schedule.paused()&&qpc100ns()-schedule.phaseEpoch>=2500000,
+                schedule.began,schedule.nextWrite,schedule.phase))fail("product final flush or real driver counters");
+        }
+        if(sessionOpen) {
+            // Failure evidence must retain actual worker values, including any
+            // rejected queue/counter sample, before stop clears live state.
+            readStatus(false,state.began,qpc100ns(),state.phase);stopAndCollect();
+        }
+        state.done=true;publish(state);finished=true;
+    }
+};
+template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Report& r,bool kernelDiagnostics=false) {
+    auto& e=r.extended;e.ran=true;
+    const unsigned before=r.failures;
+    std::printf("Extended real kernel capture: %u seconds, two PCM32 shared clients in one process.\n",seconds);
+    MmcssAudio consumerMmcss;e.consumerMmcss=consumerMmcss.ready;
+    r.check(consumerMmcss.ready,"register extended capture consumer with MMCSS Pro Audio priority");
+    if(!consumerMmcss.ready)return false;
+    ExtendedCapture consumers[2];
+    for(auto& consumer:consumers) {
+        if(!consumer.open(device)){r.check(false,"start both shared capture clients on verified endpoint");return false;}
+    }
+    Handle timer;
+    timer.h=CreateWaitableTimerExW(nullptr,nullptr,CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,TIMER_MODIFY_STATE|SYNCHRONIZE);
+    if(!timer.h){r.check(false,"extended private high-resolution consumer timer");return false;}
+    StreamingAnalyzer analyzer;
+    Producer producer(seconds,kernelDiagnostics);
+    const uint64_t startupDeadline=GetTickCount64()+1000;
+    ProducerPublication state=producer.snapshot();
+    while(!state.ready&&!state.done&&GetTickCount64()<startupDeadline){Sleep(1);state=producer.snapshot();}
+    if(!state.ready){producer.finish();r.check(false,state.failure?state.failure:"producer startup deadline");return false;}
+    const uint64_t began=state.began,deadline=began+seconds*10000000ULL;
+    uint64_t nextHeartbeat=began+50000000;
+    unsigned phase=0,stage=0;uint64_t phaseEpoch=state.phaseEpoch;bool paused=false,ok=true;
+    for(auto& consumer:consumers)consumer.cutoff=state.phaseEpoch+2500000;
+    auto abortRun=[&](const char* reason){std::printf("Findings extended capture stopped: %s\n",reason);ok=false;};
+    auto copyProducerEvidence=[&](const ExtendedEvidence& source) {
+        const auto clients=std::array<ExtendedClientEvidence,2>{e.clients[0],e.clients[1]};
+        const bool requested=e.requested,ran=e.ran;const unsigned requestedSeconds=e.requestedSeconds;
+        const bool consumerRegistered=e.consumerMmcss;const uint64_t drainGap=e.maxConsumerDrainGap100ns;
+        e=source;e.clients[0]=clients[0];e.clients[1]=clients[1];
+        e.requested=requested;e.ran=ran;e.requestedSeconds=requestedSeconds;
+        e.consumerMmcss=consumerRegistered;e.maxConsumerDrainGap100ns=drainGap;
+    };
+    while(qpc100ns()<deadline&&ok) {
+        state=producer.snapshot();const uint64_t now=qpc100ns();copyProducerEvidence(state.evidence);
+        if(state.failure){abortRun(state.failure);break;}
+        if(state.done){if(qpc100ns()<deadline)abortRun("producer exited before measured consumer duration");break;}
+        if(analyzer.failed){abortRun("periodic waveform fidelity");break;}
+        if(state.phase!=phase||state.phaseEpoch!=phaseEpoch) {
+            const bool phaseChanged=state.phase!=phase;
+            phase=state.phase;phaseEpoch=state.phaseEpoch;paused=phase==1||phase==3;stage=phase/2;
+            for(auto& consumer:consumers){consumer.signal.clear();consumer.quiet.clear();consumer.cutoff=state.phaseEpoch+2500000;}
+            if(phaseChanged&&phase==3) {
+                if(!consumers[1].open(device)){abortRun("second capture client reconnect");break;}
+                ++e.clients[1].reconnects;consumers[1].cutoff=std::max(consumers[1].cutoff,qpc100ns()+2500000);
+            }
+            std::printf("Extended lifecycle: phase=%u actual epoch=%llu ms.\n",phase,
+                static_cast<unsigned long long>((state.phaseEpoch-began)/10000));std::fflush(stdout);
+        }
+        for(unsigned index=0;index<2&&ok;++index) {
+            auto& consumer=consumers[index];auto& evidence=e.clients[index];
+            const uint64_t drainNow=qpc100ns();
+            if(consumer.lastDrain100ns)e.maxConsumerDrainGap100ns=std::max(e.maxConsumerDrainGap100ns,drainNow-consumer.lastDrain100ns);
+            consumer.lastDrain100ns=drainNow;
+            UINT32 frames=0;unsigned drained=0;
+            if(FAILED(consumer.capture->GetNextPacketSize(&frames))){abortRun("capture packet size");break;}
+            while(frames&&ok) {
+                if(++drained>128){abortRun("capture drain bound");break;}
+                BYTE* data=nullptr;DWORD flags=0;UINT64 position=0,stamp=0;
+                if(FAILED(consumer.capture->GetBuffer(&data,&frames,&flags,&position,&stamp))){abortRun("capture buffer");break;}
+                ++evidence.packets;evidence.frames+=frames;consumer.lastPacketMs=GetTickCount64();
+                if(flags&AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)++evidence.discontinuities;
+                if(flags&AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)++evidence.timestampErrors;
+                const bool gap=!packetPositionContiguous(consumer.hadPacket,position,consumer.previousPosition);if(gap)++evidence.gaps;
+                bool valid=frames>0&&frames<=rate&&((flags&AUDCLNT_BUFFERFLAGS_SILENT)||data)&&
+                    position<=std::numeric_limits<uint64_t>::max()-frames&&stamp<=qpc100ns()+100000&&
+                    !gap&&(!consumer.hadPacket||(position>=consumer.previousPosition&&stamp>consumer.previousStamp));
+                // A phase published during this drain is processed next turn,
+                // after releasing this COM buffer. Do not enqueue across epochs.
+                const bool eligible=packetEligible(stamp,consumer.cutoff,producer.snapshot(),phase,phaseEpoch);
+                if(eligible) {
+                    if(!freshPacket(stamp,consumer.cutoff,flags))valid=false;
+                    if(valid)for(UINT32 i=0;i<frames;++i) {
+                        const double value=flags&AUDCLNT_BUFFERFLAGS_SILENT?0:decode(data,32,i);
+                        if(paused) {
+                            // Every eligible sample must remain silent, including
+                            // packets after the required 100 ms observation.
+                            if(!std::isfinite(value)||std::abs(value)>1.0/32768.0){valid=false;break;}
+                            if(consumer.quiet.size()<minSilenceFrames)consumer.quiet.push_back(value);
+                        } else {
+                            if(!std::isfinite(value)||std::abs(value)>.35){valid=false;break;}
+                            consumer.signal.push_back(value);
+                            if(consumer.signal.size()==StreamingAnalyzer::blockFrames&&
+                                !analyzer.submit(index,stage,consumer.signal)){valid=false;break;}
+                        }
+                    }
+                }
+                const uint64_t expected=consumer.previousPosition,previousStamp=consumer.previousStamp;
+                const bool hadPrevious=consumer.hadPacket;
+                consumer.previousPosition=position+frames;consumer.previousStamp=stamp;consumer.hadPacket=true;
+                if(FAILED(consumer.capture->ReleaseBuffer(frames))){abortRun("release capture buffer");break;}
+                if(!valid){
+                    evidence.firstInvalid.retain({true,frames,flags,position,expected,stamp,previousStamp,
+                        qpc100ns(),e.maxConsumerDrainGap100ns,hadPrevious,eligible});
+                    std::printf("Extended PCM32 invalid packet: client=%u frames=%u flags=0x%08lx position=%llu expected=%llu stamp=%llu previous=%llu now=%llu had_previous=%s eligible=%s max_consumer_drain_gap_us=%llu\n",
+                        index,frames,static_cast<unsigned long>(flags),static_cast<unsigned long long>(position),
+                        static_cast<unsigned long long>(expected),static_cast<unsigned long long>(stamp),
+                        static_cast<unsigned long long>(previousStamp),static_cast<unsigned long long>(qpc100ns()),
+                        hadPrevious?"true":"false",eligible?"true":"false",static_cast<unsigned long long>(e.maxConsumerDrainGap100ns/10));
+                    abortRun("buffer, fresh timestamp, continuity or bounded analyzer queue");break;
+                }
+                if(FAILED(consumer.capture->GetNextPacketSize(&frames))){abortRun("capture drain packet size");break;}
+            }
+            // A stalled consumer must fail even when the other shared client
+            // keeps the driver clock and counters moving normally.
+            if(GetTickCount64()-consumer.lastPacketMs>250){abortRun("shared client produced no packet for 250 ms");break;}
+        }
+        if(!ok)break;
+        if(paused&&producer.resumePermit.load()<phase&&lifecycleAcknowledgementExpired(now,state.phaseEpoch)) {
+            abortRun("insufficient fresh silence within lifecycle acknowledgement deadline");break;
+        }
+        if(paused&&producer.resumePermit.load()<phase&&
+            silenceObservationReady(now,state.phaseEpoch,consumers[0].quiet.size(),consumers[1].quiet.size())) {
+            for(unsigned i=0;i<2;++i) {
+                if(!silence(consumers[i].quiet)){abortRun("100 ms fresh silence after actual lifecycle guard");break;}
+                ++e.clients[i].silenceChecks;
+            }
+            if(!ok)break;
+            producer.resumePermit=phase;
+        }
+        if(now>=nextHeartbeat) {
+            std::printf("Extended heartbeat: elapsed=%llu/%u000 ms writes=%llu packets=%llu/%llu overruns=%u underruns=%u\n",
+                static_cast<unsigned long long>((now-began)/10000),seconds,static_cast<unsigned long long>(e.writes),
+                static_cast<unsigned long long>(e.clients[0].packets),static_cast<unsigned long long>(e.clients[1].packets),
+                e.driverOverruns,e.driverUnderruns);std::fflush(stdout);nextHeartbeat=now+50000000;
+        }
+        LARGE_INTEGER due{};due.QuadPart=-10000;
+        if(!SetWaitableTimerEx(timer.h,&due,0,nullptr,nullptr,nullptr,0)||WaitForSingleObject(timer.h,200)!=WAIT_OBJECT_0) {
+            abortRun("bounded private timer wait");break;
+        }
+    }
+    e.elapsedMs=(qpc100ns()-began)/10000;
+    producer.finish();state=producer.snapshot();copyProducerEvidence(state.evidence);
+    e.elapsedMs=(qpc100ns()-began)/10000;
+    if(state.failure){abortRun(state.failure);}
+    std::printf("Extended producer timing: max lateness=%llu ms max write gap=%llu us max IOCTL=%llu us min steady queue=%u frames MMCSS=%s.\n",
+        static_cast<unsigned long long>(e.maxLatenessMs),static_cast<unsigned long long>(e.maxWriteGap100ns/10),
+        static_cast<unsigned long long>(e.maxIoctl100ns/10),e.minimumQueuedSteady,e.mmcss?"Pro Audio":"failed");
+    std::printf("Extended consumer timing: max drain gap=%llu us MMCSS=%s.\n",
+        static_cast<unsigned long long>(e.maxConsumerDrainGap100ns/10),e.consumerMmcss?"Pro Audio":"failed");
+    r.check(e.driverReceivedFrames==e.writes*SES_DRIVER_FRAMES,
+        "driver received-frame counter matches every successful producer packet");
+    if(e.product) {
+        r.check(e.workerMmcss,"real DriverBridge worker registers MMCSS Pro Audio in every source session");
+        r.check(e.queueDrops==0&&e.writes==e.submittedPackets,"every real upstream callback reaches DriverBridge without TransferQueue drops");
+        r.check(e.sourceSessions==3,"real DriverBridge stop/start clears stale audio across both lifecycle changes");
+        if(e.kernelDiagnostics) {
+            r.check(completeKernelDiagnostics(e),"optional instrumented run retains three valid kernel diagnostics from the actual worker owner sessions");
+        }
+    }
+    for(auto& consumer:consumers)consumer.close();analyzer.finish();
+    r.check(ok&&!analyzer.failed,"extended capture keeps bounded memory, packet integrity, waveform fidelity and driver counters");
+    r.check(e.elapsedMs>=seconds*1000ULL&&e.elapsedMs<=seconds*1000ULL+1000,"extended capture completes requested measured duration within bounded shutdown guard");
+    for(unsigned i=0;i<2;++i) {
+        r.check(zeroPositionGaps(e.clients[i]),"each shared client has zero observed position gaps including lifecycle guards");
+        r.check(e.elapsedMs>1000&&e.clients[i].frames>=(e.elapsedMs-1000)*rate/1000,
+            "each shared client captures frames covering measured run apart from bounded startup/reconnect allowance");
+        bool allStages=true;
+        for(unsigned s=0;s<3;++s){e.clients[i].windows[s]=analyzer.windows[i][s].load();allStages=allStages&&e.clients[i].windows[s]>0;}
+        r.check(allStages,"each shared client retains waveform before pause, after resume and after producer reconnect");
+        r.check(e.clients[i].silenceChecks==2,"each shared client observes fresh silence for both lifecycle changes");
+    }
+    r.check(e.producerReconnects==1&&e.clients[1].reconnects==1,"producer and one concurrent consumer reconnect successfully");
+    return r.failures==before;
+}
+
+struct Options {bool offline=false,lab=false,extended=false,product=false,kernelDiagnostics=false;unsigned seconds=60;const char* reportPath=nullptr;};
+bool parseOptions(int argc,char** argv,Options& options) {
+    bool durationSet=false;
+    for(int i=1;i<argc;++i) {
+        if(!std::strcmp(argv[i],"--self-test")&&!options.offline)options.offline=true;
+        else if(!std::strcmp(argv[i],"--isolated-lab")&&!options.lab)options.lab=true;
+        else if(!std::strcmp(argv[i],"--extended")&&!options.extended)options.extended=true;
+        else if(!std::strcmp(argv[i],"--product-bridge")&&!options.product)options.product=true;
+        else if(!std::strcmp(argv[i],"--kernel-diagnostics")&&!options.kernelDiagnostics)options.kernelDiagnostics=true;
+        else if(!std::strcmp(argv[i],"--json-report")&&i+1<argc&&!options.reportPath&&argv[i+1][0]&&argv[i+1][0]!='-')options.reportPath=argv[++i];
+        else if(!std::strcmp(argv[i],"--duration-seconds")&&i+1<argc&&!durationSet) {
+            const char* value=argv[++i];unsigned seconds=0;
+            if(!*value)return false;
+            for(const char* p=value;*p;++p){if(*p<'0'||*p>'9'||seconds>3600)return false;seconds=seconds*10+static_cast<unsigned>(*p-'0');}
+            if(seconds<10||seconds>3600)return false;
+            options.seconds=seconds;durationSet=true;
+        } else return false;
+    }
+    return options.offline!=options.lab&&(!options.extended||options.lab)&&(!durationSet||options.extended)&&
+        (!options.product||(options.lab&&options.extended&&durationSet))&&(!options.kernelDiagnostics||options.product);
+}
+void mailboxSelfTest(Report& r) {
+    const char oddFailure[]="fixture odd generation",evenFailure[]="fixture even generation";
+    constexpr uint64_t terminal=11002;
+    auto makePublication=[&](uint64_t generation) {
+        ProducerPublication state{};state.began=generation;state.phaseEpoch=generation*7;state.phase=static_cast<unsigned>(generation%5);
+        state.ready=true;state.done=generation==terminal;state.resumePending=generation%3==0;
+        state.failure=generation%2?oddFailure:evenFailure;
+        auto& e=state.evidence;e.writes=generation*11;e.driverReceivedFrames=generation*480;
+        e.driverSilenceFrames=generation*13;e.steadyUnderruns=static_cast<uint32_t>(generation%31);
+        e.statusHistory.count=64;e.statusHistory.next=0;
+        for(size_t i=0;i<64;++i) {
+            auto& o=e.statusHistory.observations[i];o.sample=generation;o.elapsed100ns=generation*17+i;
+            o.phase=state.phase;o.received=generation*480+i;o.silence=generation*13+i;
+            o.underruns=static_cast<uint32_t>(generation%31);o.drift=-static_cast<int32_t>(i);
+        }
+        return state;
+    };
+    auto consistent=[&](const ProducerPublication& state) {
+        const uint64_t generation=state.began;const auto& e=state.evidence;
+        if(!generation||state.phaseEpoch!=generation*7||state.phase!=generation%5||!state.ready||
+            state.done!=(generation==terminal)||state.resumePending!=(generation%3==0)||state.failure!=(generation%2?oddFailure:evenFailure)||
+            e.writes!=generation*11||e.driverReceivedFrames!=generation*480||e.driverSilenceFrames!=generation*13||
+            e.steadyUnderruns!=generation%31||e.statusHistory.count!=64||e.statusHistory.next!=0)return false;
+        for(size_t i=0;i<64;++i) {
+            const auto& o=e.statusHistory.observations[i];
+            if(o.sample!=generation||o.elapsed100ns!=generation*17+i||o.phase!=state.phase||
+                o.received!=generation*480+i||o.silence!=generation*13+i||o.underruns!=generation%31||
+                o.drift!=-static_cast<int32_t>(i))return false;
+        }
+        return true;
+    };
+    ProducerMailbox mailbox;
+    const bool initialized=mailbox.publish(makePublication(1));
+    struct ReaderPause {
+        std::atomic<bool> held{false},released{false},writerProof{false},timedOut{false};
+        uint64_t elapsedMs=0;
+    } pause;
+    std::atomic<bool> sampling{false},writerDone{false},torn{false},writerFailed{false},barrierTimeout{false};
+    uint64_t updatesWhilePinned=0,snapshots=0;
+    ProducerPublication pinned;
+    std::thread reader([&] {
+        pinned=mailbox.snapshot([](void* context) noexcept {
+            auto& pause=*static_cast<ReaderPause*>(context);const uint64_t began=GetTickCount64();
+            pause.held=true;
+            while(GetTickCount64()-began<1000&&(!pause.writerProof||GetTickCount64()-began<40))Sleep(1);
+            pause.elapsedMs=GetTickCount64()-began;pause.timedOut=!pause.writerProof||pause.elapsedMs>1000;pause.released=true;
+        },&pause);
+        if(!consistent(pinned))torn=true;
+        sampling=true;
+        do {
+            if(!consistent(mailbox.snapshot()))torn=true;
+            ++snapshots;
+        } while(!writerDone);
+    });
+    const uint64_t heldDeadline=GetTickCount64()+1000;
+    while(!pause.held&&GetTickCount64()<heldDeadline)Sleep(1); // Fixture orchestration only.
+    if(!pause.held)barrierTimeout=true;
+    std::thread writer([&] {
+        for(uint64_t generation=2;generation<=1001;++generation) {
+            if(!mailbox.publish(makePublication(generation)))writerFailed=true;
+            if(!pause.released)++updatesWhilePinned;
+        }
+        pause.writerProof=true;
+        const uint64_t samplingDeadline=GetTickCount64()+1000;
+        while(!sampling&&GetTickCount64()<samplingDeadline)Sleep(1);
+        if(!sampling){barrierTimeout=true;writerDone=true;return;}
+        for(uint64_t generation=1002;generation<=terminal;++generation)
+            if(!mailbox.publish(makePublication(generation)))writerFailed=true;
+        writerDone=true;
+    });
+    writer.join();reader.join();
+    // With the writer joined, the latest slot is uncontended. This must read
+    // the actual final publication, regardless of the reader's prior cache.
+    const auto final=mailbox.snapshot();
+    auto check=[&](bool ok,const char* label){++r.selfTests;r.check(ok,label);};
+    check(initialized&&!writerFailed&&!barrierTimeout&&!pause.timedOut&&pause.elapsedMs>=40&&updatesWhilePinned==1000,
+        "three-slot producer publication completes 1000 updates before pinned reader releases after at least 40 ms within bounded fixture guards");
+    check(!torn&&pinned.began==1&&snapshots>0,
+        "bounded producer mailbox retains unmixed phase, failure, counters and all 64 observations under concurrent copies");
+    check(consistent(final)&&final.began==terminal&&final.done,
+        "joined producer mailbox delivers actual newest terminal evidence instead of an earlier cached snapshot");
+}
+void extendedSelfTest(Report& r) {
+    mailboxSelfTest(r);
+    ++r.selfTests;r.check(workerPublicationAge(100,40)==60&&workerPublicationAge(40,40)==0,
+        "worker publication age measures the independent timestamp without changing counter gates");
+    ++r.selfTests;r.check(workerPublicationAge(100,0)==0&&workerPublicationAge(40,100)==0&&
+        workerPublicationAge(std::numeric_limits<uint64_t>::max(),1)==std::numeric_limits<uint64_t>::max()-1,
+        "missing or newer worker timestamp cannot underflow publication age");
+    auto check=[&](bool ok,const char* label){++r.selfTests;r.check(ok,label);};
+    // Model CONNECT synchronously between the two actual publication helpers.
+    // No scheduling luck or endpoint API is needed to expose the old ordering.
+    ProducerSchedule reconnectSchedule(10000000,12);
+    reconnectSchedule.phase=3;reconnectSchedule.phaseEpoch=90000000;
+    const uint64_t transitionBegan=reconnectSchedule.phaseEpoch+5500000;
+    ProducerPublication reconnectState{};reconnectState.ready=true;reconnectState.phase=3;
+    reconnectState.phaseEpoch=reconnectSchedule.phaseEpoch;
+    ProducerMailbox reconnectMailbox;
+    check(reconnectMailbox.publish(reconnectState),"initialize deterministic paused reconnect publication");
+    publishResumeBoundary(reconnectMailbox,reconnectState,reconnectSchedule,transitionBegan);
+    const auto duringConnect=reconnectMailbox.snapshot(); // Fake CONNECT side effect observes this boundary.
+    check(duringConnect.phase==4&&duringConnect.phaseEpoch==transitionBegan&&duringConnect.resumePending&&
+        reconnectSchedule.phase==3&&reconnectSchedule.phaseEpoch==90000000,
+        "upcoming phase is published before reconnect side effects while actual paused scheduler epoch stays unchanged");
+    check(!packetEligible(transitionBegan+5000000,transitionBegan+2500000,duringConnect,4,transitionBegan)&&
+        reconnectSchedule.lifecycleExpired(100000001),
+        "even a delayed reconnect cannot make pending waveform eligible or erase the original one-second lifecycle deadline");
+    const uint64_t actualResume=transitionBegan+2000000;
+    const bool resumeCompleted=publishResumeComplete(reconnectMailbox,reconnectState,reconnectSchedule,actualResume);
+    const auto afterConnect=reconnectMailbox.snapshot();
+    check(resumeCompleted&&afterConnect.phase==4&&!afterConnect.resumePending&&afterConnect.phaseEpoch==actualResume&&
+        reconnectSchedule.nextWrite==actualResume+ProducerSchedule::packetPeriod&&!reconnectSchedule.schedulerExpired(actualResume),
+        "successful reconnect publishes actual resume epoch and begins unchanged write schedule only after completion");
+    check(!packetEligible(actualResume+2500000,actualResume+2500000,afterConnect,4,transitionBegan)&&
+        !packetEligible(actualResume+2499999,actualResume+2500000,afterConnect,4,actualResume)&&
+        packetEligible(actualResume+2500000,actualResume+2500000,afterConnect,4,actualResume),
+        "same-phase completion requires the actual resume epoch and full existing fresh waveform guard");
+    reconnectSchedule.phase=3;reconnectSchedule.phaseEpoch=90000000;
+    const uint64_t originalNextWrite=reconnectSchedule.nextWrite;
+    publishResumeBoundary(reconnectMailbox,reconnectState,reconnectSchedule,transitionBegan);
+    const bool lateCompleted=publishResumeComplete(reconnectMailbox,reconnectState,reconnectSchedule,100000001);
+    const auto afterLateConnect=reconnectMailbox.snapshot();
+    check(!lateCompleted&&reconnectSchedule.phase==3&&reconnectSchedule.phaseEpoch==90000000&&
+        reconnectSchedule.nextWrite==originalNextWrite&&reconnectState.resumePending&&
+        reconnectState.phaseEpoch==transitionBegan&&afterLateConnect.resumePending&&afterLateConnect.phaseEpoch==transitionBegan,
+        "expired reconnect plus prefill completion preserves paused schedule and pending publication without resetting lifecycle deadline");
+    const bool exactCompleted=publishResumeComplete(reconnectMailbox,reconnectState,reconnectSchedule,100000000);
+    const auto afterExactConnect=reconnectMailbox.snapshot();
+    check(exactCompleted&&reconnectSchedule.phase==4&&reconnectSchedule.phaseEpoch==100000000&&
+        reconnectSchedule.nextWrite==100100000&&!afterExactConnect.resumePending&&afterExactConnect.phaseEpoch==100000000,
+        "reconnect completion at exact original one-second lifecycle deadline passes without tolerance changes");
+    ExtendedClientEvidence continuity{};
+    check(packetPositionContiguous(false,1948320,0)&&packetPositionContiguous(true,1947840,1947840)&&zeroPositionGaps(continuity),
+        "first capture packet establishes a baseline and exact next packet positions pass zero-gap acceptance");
+    const bool guardEligible=packetEligible(actualResume,actualResume+2500000,afterConnect,4,actualResume);
+    if(!packetPositionContiguous(true,1948320,1947840))++continuity.gaps;
+    check(!guardEligible&&continuity.gaps==1&&!zeroPositionGaps(continuity)&&
+        !packetPositionContiguous(true,1947360,1947840),
+        "forward or backward position gaps fail even when packet is inside an ineligible lifecycle guard");
+    ProducerStatusHistory history;
+    check(history.count==0&&history.next==0&&history.observations.size()==64,
+        "producer telemetry starts empty with exactly 64 fixed observations");
+    for(uint64_t sample=1;sample<=80;++sample) {
+        ProducerStatusObservation observation{};
+        observation.sample=sample;observation.elapsed100ns=sample*100000;
+        observation.due100ns=sample*100000-1;observation.queued=static_cast<uint32_t>(sample);
+        observation.drift=-static_cast<int32_t>(sample);observation.received=sample*480;
+        observation.silence=sample==80?22:0;observation.underruns=sample==80?1:0;
+        history.append(observation);
+    }
+    bool chronological=history.count==64&&history.next==16;
+    for(size_t i=0;i<history.count;++i) {
+        const auto& observation=history.oldest(i);
+        chronological=chronological&&observation.sample==i+17&&observation.elapsed100ns==(i+17)*100000&&
+            observation.queued==i+17&&observation.drift==-static_cast<int32_t>(i+17)&&observation.received==(i+17)*480;
+    }
+    check(chronological,"producer telemetry wraps in bounded storage and retains chronological field values");
+    ProducerPublication telemetrySnapshot{};telemetrySnapshot.evidence.statusHistory=history;
+    const auto& failureObservation=telemetrySnapshot.evidence.statusHistory.oldest(63);
+    check(failureObservation.sample==80&&failureObservation.silence==22&&failureObservation.underruns==1,
+        "producer publication retains the final counter-failure observation");
+    ProducerStatusObservation nextObservation{};nextObservation.sample=81;history.append(nextObservation);
+    check(history.count==64&&history.oldest(0).sample==18&&history.oldest(63).sample==81&&
+        telemetrySnapshot.evidence.statusHistory.oldest(0).sample==17&&failureObservation.sample==80,
+        "producer telemetry publication is an independent consistent snapshot after wrap");
+    ProducerSchedule schedule(10000000,12);
+    check(!schedule.schedulerExpired(schedule.nextWrite+500000)&&schedule.schedulerExpired(schedule.nextWrite+500001),
+        "producer schedule retains exact 50 ms boundary without rounding away a violation");
+    check(!schedule.pauseDue(schedule.began+39999999)&&schedule.pauseDue(schedule.began+40000000),
+        "producer lifecycle pause begins at one-third of measured QPC duration");
+    ProducerSchedule crossing(schedule.began,12);
+    const uint64_t pauseBoundary=crossing.began+40000000;
+    crossing.nextWrite=pauseBoundary-500001;
+    check(crossing.pauseDue(pauseBoundary)&&crossing.schedulerExpired(pauseBoundary)&&!crossing.pauseAllowed(pauseBoundary)&&
+        crossing.phase==0&&crossing.phaseEpoch==crossing.began,
+        "expired steady scheduler deadline takes priority over a due lifecycle pause without resetting epoch");
+    crossing.nextWrite=pauseBoundary-499999;
+    check(crossing.pauseAllowed(pauseBoundary)&&!crossing.pauseAllowed(pauseBoundary+2)&&crossing.schedulerExpired(pauseBoundary+2),
+        "lifecycle status work crossing exact 50 ms deadline prevents the pending pause");
+    schedule.pause(schedule.began+40012345);
+    check(!schedule.resumeDue(schedule.phaseEpoch+5500000,0)&&!schedule.resumeDue(schedule.phaseEpoch+5499999,1)&&
+        schedule.resumeDue(schedule.phaseEpoch+5500000,1),
+        "producer resume requires consumer acknowledgement and full actual 550 ms pause");
+    check(!schedule.lifecycleExpired(schedule.phaseEpoch+10000000)&&schedule.lifecycleExpired(schedule.phaseEpoch+10000001),
+        "producer lifecycle acknowledgement has a bounded shutdown-safe deadline");
+    check(!lifecycleAcknowledgementExpired(schedule.phaseEpoch-1,schedule.phaseEpoch)&&
+        !silenceObservationReady(schedule.phaseEpoch-1,schedule.phaseEpoch,4800,4800)&&
+        !lifecycleAcknowledgementExpired(schedule.phaseEpoch+10000000,schedule.phaseEpoch)&&
+        lifecycleAcknowledgementExpired(schedule.phaseEpoch+10000001,schedule.phaseEpoch),
+        "publication newer than sampled clock cannot underflow lifecycle timeout or permit early acknowledgement");
+    check(!silenceObservationReady(schedule.phaseEpoch+5000000,schedule.phaseEpoch,4800,4320)&&
+        silenceObservationReady(schedule.phaseEpoch+6200000,schedule.phaseEpoch,4800,4800)&&
+        schedule.resumeDue(schedule.phaseEpoch+6200000,1)&&!schedule.lifecycleExpired(schedule.phaseEpoch+6200000)&&
+        schedule.lifecycleExpired(schedule.phaseEpoch+10000001),
+        "late consumer reopen waits for both full fresh silence observations within unchanged one-second lifecycle guard");
+    const uint64_t resumed=schedule.phaseEpoch+5500000;schedule.resume(resumed);
+    check(schedule.phase==2&&schedule.nextWrite==resumed+100000&&!schedule.schedulerExpired(resumed)&&
+        schedule.pauseDue(schedule.began+80000000),
+        "resume resets write epoch and preserves independently scheduled second lifecycle");
+    // Mock the independent kernel clock while the COM owner is deliberately
+    // idle for 28 ms at a time. No endpoint, driver or MMCSS API is accessed.
+    ses_driver::PcmRing ring;
+    SesDriverHello hello{SES_DRIVER_PROTOCOL,sizeof(hello),rate,1,32,SES_DRIVER_FRAMES};
+    bool mockOk=ring.connect(hello,0);uint64_t mockSequence=0;
+    auto mockWrite=[&](uint64_t now) {
+        SesDriverPacket packet{SES_DRIVER_PROTOCOL,sizeof(packet),SES_DRIVER_FRAMES,0,mockSequence,{}};
+        for(unsigned i=0;i<SES_DRIVER_FRAMES;++i)packet.pcm[i]=pcm32(mockSequence*SES_DRIVER_FRAMES+i);
+        const bool written=ring.push(packet,now);if(written)++mockSequence;return written;
+    };
+    for(unsigned i=0;i<3;++i)mockOk=mockWrite(0)&&mockOk;
+    ProducerSchedule mockSchedule(0,12);uint64_t consumerTurns=0;
+    int32_t pulled[SES_DRIVER_FRAMES]{};
+    for(uint64_t ms=1;ms<3000;++ms) {
+        const uint64_t now=ms*10000;
+        if(now>=mockSchedule.nextWrite){mockOk=mockWrite(ms)&&!mockSchedule.schedulerExpired(now)&&mockOk;mockSchedule.nextWrite+=100000;}
+        if(ms%10==0)ring.pull(pulled,SES_DRIVER_FRAMES,32,ms);
+        if(ms%28==0)++consumerTurns; // capture work never owns producer cadence
+    }
+    check(mockOk&&consumerTurns>0&&ring.underruns==0&&ring.overruns==0&&ring.received==mockSequence*SES_DRIVER_FRAMES,
+        "mock independent producer preserves exact frames and zero underruns during 28 ms consumer work gaps");
+    bool periodic=true;
+    for(unsigned i=0;i<SES_DRIVER_FRAMES;++i)periodic=periodic&&std::abs(static_cast<int64_t>(pcm32(i+4*SES_DRIVER_FRAMES))-pcm32(i))<=1;
+    check(periodic,"precomputed four-packet waveform retains PCM fidelity across producer sequence cycles");
+    auto optionsCheck=[&](std::initializer_list<const char*> args,bool expected,const char* label) {
+        std::vector<char*> argv;for(const char* arg:args)argv.push_back(const_cast<char*>(arg));
+        Options options;++r.selfTests;r.check(parseOptions(static_cast<int>(argv.size()),argv.data(),options)==expected,label);
+    };
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","3600"},true,"CLI permits bounded one-hour isolated capture");
+    optionsCheck({"test","--self-test","--extended"},false,"CLI rejects active extended capture in offline mode");
+    optionsCheck({"test","--isolated-lab","--duration-seconds","60"},false,"CLI rejects duration without explicit extended mode");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","3601"},false,"CLI rejects over-hour duration");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","999999999999999999999"},false,"CLI rejects overflowing duration");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","10junk"},false,"CLI rejects partially numeric duration");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","9"},false,"CLI rejects too-short lifecycle observation");
+    optionsCheck({"test","--self-test","--self-test"},false,"CLI rejects duplicate mode flags");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--product-bridge"},true,
+        "CLI permits explicit production DriverBridge with bounded extended lab duration");
+    optionsCheck({"test","--isolated-lab","--extended","--product-bridge"},false,
+        "CLI requires explicit measured duration for production DriverBridge acceptance");
+    optionsCheck({"test","--isolated-lab","--product-bridge","--duration-seconds","60"},false,
+        "CLI rejects production DriverBridge without extended capture");
+    optionsCheck({"test","--self-test","--product-bridge"},false,
+        "CLI never activates production DriverBridge on offline self-test");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--product-bridge","--product-bridge"},false,
+        "CLI rejects duplicate production DriverBridge flags");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--product-bridge","--kernel-diagnostics"},true,
+        "CLI permits explicitly instrumented kernel diagnostics only on bounded production DriverBridge lab capture");
+    optionsCheck({"test","--self-test","--kernel-diagnostics"},false,
+        "CLI rejects kernel diagnostics in offline mode");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--kernel-diagnostics"},false,
+        "CLI rejects kernel diagnostics on the strict synthetic producer");
+    optionsCheck({"test","--isolated-lab","--extended","--product-bridge","--kernel-diagnostics"},false,
+        "CLI rejects kernel diagnostics without explicit bounded duration");
+    optionsCheck({"test","--isolated-lab","--extended","--duration-seconds","60","--product-bridge","--kernel-diagnostics","--kernel-diagnostics"},false,
+        "CLI rejects duplicate kernel diagnostics flags");
+    SesDriverDiagnostics diagnostic{};diagnostic.version=SES_DRIVER_DIAGNOSTICS_VERSION;diagnostic.size=sizeof(diagnostic);
+    check(validKernelDiagnostics(diagnostic),"diagnostic validator accepts exact additive v1 wire layout without requiring an underrun");
+    auto badDiagnostic=diagnostic;badDiagnostic.version++;
+    const bool rejectsVersion=!validKernelDiagnostics(badDiagnostic);badDiagnostic=diagnostic;badDiagnostic.size--;
+    const bool rejectsSize=!validKernelDiagnostics(badDiagnostic);badDiagnostic=diagnostic;badDiagnostic.reserved0=1;
+    const bool rejectsReserved0=!validKernelDiagnostics(badDiagnostic);badDiagnostic=diagnostic;badDiagnostic.reserved1=1;
+    check(rejectsVersion&&rejectsSize&&rejectsReserved0&&!validKernelDiagnostics(badDiagnostic),
+        "diagnostic validator rejects wrong version, truncated output and both nonzero reserved fields");
+    diagnostic.first_underrun_present=1;diagnostic.first_underrun_queued_before=407;
+    diagnostic.first_underrun_chunk_frames=480;diagnostic.first_underrun_remaining_frames=961;
+    diagnostic.first_underrun_capture_frames=1441;diagnostic.first_underrun_old_count=7;diagnostic.first_underrun_new_count=8;
+    diagnostic.max_capture_frames=1441;diagnostic.max_pull_chunk_frames=480;
+    diagnostic.last_successful_write_tick_hns=123456789012345678ULL;diagnostic.first_underrun_tick_hns=123456789012456789ULL;
+    check(validKernelDiagnostics(diagnostic),"diagnostic validator preserves original large capture call and remaining frames including current chunk");
+    badDiagnostic=diagnostic;badDiagnostic.first_underrun_remaining_frames=479;
+    const bool rejectsRemaining=!validKernelDiagnostics(badDiagnostic);badDiagnostic=diagnostic;badDiagnostic.first_underrun_present=2;
+    const bool rejectsPresent=!validKernelDiagnostics(badDiagnostic);badDiagnostic=diagnostic;badDiagnostic.max_pull_chunk_frames=481;
+    check(rejectsRemaining&&rejectsPresent&&!validKernelDiagnostics(badDiagnostic),
+        "diagnostic validator rejects malformed first-underrun flag, remaining count and oversized internal chunk");
+    ExtendedEvidence diagnosticEvidence{};diagnosticEvidence.diagnosticCount=3;
+    for(unsigned i=0;i<3;++i)diagnosticEvidence.diagnostics[i]={i+1,ERROR_SUCCESS,true,diagnostic,false,{}};
+    check(!completeKernelDiagnostics(diagnosticEvidence),"a terminal-query underrun cannot pass instrumented acceptance even when previous status was healthy");
+    for(auto& record:diagnosticEvidence.diagnostics)record.data.first_underrun_present=0;
+    check(completeKernelDiagnostics(diagnosticEvidence),"optional diagnostic acceptance requires three complete sequential owner-session records");
+    diagnosticEvidence.diagnosticCount=2;const bool rejectsMissing=!completeKernelDiagnostics(diagnosticEvidence);
+    diagnosticEvidence.diagnosticCount=3;diagnosticEvidence.diagnostics[1].queryError=ERROR_INVALID_FUNCTION;
+    const bool rejectsUnsupported=!completeKernelDiagnostics(diagnosticEvidence);
+    diagnosticEvidence.diagnostics[1].queryError=ERROR_SUCCESS;diagnosticEvidence.diagnostics[1].sourceSession=1;
+    check(rejectsMissing&&rejectsUnsupported&&!completeKernelDiagnostics(diagnosticEvidence),
+        "optional diagnostic gate rejects missing sessions, unsupported old-driver query and duplicate owner-session evidence");
+    FILE* diagnosticFile=std::tmpfile();bool serialized=false;
+    if(diagnosticFile) {
+        const KernelDiagnosticRecord record{1,ERROR_SUCCESS,true,diagnostic,false,{}};
+        const bool written=writeKernelDiagnosticRecord(diagnosticFile,record);std::fflush(diagnosticFile);std::rewind(diagnosticFile);
+        std::array<char,4096> text{};const auto bytes=std::fread(text.data(),1,text.size()-1,diagnosticFile);
+        serialized=written&&bytes>0&&std::strstr(text.data(),"\"source_session\":1,\"available\":true,\"query_error\":0")&&
+            std::strstr(text.data(),"\"last_successful_write_tick_hns\":123456789012345678")&&
+            std::strstr(text.data(),"\"first_underrun_remaining_frames\":961")&&
+            std::strstr(text.data(),"\"first_underrun_capture_frames\":1441");
+        std::fclose(diagnosticFile);
+    }
+    check(serialized,"diagnostic JSON preserves full-width kernel interrupt timestamps and original first-underrun call context");
+    KernelDiagnosticRecord timelineRecord{};timelineRecord.sourceSession=2;timelineRecord.timelineAvailable=true;
+    timelineRecord.timeline.reset(true,7);timelineRecord.timeline.connected(123456789012345670ULL,9);
+    ses::WorkerTraceEvent traceEvent{};traceEvent.kind=ses::WorkerTraceKind::Status;
+    traceEvent.begin100ns=123456789012345671ULL;traceEvent.end100ns=123456789012345672ULL;
+    traceEvent.kernelStatusAvailable=true;traceEvent.kernelQueued=3;traceEvent.underruns=10;
+    traceEvent.ioPhases.issuePath=ses::DriverIssuePath::Pending;traceEvent.ioPhases.issue100ns=12;
+    traceEvent.ioPhases.waitReturn=WAIT_FAILED;traceEvent.ioPhases.wait100ns=34;
+    traceEvent.ioPhases.resultCalls=2;traceEvent.ioPhases.resultPath=ses::DriverResultPath::Failure;
+    traceEvent.ioPhases.result100ns=56;traceEvent.ioPhases.observations=15;
+    timelineRecord.timeline.append(traceEvent);timelineRecord.timeline.observeUnderruns(10,traceEvent.end100ns);
+    timelineRecord.timeline.stopped(traceEvent.end100ns+1);
+    FILE* timelineFile=std::tmpfile();bool timelineSerialized=false;
+    if(timelineFile){
+        const bool written=writeWorkerTimeline(timelineFile,timelineRecord);std::fflush(timelineFile);std::rewind(timelineFile);
+        std::array<char,8192> text{};const auto bytes=std::fread(text.data(),1,text.size()-1,timelineFile);
+        const char* connected=std::strstr(text.data(),"\"kind\":\"CONNECTED_GENERATION\"");
+        const char* status=std::strstr(text.data(),"\"kind\":\"STATUS\"");
+        timelineSerialized=written&&bytes>0&&connected&&status&&connected<status&&
+            std::strstr(text.data(),"\"begin_100ns\":123456789012345671")&&
+            std::strstr(text.data(),"\"freeze_reason\":\"first_STATUS_underrun_rise\"")&&
+            std::strstr(text.data(),"\"freeze_old_underruns\":9,\"freeze_new_underruns\":10")&&
+            std::strstr(text.data(),"\"kernel_STATUS_available\":true")&&
+            std::strstr(text.data(),"\"schedule_sample_100ns\":")&&!std::strstr(text.data(),"\"arm_100ns\":")&&
+            std::strstr(text.data(),"intended_QPC_cadence_deadline_before_SetWaitableTimerEx_not_actual_OS_timer_expiry")&&
+            std::strstr(text.data(),"includes_prearm_descheduling_API_execution_and_wake_resume")&&
+            std::strstr(status,"\"io_issue_path\":3,\"io_issue_duration_available\":true,\"io_issue_100ns\":12")&&
+            std::strstr(status,"\"io_wait_observed\":true,\"io_wait_return\":4294967295,\"io_wait_duration_available\":true,\"io_wait_100ns\":34")&&
+            std::strstr(status,"\"io_result_calls\":2,\"io_result_last_path\":2,\"io_result_duration_available\":true,\"io_result_sum_100ns\":56")&&
+            std::strstr(text.data(),"result_duration_sums_probes_excludes_cancel_grace")&&
+            std::strstr(text.data(),"\"time_units\":\"100ns\"");
+        std::fclose(timelineFile);
+    }
+    check(timelineSerialized,"worker timeline JSON preserves chronological operation types, full-width times, units and first-rise freeze context");
+    timelineRecord.timeline.reset(false,8);timelineRecord.timeline.stopped(0);
+    timelineFile=std::tmpfile();bool disabledSerialized=false;
+    if(timelineFile){
+        const bool written=writeWorkerTimeline(timelineFile,timelineRecord);std::fflush(timelineFile);std::rewind(timelineFile);
+        std::array<char,4096> text{};const auto bytes=std::fread(text.data(),1,text.size()-1,timelineFile);
+        disabledSerialized=written&&bytes>0&&std::strstr(text.data(),"\"available\":false")&&
+            std::strstr(text.data(),"\"count\":0")&&std::strstr(text.data(),"\"events\":[]")&&
+            !std::strstr(text.data(),"\"kind\":");std::fclose(timelineFile);
+    }
+    check(disabledSerialized,"opt-out timeline never exports stale enabled-session events or claims availability");
+    Report boundedTimelineReport{};boundedTimelineReport.extended.kernelDiagnostics=true;
+    boundedTimelineReport.extended.diagnosticCount=3;
+    for(unsigned source=0;source<3;++source){
+        auto& record=boundedTimelineReport.extended.diagnostics[source];record.sourceSession=source+1;
+        record.data=diagnostic;record.timelineAvailable=true;record.timeline.reset(true,source+1);
+        record.timeline.connected(1,7);
+        for(size_t i=0;i<ses::WorkerTrace::capacity+1;++i){
+            traceEvent={};traceEvent.kind=ses::WorkerTraceKind::Status;
+            traceEvent.ioPhases.issuePath=ses::DriverIssuePath::Pending;traceEvent.ioPhases.resultPath=ses::DriverResultPath::Success;
+            traceEvent.ioPhases.issue100ns=traceEvent.ioPhases.wait100ns=traceEvent.ioPhases.result100ns=UINT64_MAX;
+            traceEvent.ioPhases.waitReturn=WAIT_TIMEOUT;traceEvent.ioPhases.resultCalls=2;traceEvent.ioPhases.observations=15;
+            traceEvent.begin100ns=2+i*2;traceEvent.end100ns=3+i*2;record.timeline.append(traceEvent);
+        }
+        record.timeline.observeUnderruns(8,traceEvent.end100ns);record.timeline.stopped(traceEvent.end100ns+1);
+    }
+    // Use an existing temp-file fixture; this is offline serialization only.
+    char boundedPath[MAX_PATH]{};char tempDirectory[MAX_PATH]{};
+    bool boundedSerialized=false;
+    if(GetTempPathA(MAX_PATH,tempDirectory)&&GetTempFileNameA(tempDirectory,"ses",0,boundedPath)){
+        const bool written=boundedTimelineReport.json(boundedPath);FILE* file=std::fopen(boundedPath,"rb");
+        if(file){
+            std::fseek(file,0,SEEK_END);const auto bytes=std::ftell(file);std::rewind(file);
+            std::vector<char> text(bytes>0?static_cast<size_t>(bytes)+1:1);
+            const auto read=std::fread(text.data(),1,text.size()-1,file);
+            const char* firstFailure=std::strstr(text.data(),"\"first_failure_record\":");
+            boundedSerialized=written&&bytes>0&&bytes<1024*1024&&read==static_cast<size_t>(bytes)&&
+                firstFailure&&std::strstr(firstFailure,"\"worker_timeline_record_source_session\":1")&&
+                !std::strstr(firstFailure,"\"worker_timeline\":");
+            std::fclose(file);
+        }
+        DeleteFileA(boundedPath);
+    }
+    check(boundedSerialized,"three full wrapped worker timelines stay below 1 MiB JSON and first-failure kernel data references its original timeline");
+    check(productDeliveryComplete(3,1440,4800,3360)&&!productDeliveryComplete(3,960,4320,3360)&&
+        !productDeliveryComplete(3,1440,4320,3360)&&!productDeliveryComplete(3,1440,5280,3360),
+        "product terminal gate requires every callback and independent owner-session received-frame delta exactly");
+    check(!productDeliveryComplete(1,480,479,480)&&!productDeliveryComplete(1,481,961,480)&&
+        !productDeliveryComplete(std::numeric_limits<uint64_t>::max(),480,960,480),
+        "product terminal gate rejects counter rollback, partial packets and multiplication overflow");
+    check(productFlushComplete(1,480,960,480,1500000,1500000)&&
+        !productFlushComplete(1,480,960,480,1500001,1500000)&&
+        !productFlushComplete(1,0,480,480,1499999,1500000),
+        "product flush rejects late completion past exact 150 ms deadline and pending packets before it");
+    check(productTelemetryHealthy(2,SES_DRIVER_PROTOCOL,true,0,0,0)&&
+        !productTelemetryHealthy(6,SES_DRIVER_PROTOCOL,true,0,0,0)&&
+        !productTelemetryHealthy(2,SES_DRIVER_PROTOCOL+1,true,0,0,0)&&
+        !productTelemetryHealthy(2,SES_DRIVER_PROTOCOL,false,0,0,0)&&
+        !productTelemetryHealthy(2,SES_DRIVER_PROTOCOL,true,1,0,0)&&
+        !productTelemetryHealthy(2,SES_DRIVER_PROTOCOL,true,0,1,0)&&
+        !productTelemetryHealthy(2,SES_DRIVER_PROTOCOL,true,0,0,1),
+        "product telemetry fails closed for real worker failures, protocol, MMCSS, any queue drop, overrun or steady underrun");
+    StreamingAnalyzer analyzer;std::vector<double> first(StreamingAnalyzer::blockFrames),late(first.size());
+    for(size_t i=0;i<first.size();++i)first[i]=late[i]=waveform(i+37);
+    late[late.size()/2]=std::numeric_limits<double>::quiet_NaN();
+    const bool submitted=analyzer.submit(0,0,first)&&analyzer.submit(1,2,late);
+    analyzer.finish();++r.selfTests;
+    r.check(submitted&&analyzer.windows[0][0]==1&&analyzer.failed,"streaming analyzer detects late corruption after an earlier faithful block");
+}
 }
 
 int main(int argc,char** argv) {
-    bool offline=false,lab=false;const char* reportPath=nullptr;
-    for(int i=1;i<argc;++i) {
-        if(!std::strcmp(argv[i],"--self-test"))offline=true;
-        else if(!std::strcmp(argv[i],"--isolated-lab"))lab=true;
-        else if(!std::strcmp(argv[i],"--json-report")&&i+1<argc&&!reportPath)reportPath=argv[++i];
-        else {std::puts("Usage: ses_driver_capture_lab_tests (--self-test | --isolated-lab) [--json-report path]");return 2;}
-    }
-    if(offline==lab) {
-        std::puts("Choose --self-test (offline) or --isolated-lab (dedicated Windows VM/test machine).");return 2;
+    Options options;
+    if(!parseOptions(argc,argv,options)) {
+        std::puts("Usage: ses_driver_capture_lab_tests (--self-test | --isolated-lab [--extended [--duration-seconds 10..3600] [--product-bridge [--kernel-diagnostics]]]) [--json-report path]; --product-bridge requires explicit --extended and --duration-seconds.");return 2;
     }
     Report report;
-    if(offline)selfTest(report);
+    report.extended.requested=options.extended;report.extended.requestedSeconds=options.extended?options.seconds:0;
+    report.extended.product=options.product;
+    report.extended.kernelDiagnostics=options.kernelDiagnostics;
+    if(options.offline){selfTest(report);extendedSelfTest(report);}
     else {
         std::puts("--isolated-lab is an acknowledgement, not isolation. Run only in a dedicated lab.");
         ComApartment apartment;
@@ -452,12 +1856,16 @@ int main(int argc,char** argv) {
             Com<IMMDevice> selected;
             const bool found=findDevice(selected,report);
             report.check(found,"exactly one capture endpoint maps to ROOT\\SES_MICROPHONE and service SesMicrophone");
-            if(found){runFormat(selected.p,16,report);runFormat(selected.p,32,report);}
+            if(found){runFormat(selected.p,16,report);runFormat(selected.p,32,report);
+                if(options.extended&&report.failures==0&&report.unsupported==0) {
+                    if(options.product)runExtended<ProductBridgeProducer>(selected.p,options.seconds,report,options.kernelDiagnostics);
+                    else runExtended<ExtendedProducer>(selected.p,options.seconds,report);
+                }}
         }
     }
     std::printf("%u checks, %u findings, %u unsupported formats; %u capture formats passed.\n",
         report.checks,report.failures,report.unsupported,report.formatsPassed);
-    if(reportPath&&!report.json(reportPath)){std::puts("Findings JSON report could not be written.");return 1;}
+    if(options.reportPath&&!report.json(options.reportPath)){std::puts("Findings JSON report could not be written.");return 1;}
     if(report.failures)return 1;
     if(report.unsupported)return 4; // Incomplete acceptance is never a full pass.
     return 0;

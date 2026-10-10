@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
+#include <array>
 #include "../../driver/shared/ses_driver_protocol.h"
 // Run ONLY on an isolated Windows driver lab, never the daily gaming machine.
 int main(int argc,char** argv){
@@ -9,6 +10,8 @@ int main(int argc,char** argv){
     if(first==INVALID_HANDLE_VALUE){std::printf("Driver unavailable (%lu)\n",GetLastError());return 3;}
     unsigned failures=0,checks=0;DWORD bytes=0;SesDriverHello hello{1,sizeof(hello),48000,1,32,480};SesDriverStatus status{};SesDriverPacket packet{1,sizeof(packet),480,0,0,{}};
     auto check=[&](bool ok,const char* name){++checks;if(!ok){++failures;std::printf("FAIL %s (%lu)\n",name,GetLastError());}};
+    SesDriverDiagnostics diagnostics{};
+    check(!DeviceIoControl(first,SES_IOCTL_DIAGNOSTICS,nullptr,0,&diagnostics,sizeof(diagnostics),&bytes,nullptr)&&GetLastError()==ERROR_ACCESS_DENIED,"diagnostics require connected owner");
     check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"unauthenticated producer denied");
     for(DWORD size=0;size<sizeof(hello);++size)check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&hello,size,&status,sizeof(status),&bytes,nullptr),"short hello rejected");
     auto bad=hello;bad.version=2;check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&bad,sizeof(bad),&status,sizeof(status),&bytes,nullptr),"version mismatch");
@@ -19,8 +22,14 @@ int main(int argc,char** argv){
     bad=hello;bad.size=0;check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&bad,sizeof(bad),&status,sizeof(status),&bytes,nullptr),"invalid declared hello size");
     check(!DeviceIoControl(first,SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status)-1,&bytes,nullptr),"short status output rejected");
     check(DeviceIoControl(first,SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status),&bytes,nullptr)&&status.version==1&&bytes==sizeof(status),"valid connect");
+    for(DWORD size=0;size<sizeof(diagnostics);++size)
+        check(!DeviceIoControl(first,SES_IOCTL_DIAGNOSTICS,nullptr,0,&diagnostics,size,&bytes,nullptr)&&GetLastError()==ERROR_INVALID_USER_BUFFER,"short diagnostic output rejected");
+    std::array<unsigned char,sizeof(SesDriverDiagnostics)+1> oversized{};
+    check(!DeviceIoControl(first,SES_IOCTL_DIAGNOSTICS,nullptr,0,oversized.data(),static_cast<DWORD>(oversized.size()),&bytes,nullptr)&&GetLastError()==ERROR_INVALID_USER_BUFFER,"oversized diagnostic output rejected");
+    check(!DeviceIoControl(first,SES_IOCTL_DIAGNOSTICS,&hello,1,&diagnostics,sizeof(diagnostics),&bytes,nullptr)&&GetLastError()==ERROR_INVALID_USER_BUFFER,"diagnostic input must be empty");
+    check(DeviceIoControl(first,SES_IOCTL_DIAGNOSTICS,nullptr,0,&diagnostics,sizeof(diagnostics),&bytes,nullptr)&&bytes==sizeof(diagnostics)&&diagnostics.version==SES_DRIVER_DIAGNOSTICS_VERSION&&diagnostics.size==sizeof(diagnostics)&&diagnostics.reserved0==0&&diagnostics.reserved1==0,"owner receives complete initialized diagnostic layout");
     HANDLE second=CreateFileW(SES_DRIVER_PATH,GENERIC_READ|GENERIC_WRITE,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,0,nullptr);
-    if(second!=INVALID_HANDLE_VALUE){check(!DeviceIoControl(second,SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status),&bytes,nullptr),"second owner denied");CloseHandle(second);}else check(false,"second handle opens for ownership test");
+    if(second!=INVALID_HANDLE_VALUE){check(!DeviceIoControl(second,SES_IOCTL_CONNECT,&hello,sizeof(hello),&status,sizeof(status),&bytes,nullptr),"second owner denied");check(!DeviceIoControl(second,SES_IOCTL_DIAGNOSTICS,nullptr,0,&diagnostics,sizeof(diagnostics),&bytes,nullptr)&&GetLastError()==ERROR_ACCESS_DENIED,"other handle cannot read owner's diagnostics");CloseHandle(second);}else check(false,"second handle opens for ownership test");
     for(DWORD size=0;size<sizeof(packet);size+=31)check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,size,nullptr,0,&bytes,nullptr),"short packet rejected");
     packet.frames=0;check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"zero frame packet rejected");packet.frames=480;
     packet.reserved=1;check(!DeviceIoControl(first,SES_IOCTL_WRITE,&packet,sizeof(packet),nullptr,0,&bytes,nullptr),"reserved packet bits rejected");packet.reserved=0;

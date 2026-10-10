@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$VmDirectory,[switch]$BootInstalled)
+param([Parameter(Mandatory)][string]$VmDirectory,[switch]$BootInstalled,[switch]$EvaluationActivationNetwork)
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSVersion.Major -lt 7){throw 'VM control requires PowerShell 7'}
 . (Join-Path $PSScriptRoot 'driver-vm-common.ps1')
@@ -15,6 +15,7 @@ $session=[Guid]::NewGuid().ToString('N');$shell=(Get-Process -Id $PID).Path
 $script=Join-Path $PSScriptRoot 'run-driver-vm.ps1'
 $arguments=@('-NoProfile','-NonInteractive','-File',('"'+$script+'"'),'-VmDirectory',('"'+$vm+'"'),'-SessionId',$session)
 if($BootInstalled){$arguments+='-BootInstalled'}
+if($EvaluationActivationNetwork){$arguments+='-EvaluationActivationNetwork'}
 $supervisor=Start-Process -FilePath $shell -ArgumentList $arguments -PassThru -WindowStyle Hidden
 $clock=[Diagnostics.Stopwatch]::StartNew()
 while($clock.Elapsed.TotalSeconds -lt 20){

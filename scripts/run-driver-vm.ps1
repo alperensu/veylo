@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$VmDirectory,[Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{32}$')][string]$SessionId,[switch]$BootInstalled)
+param([Parameter(Mandatory)][string]$VmDirectory,[Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{32}$')][string]$SessionId,[switch]$BootInstalled,[switch]$EvaluationActivationNetwork)
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSVersion.Major -lt 7){throw 'VM control requires PowerShell 7'}
 . (Join-Path $PSScriptRoot 'driver-vm-common.ps1')
@@ -14,13 +14,14 @@ try{
         $path=Assert-LabPath (Join-Path $vm $name) $vm -MayNotExist
         if(Test-Path -LiteralPath $path){Assert-VmPrivateAcl $path $vm | Out-Null}
     }
-    $arguments=Get-VmArguments $vm $state -BootInstalled:$BootInstalled
+    $arguments=Get-VmArguments $vm $state -BootInstalled:$BootInstalled -EvaluationActivationNetwork:$EvaluationActivationNetwork
     Initialize-VmQmpTransport
     $transport=[VeyloLab.QmpProcess]::new((Join-Path $base 'qemu/qemu-system-x86_64.exe'),[string[]]$arguments,(Join-Path $vm 'qemu-stderr.log'))
     Connect-VmQmp $transport | Out-Null
     if($transport.HasExited){throw 'QEMU exited before readiness publication'}
     $self=Get-Process -Id $PID
     $record=@{schema=2;processId=$transport.Id;startTimeUtc=$transport.StartTimeUtc;supervisorProcessId=$PID;supervisorStartTimeUtc=$self.StartTime.ToUniversalTime().ToString('O');vmId=$state.id;sessionId=$SessionId;phase='running';qmp='private-stdio';bootMode=$(if($diskBoot){'installed-disk'}else{'initial-iso'})}
+    $record.evaluationActivationNetwork=[bool]$EvaluationActivationNetwork
     Write-VmJson $vm 'process.json' $record
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     while(!$transport.HasExited){
