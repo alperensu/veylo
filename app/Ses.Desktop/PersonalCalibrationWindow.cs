@@ -17,7 +17,6 @@ public partial class MainWindow
     private AudioSettings? calibrationBaseline;
     private PersonalCalibrationResult? calibrationSuggestion;
     private PersonalCalibrationChange? calibrationUndo;
-    private bool calibrationBeforeModified;
     private string calibrationDeviceId="",calibrationDeviceName="";
     private MatchedSample? suggestionSample;
     private uint calibrationUnderruns,calibrationOverruns;
@@ -140,7 +139,6 @@ public partial class MainWindow
             var change=PersonalCalibrationChange.Apply(state,device.Id,calibrationSuggestion,T("personalProfileName"));
             try{UpdateEngine(state.Settings,calibrationSuggestion.NoiseFloorDb);if(!smoke)store.Save(state);}
             catch{change.Undo(state);UpdateEngine(state.Settings,NoiseFloor);throw;}
-            calibrationBeforeModified=ModifiedLabel.Text.Length>0;ModifiedLabel.Text="";
             calibrationUndo=change;settings=state.Settings.Clone();RebuildProfiles(state.ActiveProfile);
             ProfileNameBox.Text=state.ActiveProfile[5..];LoadControls();matched=null;
             ClearCalibrationSuggestion();PersonalInstruction.SetResourceReference(TextBlock.TextProperty,"autoApplied");CalibrationMessage.Text=T("calibrated");Status("autoApplied");
@@ -151,7 +149,7 @@ public partial class MainWindow
         if(busy||sampling||calibrationUndo is null)return;
         try{
             calibrationUndo.Undo(state);calibrationUndo=null;settings=state.Settings.Clone();
-            RebuildProfiles(state.ActiveProfile);LoadControls();ModifiedLabel.Text=calibrationBeforeModified?T("custom"):"";
+            RebuildProfiles(state.ActiveProfile);LoadControls();RefreshProfileStatus();
             UpdateEngine(settings,NoiseFloor);matched=null;
             if(!smoke)store.Save(state);
             PersonalInstruction.SetResourceReference(TextBlock.TextProperty,"autoRestored");Status("autoRestored");
@@ -163,7 +161,7 @@ public partial class MainWindow
     {
         if(busy||sampling||InputBox.SelectedItem is not AudioDevice device||
             !state.Calibrations.TryGetValue(device.Id,out var saved)||saved.TunedSettings is null)return;
-        settings=saved.TunedSettings.Clone();calibrationUndo=null;LoadControls();ModifiedLabel.Text=T("custom");
+        settings=saved.TunedSettings.Clone();calibrationUndo=null;LoadControls();RefreshProfileStatus();
         ApplySettings();PersonalInstruction.SetResourceReference(TextBlock.TextProperty,"autoDeviceRestored");Status("autoDeviceRestored");SetBusy(false);
     }
     private void PersonalTick(EngineMetrics metrics)

@@ -98,6 +98,8 @@ Seçtiğin ton korunur; öneriyi dinleyip uygulamak sana kalır. Mikrofon, ortam
 
 ### Hazır profiller ve kişisel ayarlar
 
+[VB-CABLE ile ses kalitesi ve profil farklarını kontrol etme](docs/AUDIO-QUALITY.md)
+
 ![Veylo Profiller sayfasında Doğal, Net Konuşma, Sıcak Ses, Yayın ve Podcast seçenekleri](docs/assets/profiles.png)
 
 ### Mikrofonuna ve sesine göre kalibrasyon

@@ -61,6 +61,24 @@ public partial class MainWindow
                 }
             }
         }
+        // The new shared bypass notice must leave the profile page and footer
+        // usable even in the smallest supported window, in both languages.
+        foreach(var language in new[]{0,1}){
+            LanguageBox.SelectedIndex=language;BypassBox.IsChecked=true;
+            foreach(var size in new[]{(1160,840),(640,480)}){
+                Width=size.Item1;Height=size.Item2;Navigate(WorkspacePage.Profiles);
+                MainScroll.ScrollToTop();await Task.Delay(40);UpdateLayout();
+                Capture(Path.Combine(directory,$"profile-bypass-{(language==0?"tr":"en")}-{size.Item1}.png"));
+                if(BypassNotice.Visibility!=Visibility.Visible||!ResumeProcessingButton.IsEnabled||MainScroll.ActualHeight<140||MainScroll.ScrollableWidth>1)
+                    throw new InvalidOperationException($"Bypass notice made the profile viewport unusable: visible={BypassNotice.Visibility}, action={ResumeProcessingButton.IsEnabled}, height={MainScroll.ActualHeight}, overflow={MainScroll.ScrollableWidth}, size={size}");
+                foreach(var control in new FrameworkElement[]{ResumeProcessingButton,MuteBox,BypassBox}){
+                    var bounds=control.TransformToAncestor((Visual)Content).TransformBounds(new Rect(control.RenderSize));
+                    if(bounds.Left<0||bounds.Right>ActualWidth+1||bounds.Top<0||bounds.Bottom>ActualHeight+1)
+                        throw new InvalidOperationException("Bypass safety action is clipped");
+                }
+            }
+        }
+        BypassBox.IsChecked=false;
         Width=1160;Height=840;LanguageBox.SelectedIndex=0;NavigationList.SelectedIndex=0;MainScroll.ScrollToTop();await Task.Delay(60);
         for(int dpi=96;dpi<=192;dpi+=48)CaptureWindow(this,Path.Combine(directory,$"design-raster-{dpi}dpi.png"),dpi);
         try{
@@ -77,7 +95,7 @@ public partial class MainWindow
         File.WriteAllText(Path.Combine(directory,"design-result.json"),System.Text.Json.JsonSerializer.Serialize(new{
             success=true,layouts,languages=new[]{"tr","en"},sizes=new[]{"1160x840","780x650","640x480"},persistentControlsVisible=true,
             navigationItems=NavigationList.Items.Count,processingSections=ProcessingTabs.Items.Count,navigationIconsUnclipped=true,accessibleNavigationNames=true,systemPaletteMapping=true,profileBusyGuard=true,rasterDpi=new[]{96,144,192},
-            physicalDpiValidated=false,narratorValidated=false,liveAudioValidated=false
+            profileBypassLayouts=4,physicalDpiValidated=false,narratorValidated=false,liveAudioValidated=false
         }));
     }
 }

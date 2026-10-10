@@ -6,6 +6,15 @@ Bu belge geliştirme geçmişini korur. Geçmiş ölçümler yalnız belirtildik
 ve koşullar için geçerlidir; güncel ürün garantisi değildir. Güncel doğrulama
 [VALIDATION.md](VALIDATION.md), özellik kabulü [ACCEPTANCE.md](ACCEPTANCE.md) içindedir.
 
+## 0.7.6-dev — Profil ve işleme durumu (geliştirme)
+
+Kayıtlı ayarlar hazır profilden farklıysa başlangıçta da Değiştirilmiş profil etiketi
+gösterilir. Seçili profil tekrar uygulanabilir; susturma ve Orijinal ses
+korunur. Orijinal ses açıkken kalıcı bildirim ve işlemeye dönme eylemi
+görünür. Profiller sayfası etkin alt kesimi ve dört EQ kazancını gösterir.
+Hazır tonlar ve kayıtlı kullanıcı ayarları bu düzeltmeyle değiştirilmez.
+[VB-CABLE ile kalite ve karşılaştırma rehberi](AUDIO-QUALITY.md).
+
 ## 0.7.5-dev — İzole sanal mikrofon laboratuvarı
 
 Dosya tabanlı test imzalama, özel stdio VM yönetimi ve gerçek PCM16/PCM32

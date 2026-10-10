@@ -14,7 +14,7 @@ internal static class Program
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     private static FieldInfo Field(string name) => typeof(MainWindow).GetField(name, Private) ?? throw new MissingFieldException(name);
     private static T Read<T>(MainWindow window, string name) => (T)Field(name).GetValue(window)!;
-    private static object? Call(MainWindow window, string name, params object[] args)
+    private static object? Call(MainWindow window, string name, params object?[] args)
         => (typeof(MainWindow).GetMethod(name, Private) ?? throw new MissingMethodException(name)).Invoke(window, args);
     private static void Require(bool condition, string error)
     {
@@ -132,6 +132,113 @@ internal static class Program
                 foreach (var descendant in Descendants(element)) yield return descendant;
             }
     }
+
+    private static string SettingsJson(AudioSettings value)=>System.Text.Json.JsonSerializer.Serialize(value);
+
+    private static void ProfileStatusChecks(MainWindow window,NativeEngine engine)
+    {
+        var state=Read<UserState>(window,"state");
+        var factory=Profiles.Factory();
+        var warm=factory.Single(p=>p.FactoryId=="warm");
+        var customized=warm.Settings.Clone();customized.Bands[0].GainDb=5;customized.NoiseAutoEnabled=true;
+        // Exercise the startup reconstruction without a real saved-state file.
+        Field("ready").SetValue(window,false);
+        state.Settings=customized.Clone();state.ActiveProfile="warm";
+        Field("settings").SetValue(window,state.Settings.Clone());
+        Call(window,"RebuildProfiles","warm");Call(window,"LoadControls");
+        string snapshot=SettingsJson(customized);
+        Require(SettingsJson(Read<AudioSettings>(window,"settings"))==snapshot&&
+            Read<System.Windows.Controls.TextBlock>(window,"ModifiedLabel").Text==MainWindow.T("custom"),
+            "Startup reconstruction overwrote saved changes or mislabeled them as a factory tone");
+        Call(window,"RebuildProfiles",(object?)null);
+        Require(SettingsJson(Read<AudioSettings>(window,"settings"))==snapshot&&
+            Read<System.Windows.Controls.TextBlock>(window,"ModifiedLabel").Text==MainWindow.T("custom"),
+            "Profile rebuild lost the modified saved tone");
+
+        var presets=Read<System.Windows.Controls.ListBox>(window,"PresetList");
+        var selected=presets.SelectedItem;
+        var reapply=Read<System.Windows.Controls.Button>(window,"ReapplyProfileButton");
+        reapply.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+        Require(SettingsJson(Read<AudioSettings>(window,"settings"))==snapshot,"Profile reapply ignored startup readiness guard");
+        presets.SelectedItem=null;Call(window,"RefreshProfileStatus");
+        Require(!reapply.IsEnabled&&Read<System.Windows.Controls.TextBlock>(window,"ModifiedLabel").Text==MainWindow.T("custom"),
+            "Missing selected profile was treated as an unchanged tone");
+        Call(window,"RebuildProfiles","missing-profile");
+        Require(presets.SelectedItem is ProfileChoice fallback&&fallback.Profile.FactoryId=="natural"&&SettingsJson(Read<AudioSettings>(window,"settings"))==snapshot,
+            "Missing profile fallback overwrote saved settings");
+        Call(window,"RebuildProfiles","warm");selected=presets.SelectedItem;
+        var mute=Read<System.Windows.Controls.CheckBox>(window,"MuteBox");
+        var bypass=Read<System.Windows.Controls.CheckBox>(window,"BypassBox");
+        mute.IsChecked=true;bypass.IsChecked=true;
+        Field("ready").SetValue(window,true);Call(window,"ApplySettings");
+        foreach(string flag in new[]{"suppress","busy","calibrating","sampling","personalCalibrating","finishing","quitting"})
+        {
+            Field(flag).SetValue(window,true);
+            reapply.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+            Require(SettingsJson(Read<AudioSettings>(window,"settings"))==snapshot,"Profile reapply ignored "+flag+" guard");
+            Field(flag).SetValue(window,false);
+        }
+        reapply.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+        Require(ReferenceEquals(presets.SelectedItem,selected)&&SettingsJson(Read<AudioSettings>(window,"settings"))==SettingsJson(warm.Settings)&&
+            SettingsJson(Read<AudioSettings>(window,"lastAppliedSettings"))==SettingsJson(warm.Settings)&&
+            Read<System.Windows.Controls.TextBlock>(window,"ModifiedLabel").Text.Length==0&&mute.IsChecked==true&&bypass.IsChecked==true,
+            "Reapply did not restore the same selected tone, reach the engine, or preserve transmission controls");
+
+        var noise=Read<System.Windows.Controls.CheckBox>(window,"NoiseBox");
+        noise.IsChecked=false;
+        Require(Read<System.Windows.Controls.TextBlock>(window,"ModifiedLabel").Text==MainWindow.T("custom"),"Processing toggle was not reflected in profile status");
+        noise.IsChecked=true;
+        Require(Read<System.Windows.Controls.TextBlock>(window,"ModifiedLabel").Text.Length==0,"Returning a processing toggle to its profile value stayed custom");
+        var warmth=Read<System.Windows.Controls.Slider>(window,"WarmthSlider");
+        warmth.Value=warm.Settings.Bands[0].GainDb+1;
+        Require(Read<System.Windows.Controls.TextBlock>(window,"ModifiedLabel").Text==MainWindow.T("custom"),"Pending slider edit was not reflected immediately");
+        warmth.Value=warm.Settings.Bands[0].GainDb;
+        Call(window,"ApplySettings");
+        Require(Read<System.Windows.Controls.TextBlock>(window,"ModifiedLabel").Text.Length==0,"Returning a slider to its profile value stayed custom");
+
+        string before=SettingsJson(Read<AudioSettings>(window,"settings"));
+        string input=state.InputId,output=state.OutputId,mode=state.OutputMode;
+        var notice=Read<FrameworkElement>(window,"BypassNotice");
+        var resume=Read<System.Windows.Controls.Button>(window,"ResumeProcessingButton");
+        Require(notice.Visibility==Visibility.Visible&&resume.IsEnabled,"Bypass did not expose a persistent notice/action");
+        // This safety control remains usable while profile changes are blocked.
+        Call(window,"SetBusy",true);
+        resume.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+        Call(window,"SetBusy",false);
+        Require(bypass.IsChecked==false&&mute.IsChecked==true&&notice.Visibility==Visibility.Collapsed&&
+            SettingsJson(Read<AudioSettings>(window,"settings"))==before&&state.InputId==input&&state.OutputId==output&&state.OutputMode==mode&&
+            Read<System.Windows.Controls.TextBlock>(window,"ModifiedLabel").Text.Length==0,
+            "Return to processing changed mute, route or profile settings");
+        mute.IsChecked=false;bypass.IsChecked=true;
+        Require(Read<System.Windows.Controls.TextBlock>(window,"ModifiedLabel").Text.Length==0,"Mute/bypass incorrectly made the tone custom");
+
+        foreach(string language in new[]{"tr","en"})
+        {
+            Call(window,"ChangeLanguage",language);Call(window,"RebuildProfiles",(object?)null);
+            foreach(var (name,key) in new[]{("ReapplyProfileButton","reapplyProfile"),("ResumeProcessingButton","resumeProcessing")})
+            {
+                var peer=UIElementAutomationPeer.CreatePeerForElement(Read<UIElement>(window,name));
+                Require(peer is not null&&peer.GetName()==MainWindow.T(key)&&MainWindow.T(key)!=key,"Profile action is not localized/accessibly named: "+name);
+            }
+            Require(Read<System.Windows.Controls.TextBlock>(window,"BypassNoticeText").Text==MainWindow.T("bypassNotice")&&
+                System.Windows.Automation.AutomationProperties.GetLiveSetting(Read<UIElement>(window,"BypassNoticeText"))==System.Windows.Automation.AutomationLiveSetting.Polite&&
+                SettingsJson(Read<AudioSettings>(window,"settings"))==before,"Translation altered the tone or bypass notice is not a polite live region");
+        }
+        Call(window,"ChangeLanguage","tr");Call(window,"RebuildProfiles",(object?)null);
+        bypass.IsChecked=false;
+        foreach(var choice in ((IEnumerable<ProfileChoice>)presets.ItemsSource).Take(factory.Count))
+        {
+            presets.SelectedItem=choice;
+            Require(SettingsJson(Read<AudioSettings>(window,"settings"))==SettingsJson(choice.Profile.Settings)&&
+                SettingsJson(Read<AudioSettings>(window,"lastAppliedSettings"))==SettingsJson(choice.Profile.Settings),
+                "Factory selection did not apply complete settings: "+choice.Profile.FactoryId);
+        }
+        Require(engine.Metrics().Running==0&&engine.Metrics().ProcessedFrames==0,"Profile status checks opened or processed an audio stream");
+        Field("ready").SetValue(window,false);
+        Read<DispatcherTimer>(window,"applyTimer").Stop();
+        Call(window,"RebuildProfiles","natural");
+        Field("settings").SetValue(window,factory[0].Settings.Clone());Call(window,"LoadControls");
+    }
     private static void QuitChecks(MainWindow window, NativeEngine engine, Application application)
     {
         Field("ready").SetValue(window, true);
@@ -204,6 +311,7 @@ internal static class Program
             Require(window.Title == "Veylo" && typeof(MainWindow).Assembly.GetName().Name == "Veylo", "Public Veylo identity is missing");
             engine = Read<NativeEngine>(window, "engine");
             Require(!Read<bool>(window, "ready") && engine.Metrics().Running == 0, "Window unexpectedly started");
+            ProfileStatusChecks(window,engine);
             // Replace only this unshown smoke window's store and lifecycle flags.
             // Persistence checks do not pump the dispatcher. ShutdownChecks
             // later uses the plain Application dispatcher with all timers stopped.
@@ -249,7 +357,7 @@ internal static class Program
 
             Require(engine.Metrics().Running == 0 && engine.Metrics().ProcessedFrames == 0, "Persistence tests started or processed audio");
             if (verifyQuit) QuitChecks(window, engine, application);
-            Console.WriteLine("Passed: persistence and offline shutdown regressions; actual TR/EN meter/progress/EQ automation peer names; no audio or user state used.");
+            Console.WriteLine("Passed: profile state/reapply/bypass regressions; persistence and offline shutdown regressions; actual TR/EN meter/progress/EQ/action automation peer names; no audio or user state used.");
             if (verifyQuit) Console.WriteLine("Passed: production Quit during a real in-flight offline render; window, native handle and application closed.");
             return 0;
         }

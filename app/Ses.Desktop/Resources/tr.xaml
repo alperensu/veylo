@@ -18,6 +18,10 @@
  <s:String x:Key="mute">Sustur</s:String>
  <s:String x:Key="bypass">Orijinal ses</s:String>
  <s:String x:Key="bypassTip">İşlemeyi geçici kapatır. Susturma ve güvenlik limiter'i korunur.</s:String>
+ <s:String x:Key="bypassNotice">Orijinal ses açık. Canlı çıkışta gürültü azaltma ve ton ayarları uygulanmıyor.</s:String>
+ <s:String x:Key="resumeProcessing">İşlenmiş sese dön</s:String>
+ <s:String x:Key="reapplyProfile">Seçili profili yeniden uygula</s:String>
+ <s:String x:Key="currentTone">Şu anki ton ayarları</s:String>
  <s:String x:Key="levels">Giriş ve çıkış</s:String>
  <s:String x:Key="raw">Ham giriş</s:String>
  <s:String x:Key="inputMeterName">Ham giriş seviyesi</s:String>

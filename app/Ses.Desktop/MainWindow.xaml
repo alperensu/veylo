@@ -119,9 +119,17 @@
           <RowDefinition/>
           <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
-        <StackPanel Margin="0,0,0,22">
+        <StackPanel x:Name="PageHeading" Margin="0,0,0,22">
           <TextBlock x:Name="PageTitle" FontSize="30" FontWeight="SemiBold" TextWrapping="Wrap"/>
           <TextBlock x:Name="PageDescription" Style="{StaticResource BodyMuted}" Margin="0,6,0,0"/>
+          <Border x:Name="BypassNotice" Visibility="Collapsed" Background="{DynamicResource AccentWashBrush}" BorderBrush="{DynamicResource AccentBrush}" BorderThickness="1" CornerRadius="10" Padding="10" Margin="0,12,0,0">
+            <DockPanel>
+              <Button x:Name="ResumeProcessingButton" DockPanel.Dock="Right" Click="ResumeProcessingClick" Style="{StaticResource QuietButton}" VerticalAlignment="Center" MaxWidth="180" MinHeight="32" Padding="10,6" Margin="12,0,0,0" AutomationProperties.Name="{DynamicResource resumeProcessing}">
+                <TextBlock Text="{DynamicResource resumeProcessing}" TextWrapping="Wrap"/>
+              </Button>
+              <TextBlock x:Name="BypassNoticeText" Text="{DynamicResource bypassNotice}" Foreground="{DynamicResource AccentInkBrush}" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite"/>
+            </DockPanel>
+          </Border>
         </StackPanel>
         <ScrollViewer x:Name="MainScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,10,0">
           <StackPanel x:Name="PageStack">
@@ -513,6 +521,10 @@
                       </DataTemplate>
                     </ListBox.ItemTemplate>
                   </ListBox>
+                  <Button x:Name="ReapplyProfileButton" Click="ReapplyProfileClick" HorizontalAlignment="Left" Margin="0,12,0,0" AutomationProperties.Name="{DynamicResource reapplyProfile}">
+                    <TextBlock Text="{DynamicResource reapplyProfile}" TextWrapping="Wrap"/>
+                  </Button>
+                  <TextBlock x:Name="CurrentToneText" Style="{StaticResource BodyMuted}" FontSize="12" TextWrapping="Wrap" Margin="0,12,0,0" AutomationProperties.LiveSetting="Polite"/>
                   <TextBlock Text="{DynamicResource profileCompareHint}" Style="{StaticResource BodyMuted}" TextWrapping="Wrap" Margin="0,16,0,10"/>
                   <WrapPanel>
                     <Button x:Name="ProfileRawButton" Content="{DynamicResource profilePreviewRaw}" Click="PreviewProfileClick" Margin="0,0,8,8"/>

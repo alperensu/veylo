@@ -9,6 +9,7 @@ public static class ProfileSoundChecks
         check("factory tones preserve identifiers independent settings and preset compatibility",Contracts);
         check("native factory EQ has distinct level-matched spectral shapes",()=>ToneShapes(nativeDirectory));
         check("full native factory chains remain distinct finite and limited",()=>FullChains(nativeDirectory));
+        check("same native engine applies consecutive profile updates and keeps bypass distinct",()=>ProfileUpdates(nativeDirectory));
     }
 
     private static void Require(bool value,string message)
@@ -75,6 +76,51 @@ public static class ProfileSoundChecks
         double real=0,imaginary=0,step=2*Math.PI*hz/AudioSamples.Rate;
         for(int i=0;i<data.Length;i++){real+=data[i]*Math.Cos(step*i);imaginary-=data[i]*Math.Sin(step*i);}
         return Math.Max(1e-12,2*Math.Sqrt(real*real+imaginary*imaginary)/data.Length);
+    }
+
+    private static void ProfileUpdates(string directory)
+    {
+        // ses_process and WASAPI capture call the same block/settings publication
+        // path. Reuse one engine instead of testing only freshly created engines.
+        // This does not open an endpoint or inject sound into the user's cable.
+        var input=new float[AudioSamples.Rate*3];
+        for(int i=0;i<input.Length;i++)foreach(int hz in ProbeFrequencies)
+            input[i]+=.0125f*(float)Math.Sin(2*Math.PI*hz*i/AudioSamples.Rate);
+        double[] Spectrum(float[] output)
+        {
+            Safe(output,input.Length,"profile update");
+            var settled=output.AsSpan(AudioSamples.Rate*2,AudioSamples.Rate).ToArray();
+            double rms=AudioSamples.Rms(settled);
+            Require(rms>1e-5,"Profile update unexpectedly silenced the signal.");
+            return ProbeFrequencies.Select(hz=>20*Math.Log10(Magnitude(settled,hz)/rms)).ToArray();
+        }
+        static double Distance(double[] a,double[] b)=>Math.Sqrt(a.Zip(b,(x,y)=>(x-y)*(x-y)).Average());
+        var tones=Profiles.Factory().ToDictionary(p=>p.FactoryId!,p=>{
+            var s=p.Settings.Clone();s.NoiseEnabled=false;s.AgcEnabled=false;
+            s.CompressorRatio=1;s.SensitivityEnabled=false;s.DeesserEnabled=false;return s;
+        });
+        using var engine=new NativeEngine(directory);
+        foreach(string id in new[]{"warm","clear","podcast","broadcast","natural","clear","warm"})
+        {
+            // Two pending updates verify the latest publication wins before a block.
+            engine.Update(tones["natural"]);engine.Update(tones[id]);
+            var actual=Spectrum(engine.ProcessConfigured(input));
+            using var reference=new NativeEngine(directory);
+            var expected=Spectrum(reference.Process(input,tones[id]));
+            double distance=Distance(actual,expected);
+            Console.WriteLine($"UPDATE {id}: settled spectral distance from fresh engine {distance:0.000} dB");
+            Require(distance<.1,$"Runtime update to {id} failed to converge to its factory tone.");
+        }
+        engine.Update(tones["clear"],bypass:true);
+        var bypassClear=Spectrum(engine.ProcessConfigured(input));
+        engine.Update(tones["warm"],bypass:true);
+        var bypassWarm=Spectrum(engine.ProcessConfigured(input));
+        Require(Distance(bypassClear,bypassWarm)<.01,"Bypass unexpectedly applied profile tone.");
+        engine.Update(tones["warm"],bypass:false);
+        Require(Distance(bypassWarm,Spectrum(engine.ProcessConfigured(input)))>1,"Returning from bypass did not restore profile tone.");
+        engine.Update(tones["clear"],muted:true,bypass:true);
+        Require(engine.ProcessConfigured(input).All(x=>x==0),"Mute was lost when changing a bypassed profile.");
+        Require(engine.Metrics().Running==0,"Profile update test opened an audio stream.");
     }
 
     private static void FullChains(string directory)
