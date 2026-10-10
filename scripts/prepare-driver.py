@@ -55,6 +55,37 @@ def stream(s):
     s=replace_required(s,'    m_pDmaBuffer = (BYTE*)m_pPortStream->MapAllocatedPages(pBufferMdl, MmCached);','    m_pDmaBuffer = (BYTE*)m_pPortStream->MapAllocatedPages(pBufferMdl, MmCached);\n    if(!m_pDmaBuffer){m_pPortStream->FreePagesFromMdl(pBufferMdl);return STATUS_INSUFFICIENT_RESOURCES;}',2)
     s=replace_required(s,'    ulBufferDurationMs = (RequestedSize_ * 1000) / m_ulDmaMovementRate;','    ulBufferDurationMs = static_cast<ULONG>((static_cast<ULONGLONG>(RequestedSize_) * 1000) / m_ulDmaMovementRate);')
     s=replace_required(s,'    if ((NotificationCount_ == 0) || (RequestedSize_ % NotificationCount_ != 0))','    if (!ses_driver::validNotificationBuffer(RequestedSize_,NotificationCount_,m_pWfExt->Format.nBlockAlign))')
+    # Private complete packets are retained independently of the OS DMA slots.
+    # Allocate only while the stream is stopped, never in the streaming path.
+    a=s.index('NTSTATUS CMiniportWaveRTStream::AllocateBufferWithNotification')
+    b=s.index('VOID CMiniportWaveRTStream::FreeBufferWithNotification',a)
+    allocation=s[a:b]
+    allocation=replace_required(allocation,'    RequestedSize_ -= RequestedSize_ % (m_pWfExt->Format.nBlockAlign);','''    if(m_pCaptureStorage||m_pDmaBuffer)return STATUS_INVALID_DEVICE_STATE;
+    const ULONG packetBytes=RequestedSize_/NotificationCount_;
+    if(packetBytes>ses_driver::CapturePackets::MaxPacketBytes)return STATUS_INVALID_PARAMETER;
+    RequestedSize_ -= RequestedSize_ % (m_pWfExt->Format.nBlockAlign);''')
+    allocation=replace_required(allocation,'    m_ulNotificationsPerBuffer = NotificationCount_;','''    const ULONG storageBytes=packetBytes*ses_driver::CapturePackets::StorageSlots;
+    m_pCaptureStorage=static_cast<BYTE*>(ExAllocatePool2(POOL_FLAG_NON_PAGED,storageBytes,MINWAVERTSTREAM_POOLTAG));
+    if(!m_pCaptureStorage||!m_capturePackets.configure(m_pCaptureStorage,storageBytes,packetBytes,m_pWfExt->Format.nBlockAlign)){
+        if(m_pCaptureStorage){ExFreePoolWithTag(m_pCaptureStorage,MINWAVERTSTREAM_POOLTAG);m_pCaptureStorage=nullptr;}
+        m_pPortStream->UnmapAllocatedPages(m_pDmaBuffer,pBufferMdl);m_pDmaBuffer=nullptr;
+        m_pPortStream->FreePagesFromMdl(pBufferMdl);return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    RtlZeroMemory(m_pDmaBuffer,RequestedSize_);
+    m_ulNotificationsPerBuffer = NotificationCount_;''')
+    s=s[:a]+allocation+s[b:]
+    s=replace_required(s,'    m_ulNotificationsPerBuffer = 0;\n\n    return;','''    m_ulNotificationsPerBuffer = 0;
+    m_capturePackets=ses_driver::CapturePackets{};
+    if(m_pCaptureStorage){ExFreePoolWithTag(m_pCaptureStorage,MINWAVERTSTREAM_POOLTAG);m_pCaptureStorage=nullptr;}
+
+    return;''')
+    s=replace_required(s,'    if (NULL != m_pMiniport)','    if(m_pCaptureStorage){ExFreePoolWithTag(m_pCaptureStorage,MINWAVERTSTREAM_POOLTAG);m_pCaptureStorage=nullptr;}\n    if (NULL != m_pMiniport)',1)
+    s=replace_required(s,'            m_llPacketCounter = 0;','''            m_llPacketCounter = 0;
+            m_capturePackets.reset();
+            m_captureGeneration=SesBridgeGeneration();
+            m_byteDisplacementCarryForward=0;
+            m_hnsElapsedTimeCarryForward=0;
+            m_hnsDPCTimeCarryForward=0;''')
     begin=s.index('    if (m_bCapture)\n    {\n        ReadRegistrySettings();')
     end=s.index('    else if (!g_DoNotCreateDataFiles)',begin)
     s=s[:begin]+'''    if (m_bCapture)
@@ -94,27 +125,80 @@ def stream(s):
 
 '''+s[b:]
     s=replace_required(s,'        _this->m_llPacketCounter++;','        _this->m_llPacketCounter+=static_cast<LONGLONG>(completedIntervals);')
-    a=s.index('    // Compute and return timestamp corresponding to the end of the available packet.')
-    b=s.index('    *PerformanceCounterValue = timeOfAvailablePacketInQpc;',a)
-    s=s[:a]+'''    // Correlate the first sample of the last completed packet with DMA time.
-    // The WDK contract requires its start time, including across 32-bit wrap.
-    uint64_t firstSampleHns=0,firstSampleQpc=0;
-    if(packetCounter<=0||!ses_driver::capturePacketStartHns(
-        static_cast<uint64_t>(packetCounter),ullLinearPosition,hnsElapsedTimeCarryForward,
-        ullDmaTimeStamp,m_ulDmaBufferSize/m_ulNotificationsPerBuffer,m_ulDmaMovementRate,
-        firstSampleHns)||!ses_driver::hnsToQpc(firstSampleHns,
-        static_cast<uint64_t>(m_ullPerformanceCounterFrequency.QuadPart),firstSampleQpc))
-        return STATUS_INVALID_DEVICE_STATE;
-
-'''+s[b:]
-    s=replace_required(s,'    *PerformanceCounterValue = timeOfAvailablePacketInQpc;','    *PerformanceCounterValue = firstSampleQpc;')
     # DMA progress must follow the 1ms emulation clock even when a client asks
     # for a much larger notification period; otherwise the producer stalls.
     s=replace_required(s,'    _this->UpdatePosition(qpc);','')
     s=replace_required(s,'    if (!bufferCompleted && !_this->m_bEoSReceived)','    _this->UpdatePosition(qpc);\n    if (!bufferCompleted && !_this->m_bEoSReceived)')
+    # The completion clock must describe actual assembled PCM packets. Multiple
+    # completions wake the OS once; MoreData lets it drain every retained packet.
+    s=replace_required(s,'    _this->UpdatePosition(qpc);\n    if (!bufferCompleted', '''    _this->UpdatePosition(qpc);
+    if(_this->m_bCapture&&_this->m_ulNotificationsPerBuffer){
+        const uint64_t completed=_this->m_capturePackets.completedPackets();
+        bufferCompleted=completed>static_cast<uint64_t>(_this->m_llPacketCounter);
+        _this->m_llPacketCounter=static_cast<LONGLONG>(completed);
+    }
+    if (!bufferCompleted''')
+    s=replace_required(s,'    if (!_this->m_bEoSReceived)\n    {\n        _this->m_llPacketCounter+=static_cast<LONGLONG>(completedIntervals);','    if (!_this->m_bCapture && !_this->m_bEoSReceived)\n    {\n        _this->m_llPacketCounter+=static_cast<LONGLONG>(completedIntervals);')
+    a=s.index('    KIRQL oldIrql;',s.index('NTSTATUS CMiniportWaveRTStream::GetReadPacket'))
+    b=s.index('\n    return STATUS_SUCCESS;',a)
+    s=s[:a]+'''    KIRQL oldIrql;
+    KeAcquireSpinLock(&m_PositionSpinLock,&oldIrql);
+    const uint64_t generation=SesBridgeGeneration();
+    if(generation!=m_captureGeneration){m_capturePackets.discard();m_captureGeneration=generation;}
+    const auto packet=m_capturePackets.peek();
+    uint64_t firstSampleQpc=0;
+    NTSTATUS result=STATUS_DEVICE_NOT_READY;
+    if(packet.data&&m_pDmaBuffer&&m_ulNotificationsPerBuffer&&m_capturePackets.packetBytes()){
+        if(!ses_driver::hnsToQpc(packet.startHns,
+            static_cast<uint64_t>(m_ullPerformanceCounterFrequency.QuadPart),firstSampleQpc)){
+            result=STATUS_INVALID_DEVICE_STATE;
+        }else{
+            // GetReadPacket acknowledges the previous read. Only this routine
+            // publishes complete PCM to DMA; timer progress cannot overwrite it.
+            const ULONG offset=(static_cast<ULONG>(packet.number)%m_ulNotificationsPerBuffer)*m_capturePackets.packetBytes();
+            if(SesBridgePublish(m_captureGeneration,m_pDmaBuffer+offset,packet.data,m_capturePackets.packetBytes())&&m_capturePackets.consume(packet.number)){
+                *PacketNumber=static_cast<ULONG>(packet.number);
+                *PerformanceCounterValue=firstSampleQpc;*Flags=0;*MoreData=packet.moreData;
+                m_ulLastOsReadPacket=*PacketNumber;result=STATUS_SUCCESS;
+            }else result=STATUS_INVALID_DEVICE_STATE;
+        }
+    }
+    KeReleaseSpinLock(&m_PositionSpinLock,oldIrql);
+    return result;'''+s[b+len('\n    return STATUS_SUCCESS;'):]
+    s=replace_required(s,'    ULONG availablePacketNumber;\n    ULONG droppedPackets;','')
+    # Assemble into private bounded storage. In notification mode DMA remains
+    # unchanged until the OS explicitly asks for the next complete packet.
+    a=s.index('    if(!m_ulDmaBufferSize)return;',s.index('VOID CMiniportWaveRTStream::WriteBytes'))
+    s=s[:a]+'''    if(m_ulNotificationsPerBuffer){
+        const ULONG packetBytes=m_capturePackets.packetBytes();
+        if(!packetBytes)return;
+        const uint64_t generation=SesBridgeGeneration();
+        if(generation!=m_captureGeneration){m_capturePackets.discard();m_captureGeneration=generation;}
+        const uint64_t finalLinear=m_ullLinearPosition+ByteDisplacement;
+        // At most eight packet spans are produced per update, even after a
+        // long suspension. A skipped interval stays visible as a position gap.
+        if(ByteDisplacement>static_cast<ULONGLONG>(packetBytes)*ses_driver::CapturePackets::Capacity){
+            m_capturePackets.skipTo(m_ullLinearPosition+ByteDisplacement);return;
+        }
+        while(ByteDisplacement){
+            const auto span=m_capturePackets.writeSpan();
+            if(!span.data||!span.bytes)return;
+            const ULONG bytes=static_cast<ULONG>(min(ByteDisplacement,static_cast<ULONGLONG>(span.bytes)));
+            uint64_t firstSampleHns=0;
+            if(!ses_driver::capturePacketStartHns(m_capturePackets.completedPackets()+1,
+                finalLinear,m_hnsElapsedTimeCarryForward,m_captureUpdateHns,packetBytes,
+                m_ulDmaMovementRate,firstSampleHns))return;
+            SesBridgeCapture(span.data,bytes,m_pWfExt->Format.wBitsPerSample,m_captureGeneration);
+            if(!m_capturePackets.commit(bytes,firstSampleHns))return;
+            ByteDisplacement-=bytes;
+        }
+        return;
+    }
+'''+s[a:]
+    s=replace_required(s,'        WriteBytes(ByteDisplacement);','        m_captureUpdateHns=static_cast<uint64_t>(hnsCurrentTime);\n        WriteBytes(ByteDisplacement);')
     return s
 edit('EndpointsCommon/minwavertstream.cpp',stream)
-edit('EndpointsCommon/minwavertstream.h',lambda s:s.replace('#include "tonegenerator.h"','').replace('    ToneGenerator               m_ToneGenerator;','').replace('_In_ ULONG ByteDisplacement','_In_ ULONGLONG ByteDisplacement'))
+edit('EndpointsCommon/minwavertstream.h',lambda s:s.replace('#include "tonegenerator.h"','#include "capture_packets.h"').replace('    ToneGenerator               m_ToneGenerator;','    BYTE* m_pCaptureStorage{};\n    uint64_t m_captureGeneration{},m_captureUpdateHns{};\n    ses_driver::CapturePackets m_capturePackets{};').replace('_In_ ULONG ByteDisplacement','_In_ ULONGLONG ByteDisplacement'))
 edit('EndpointsCommon/MiniportStreamAudioEngineNode.cpp',lambda s:s.replace('m_ToneGenerator.SetMute(protectionOption == CONSTRICTOR_OPTION_MUTE);','UNREFERENCED_PARAMETER(protectionOption);'))
 def no_sideband(s):
     # Upstream's engine-node methods have sideband branches outside feature guards.

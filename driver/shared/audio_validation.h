@@ -14,7 +14,7 @@ inline bool validCaptureFormat(const PcmFormat& f) {
 }
 struct PcmAdvance {uint64_t bytes;uint32_t fraction;};
 inline bool validNotificationBuffer(uint32_t bytes,uint32_t notifications,uint32_t align) {
-    return (align==2||align==4)&&bytes&&notifications&&bytes%align==0&&
+    return (align==2||align==4)&&bytes&&(notifications==1||notifications==2)&&bytes%align==0&&
         bytes%notifications==0&&(bytes/notifications)%align==0&&
         bytes/notifications>=SES_DRIVER_RATE*align/1000&&
         (bytes/notifications)%(SES_DRIVER_RATE*align/1000)==0;

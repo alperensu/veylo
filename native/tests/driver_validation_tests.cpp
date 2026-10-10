@@ -59,6 +59,7 @@ static void clockAndFormat(){
     check(!validNotificationBuffer(4,1,4),"Sub-millisecond timer period rejected");
     check(!validNotificationBuffer(1920,3,4),"Fractional millisecond notifications rejected before timer rounding");
     check(!validNotificationBuffer(3840,0,4),"Zero notification count rejected");
+    check(!validNotificationBuffer(5760,3,4),"Only WDK-defined one or two notification slots accepted");
     check(!validNotificationBuffer(3840,2,0),"Zero alignment rejected before modulo");
     auto movement=advancePcm(10000,4,0);check(movement.bytes==192&&movement.fraction==0,"Exactly 48 PCM32 frames per millisecond");
     uint32_t fraction=0;uint64_t bytes=0;
