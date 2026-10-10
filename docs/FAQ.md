@@ -61,9 +61,44 @@ Windows ile açılma isteğe bağlıdır; etkinse gizli açılışta da işlenir
 
 Windows varsayılan çıkışını **CABLE Input** yapma. **CABLE Output → Bu aygıtı dinle**
 kapalı olsun. Diğer uygulamanın çıkışı normal kulaklığın olmalı.
-Veylo sürekli mikrofon sesini fiziksel hoparlöre göndermez; ancak açıkça
-oynattığın karşılaştırma veya Windows dinleme özelliği, tüm ekran + sistem sesi
-paylaşımına girebilir. Karşılaştırmayı bitir ve dinlemeyi kapat.
+
+Bu kontroller tek başına ekran paylaşımında çift sesi engelleme garantisi değildir.
+Veylo sürekli mikrofon sesini fiziksel hoparlöre göndermez; VB-CABLE yolunda
+**CABLE Input'a bir WASAPI oynatma akışı** açar. Discord'un tüm ekranla birlikte
+sistem sesini yakalaması bu akışı da içerebilir. Dinleme kapalıyken ve kendi
+sesini kulaklıkta duymuyorken de karşı tarafa ikinci bir ses gidebilir.
+Discord'un kullandığı yakalama yolu bu kurulumda ayrıca doğrulanmalıdır.
+
+**Sınanabilecek sürücü ayarı:** Kurulu VB-CABLE sürümü 3.3.1.7 ise üreticinin
+[resmî kılavuzu, s.13](https://vb-audio.com/Cable/VBCABLE_ReferenceManual.pdf),
+kontrol panelinde varsayılan açık **Loopback** seçeneğini belgeler. Bu seçenek
+CABLE Input oynatma ucunun ayrıca yakalanması içindir; Windows'un **Bu aygıtı
+dinle** özelliğiyle aynı değildir. `VBCABLE_ControlPanel.exe` içindeki Loopback
+seçeneğini kapatıp paylaşımı yeniden başlatarak karşılaştırabilirsin. Veylo çıkışı
+**CABLE Input**, görüşme mikrofonu **CABLE Output**, diğer uygulamaların çıkışı
+normal kulaklığın olarak kalsın. Hem mikrofonun hem diğer uygulamaların seslerinin
+karşıya ulaştığını ve mikrofonun paylaşımda ikinci kez duyulmadığını kontrol et.
+Değişiklik işe yaramazsa önceki Loopback ayarını geri al. Bu ayarın süreç bazlı
+yakalamayı da dışladığı belgelenmez; gerçek Discord sonucu henüz doğrulanmadı.
+Veylo bu üçüncü taraf sürücü ayarını kendiliğinden değiştirmez.
+
+[Discord'un resmî rehberi](https://discord.com/blog/how-to-stream-to-discord-from-desktop-or-mobile),
+uygulama paylaşımında seçilen uygulamanın, tüm ekran + sistem sesi paylaşımında
+ise uygulamaların seslerinin aktarıldığını açıklar. Geçici seçenekler, tek
+uygulamayı sesiyle paylaşmak veya tüm ekranı sistem sesi kapalı paylaşmaktır;
+sesli görüşmenin mikrofon girişi **CABLE Output** olarak kalabilir.
+
+**Tüm ekran ve diğer bütün uygulamaların sesleri gerekli olduğunda bu geçici
+seçenekler ihtiyacı karşılamaz.** Mevcut VB-CABLE aktarımında Veylo sesini
+Discord'un yakalamasından dışlayan doğrulanmış bir çözüm yok. Başka bir
+uygulamanın süreç sesini dışlama kararı yakalama yapan taraftadır
+([Microsoft süreç loopback API'si](https://learn.microsoft.com/en-us/windows/win32/api/audioclientactivationparams/ne-audioclientactivationparams-process_loopback_mode)).
+Susturmak veya işlemeyi kapatmak bu koşul için bir çözüm değildir.
+
+Açıkça oynattığın karşılaştırma veya Windows dinleme özelliği ayrıca sistem
+sesine karışabilir; karşılaştırmayı bitir ve dinlemeyi kapat. Kendi Veylo Mikrofon
+aktarımı normal oynatma akışı açmaz, ancak sürücü günlük kullanıma hazır değildir
+ve gerçek ekran paylaşımı kabulü henüz yapılmamıştır.
 
 ## Birden fazla gürültü azaltmayı açmalı mıyım?
 
