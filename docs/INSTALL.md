@@ -106,10 +106,17 @@ Paylaşılan JSON profilleri cihaz kimliği veya ses içermez. Eski profiller ve
 
 VB-CABLE yolunda sürekli işlenmiş ses yalnızca CABLE Input sanal oynatma cihazına
 verilir; fiziksel hoparlöre yönlendirilmez. Windows varsayılan çıkışını CABLE Input
-yapma; CABLE Output için Bu aygıtı dinle kapalı olsun. Açıkça oynattığın
-karşılaştırma veya Windows'ta Bu aygıtı dinle özelliği açıkken duyulan ses,
-ekran + sistem sesi paylaşımında ikinci kez gidebilir. Dinlemeyi kapat,
-karşılaştırmayı bitir. Kullanılan uygulamanın çıkışı kendi kulaklığın olmalı.
+yapma; CABLE Output için Bu aygıtı dinle kapalı olsun. Kullanılan uygulamanın
+çıkışı kendi kulaklığın olmalı. **Hoparlöre göndermemek, sistem sesi paylaşımından
+hariç tutulmak anlamına gelmez:** Discord tüm ekran + sistem sesi paylaşımında
+Veylo'nun CABLE Input'a gönderdiği oynatma akışını da yakalayabilir; kendi sesini
+kulaklıkta duymasan bile ikinci ses gidebilir. Açık karşılaştırma oynatımı ve
+Windows dinleme özelliği de ayrıca karışabilir.
+
+Tek uygulamayı sesiyle paylaşmak veya tüm ekranın sistem sesi paylaşımını
+kapatmak geçici seçeneklerdir. **Tüm ekran ve diğer bütün uygulamaların sesleri
+birlikte gerekli olduğunda mevcut VB-CABLE yolu için doğrulanmış bir dışlama
+çözümü yoktur.** Ayrıntılar ve kaynaklar: [ekran paylaşımı açıklaması](FAQ.md#ekran-paylaşımında-sesim-iki-kez-duyuluyor).
 Karşılaştırmada bu uygulamalardaki ek gürültü azaltma/otomatik kazancı kapat.
 
 ## Hata durumları

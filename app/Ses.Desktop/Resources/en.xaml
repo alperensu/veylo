@@ -18,6 +18,10 @@
  <s:String x:Key="mute">Mute</s:String>
  <s:String x:Key="bypass">Original voice</s:String>
  <s:String x:Key="bypassTip">Temporarily bypass processing. Mute and the safety limiter remain active.</s:String>
+ <s:String x:Key="bypassNotice">Original voice is on. Live output bypasses noise reduction and tone settings.</s:String>
+ <s:String x:Key="resumeProcessing">Return to processed voice</s:String>
+ <s:String x:Key="reapplyProfile">Reapply the selected profile</s:String>
+ <s:String x:Key="currentTone">Current tone settings</s:String>
  <s:String x:Key="levels">Input &amp; output</s:String>
  <s:String x:Key="raw">Raw input</s:String>
  <s:String x:Key="inputMeterName">Raw input level</s:String>

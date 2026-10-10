@@ -93,7 +93,7 @@ public partial class MainWindow : Window
         if(personalCalibrating)PersonalTick(engine.Metrics());
         else if(PersonalPhrase is not null)PersonalPhrase.SetResourceReference(TextBlock.TextProperty,"personalPosition");
         if(RecordButton is not null)RecordButton.Content=T(sampling?"recordStop":"record");
-        if(ModifiedLabel is not null&&ModifiedLabel.Text.Length>0)ModifiedLabel.Text=T("custom");
+        RefreshProfileStatus();
         if(NavigationList is not null&&NavigationList.SelectedIndex>=0)ShowPage(NavigationList.SelectedIndex);
     }
     private void LanguageChanged(object sender,SelectionChangedEventArgs e)
@@ -107,16 +107,16 @@ public partial class MainWindow : Window
         string selected=chosen??((PresetList.SelectedItem as ProfileChoice) is { } old?ProfileKey(old.Profile):state.ActiveProfile);
         var choices=Profiles.Factory().Concat(state.Profiles).Select(p=>new ProfileChoice(p,p.FactoryId is null?p.Name:T("preset_"+p.FactoryId),p.FactoryId is null?p.Description:T("desc_"+p.FactoryId))).ToArray();
         PresetList.ItemsSource=choices;PresetList.SelectedItem=choices.FirstOrDefault(p=>ProfileKey(p.Profile)==selected)??choices[0];PresetList.MaxHeight=440;
-        if(ProfileNameBox.Text.Length==0)ProfileNameBox.Text=state.Language=="en"?"My voice":"Benim sesim";suppress=previous;
+        if(ProfileNameBox.Text.Length==0)ProfileNameBox.Text=state.Language=="en"?"My voice":"Benim sesim";suppress=previous;RefreshProfileStatus();
     }
     private void LoadControls()
     {
-        suppress=true;NoiseBox.IsChecked=settings.NoiseEnabled;AutoNoiseBox.IsChecked=settings.NoiseAutoEnabled;BalanceBox.IsChecked=settings.AgcEnabled;DeesserBox.IsChecked=settings.DeesserEnabled;
+        bool previous=suppress;suppress=true;NoiseBox.IsChecked=settings.NoiseEnabled;AutoNoiseBox.IsChecked=settings.NoiseAutoEnabled;BalanceBox.IsChecked=settings.AgcEnabled;DeesserBox.IsChecked=settings.DeesserEnabled;
         SensitivityBox.IsChecked=settings.SensitivityEnabled;SensitivityAutoBox.IsChecked=settings.SensitivityAutoEnabled;SensitivitySlider.Value=settings.SensitivityThresholdDb;
         SensitivityModeBox.SelectedIndex=settings.SensitivityMode;SensitivityAttackSlider.Value=settings.SensitivityAttackMs;SensitivityHoldSlider.Value=settings.SensitivityHoldMs;SensitivityReleaseSlider.Value=settings.SensitivityReleaseMs;SensitivityHysteresisSlider.Value=settings.SensitivityHysteresisDb;SensitivityRatioSlider.Value=settings.SensitivityRatio;SensitivityReductionSlider.Value=settings.SensitivityMaxReductionDb;
         NoiseSlider.Value=settings.NoiseMix;WarmthSlider.Value=settings.Bands[0].GainDb;ClaritySlider.Value=settings.Bands[2].GainDb;
         HighpassSlider.Value=settings.HighpassHz;TargetSlider.Value=settings.TargetDb;MinGainSlider.Value=settings.MinGainDb;MaxGainSlider.Value=settings.MaxGainDb;ThresholdSlider.Value=settings.CompressorThresholdDb;RatioSlider.Value=settings.CompressorRatio;AttackSlider.Value=settings.AttackMs;ReleaseSlider.Value=settings.ReleaseMs;KneeSlider.Value=settings.KneeDb;DeessMaxSlider.Value=settings.DeesserMaxDb;OutputGainSlider.Value=settings.OutputDb;
-        BandsControl.ItemsSource=null;BandsControl.ItemsSource=settings.Bands;UpdateLabels();suppress=false;
+        BandsControl.ItemsSource=null;BandsControl.ItemsSource=settings.Bands;UpdateLabels();suppress=previous;RefreshProfileStatus();
     }
     private void ReadControls()
     {
@@ -142,6 +142,7 @@ public partial class MainWindow : Window
         if(PresetList.SelectedItem is ProfileChoice profile)ActiveProfileText.Text=T("activeProfile")+" · "+profile.Name;
         NoiseValue.Text=$"{NoiseSlider.Value*100:0}%";WarmthValue.Text=$"{WarmthSlider.Value:+0.#;-0.#;0} dB";ClarityValue.Text=$"{ClaritySlider.Value:+0.#;-0.#;0} dB";
         HighpassValue.Text=$"{HighpassSlider.Value:0.#} Hz";TargetValue.Text=$"{TargetSlider.Value:0.#} dBFS";MinGainValue.Text=$"{MinGainSlider.Value:0.#} dB";MaxGainValue.Text=$"{MaxGainSlider.Value:0.#} dB";ThresholdValue.Text=$"{ThresholdSlider.Value:0.#} dBFS";RatioValue.Text=$"{RatioSlider.Value:0.#} :1";AttackValue.Text=$"{AttackSlider.Value:0.#} ms";ReleaseValue.Text=$"{ReleaseSlider.Value:0.#} ms";KneeValue.Text=$"{KneeSlider.Value:0.#} dB";DeessMaxValue.Text=$"{DeessMaxSlider.Value:0.#} dB";OutputGainValue.Text=$"{OutputGainSlider.Value:0.#} dB";
+        RefreshProfileStatus();
     }
     private float NoiseFloor => InputBox.SelectedItem is AudioDevice d && state.Calibrations.TryGetValue(d.Id,out var c)?c.NoiseFloorDb:-60;
     private void ApplySettings()
@@ -164,7 +165,7 @@ public partial class MainWindow : Window
             LoadControls();Status("invalidProfile");return false;
         }
     }
-    private void SettingsChanged(object sender,RoutedPropertyChangedEventArgs<double> e){if(!ready||suppress)return;ModifiedLabel.Text=T("custom");UpdateLabels();RefreshPersonalResult();applyTimer.Stop();applyTimer.Start();}
+    private void SettingsChanged(object sender,RoutedPropertyChangedEventArgs<double> e){if(!ready||suppress)return;ReadControls();UpdateLabels();RefreshPersonalResult();applyTimer.Stop();applyTimer.Start();}
     private void SettingsToggled(object sender,RoutedEventArgs e){if(!ready||suppress)return;ApplySettings();}
     private void BandGainChanged(object sender,RoutedPropertyChangedEventArgs<double> e)
     {
@@ -175,9 +176,8 @@ public partial class MainWindow : Window
     private void BandTypeChanged(object sender,SelectionChangedEventArgs e){if(!ready||suppress)return;Dispatcher.BeginInvoke(ApplySettings);}
     private void PresetChanged(object sender,SelectionChangedEventArgs e)
     {
-        if(!ready||suppress||PresetList.SelectedItem is not ProfileChoice choice)return;
-        settings=choice.Profile.Settings.Clone();LoadControls();ModifiedLabel.Text="";ProfileNameBox.Text=choice.Profile.FactoryId is null?choice.Name:(state.Language=="en"?"My voice":"Benim sesim");ApplySettings();
-        state.ActiveProfile=ProfileKey(choice.Profile);
+        if(!CanChangeProfile||PresetList.SelectedItem is not ProfileChoice choice)return;
+        ApplySelectedProfile(choice);
     }
     private async Task RefreshDevices()
     {
@@ -260,6 +260,7 @@ public partial class MainWindow : Window
         UndoPersonalButton.IsEnabled=!value&&!sampling&&calibrationUndo is not null;
         ApplyPersonalButton.IsEnabled=ListenPersonalButton.IsEnabled=ListenPersonalRawButton.IsEnabled=!value&&!sampling&&calibrationSuggestion is {Success:true};
         foreach(var page in new[]{NoisePage,BalancePage,QualityPage,ProfilesPage})page.IsEnabled=!value&&!personalCalibrating;
+        RefreshProfileStatus();
     }
     private async Task<bool> EnsureCapture()
     {
@@ -456,6 +457,7 @@ public partial class MainWindow : Window
         bool stackSession=available<650;
         Grid.SetRow(SessionControls,stackSession?1:0);Grid.SetColumn(SessionControls,stackSession?0:1);Grid.SetColumnSpan(SessionControls,stackSession?2:1);
         Grid.SetColumnSpan(SessionStatusPanel,stackSession?2:1);SessionControls.Margin=new Thickness(0,stackSession?10:0,0,0);
+        ResizeProfileNotice();
     }
     private void WindowSizeChanged(object sender,SizeChangedEventArgs e)=>ResizeNavigation();
     private void WindowClosing(object? sender,CancelEventArgs e){if(!quitting){e.Cancel=true;Hide();desktop?.Notice();}}

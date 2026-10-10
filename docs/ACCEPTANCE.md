@@ -1,9 +1,11 @@
-# Veylo kabul durumu — 2026-10-09
+# Veylo kabul durumu — 2026-10-10
 
 Bu tablo ürünün tamamlandığı iddiası değildir. **Passed** yalnızca belirtilen
 kontrolün geçtiğini; **Partial** uygulama ve bazı testler bulunmasına rağmen
 kabulün eksik olduğunu; **Not run** ilgili gerçek koşulun denenmediğini belirtir.
-Güncel geliştirme paketi: **0.7.5-dev**. Ayrıntılı geçmiş: [VALIDATION.md](VALIDATION.md).
+**Findings** ise kaynağı belirtilen bir sorun bildirimi veya inceleme bulgusudur;
+tek başına bağımsız olarak yeniden üretildiği anlamına gelmez.
+Güncel geliştirme paketi: **0.7.6-dev**. Ayrıntılı geçmiş: [VALIDATION.md](VALIDATION.md).
 
 **Güncel kullanıcı geri bildirimi:** 8 Ekim 2026'da kullanıcı, seslerin şu an
 temizlendiğini ve sorun olmadığını bildirdi. Kendi mevcut kurulumu için gürültü
@@ -30,7 +32,7 @@ oyun modu gibi özel özellikler kendi koşullarında ayrıca değerlendirilir.
 | Sustur, orijinal ses ve konuşma modları | Partial | Durum/parametre ve limiter regresyonları mevcut. Kullanılan alıcı uygulamada fiziksel tuş basma ve konuşma davranışı kabulü bekliyor; oyun olası kullanım örneklerinden biridir. |
 | Genel kısayollar | Partial | Önceki Windows smoke testinde gerçek RegisterHotKey kayıt/çakışma/geri alma kontrolü geçti; enjekte edilen kayıtçı testleri de mevcut. Fiziksel tuş, kilit ekranı ve oyun kabulü Not run. |
 | Oyun modu | Partial | Oyun/tam ekran algılama politikası ve kontrollü görsel iş azaltma testleri mevcut. Gerçek oyun yükünde FPS, yüzde 1 düşük FPS ve frametime ölçümü Not run. |
-| Ekran paylaşımında çift mikrofon sesi | Not run | Tüm ekran ve sistem sesi paylaşımıyla gerçek Discord denemesi yapılmadı. VB-CABLE'a yönlendirme tek başına Discord paylaşımının mikrofonu ikinci kez almadığını kanıtlamaz. Açık karşılaştırma oynatımı veya Windows mikrofon dinleme özelliği ayrıca duyulabilir. |
+| Ekran paylaşımında çift mikrofon sesi | Findings — kullanıcı bildirimi; çözüm Not run | 10 Ekim 2026'da çalışan 0.7.6-dev kurulumunda kullanıcı, tüm ekran + sistem sesi paylaşımında mikrofonun ikinci kez gittiğini; dinletme başlatmadan kendi sesini kulaklıkta duymadığını bildirdi. Tüm ekran ve diğer uygulamaların sesleri birlikte gerekli. 0.7.4-dev ile mevcut native yönlendirme kodu aynı: CABLE Input'a shared WASAPI oynatma akışı açılıyor. Bu akışın Discord yakalamasına girmesi olası açıklamadır; yakalama yolu ve çözüm gerçek alıcıda bağımsız olarak ölçülmedi. Fiziksel hoparlöre göndermemek dışlama garantisi değildir. [Kapsam ve geçici seçenekler](FAQ.md#ekran-paylaşımında-sesim-iki-kez-duyuluyor). |
 | Türkçe/İngilizce erişilebilirlik | Partial | 0.6.11'de gerçek WPF automation peer nesneleriyle ölçer, ilerleme ve EQ adları iki dilde doğrulandı. Görsel XAML düzeni değişmedi. Gerçek Narrator ve yüzde 150/200 ekran geçişleri Not run. |
 | CPU ve bellek | Partial | 0.6.8'in 3.600,688 saniyelik düşük ölçüm yüklü, susturulmuş koşusu tamamlandı: CPU yüzde 0,174048; OS ömür boyu tepe çalışma kümesi 148.312.064 bayt; tampon hatası sıfır, çıkış kodu 0. Bu normal ürün başlangıcı ölçümü değildir; önceki 150 MB sınırı aşan koşular geçersiz sayılmaz. Ayrı normal 0.6.10 gözleminde 119 örnek yalnızca görünür pencereyi kapsadı; gizli kullanım hedefi değerlendirilmedi. |
 | Ek gecikme en fazla 40 ms | Not run | Fiziksel uçtan uca/diferansiyel ölçüm yok. Tampon hesapları ve sentetik saat testleri fiziksel gecikme kabulü yerine geçmez. |
