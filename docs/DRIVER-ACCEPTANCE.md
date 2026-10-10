@@ -254,4 +254,27 @@ reddeder. Son sorgu başarısızsa önceki geçerli ilk hata verisi korunur, anc
 kayıt kullanılabilir/başarılı gösterilmez. Bu ölçümler ses boşluğunu düzeltmiş
 olduğumuz anlamına gelmez.
 
+### Kullanıcı alanı worker olay geçmişi
+
+Aynı `-KernelDiagnostics` seçeneği, kullanıcı alanında 128 olaylık sabit
+kapasiteli sayısal bir geçmişi açar. STATUS, WRITE, bağlantı, kuyruktan alma ve
+zamanlayıcı beklemesi ayrı etiketlenir. İlk gözlenen STATUS underrun artışında
+geçmiş, sonraki ses teslimi ve ek DIAGNOSTICS sorgusundan önce dondurulur.
+Hata yoksa açık son sorgu veya worker kapanışı ayrı dondurma nedeni olarak
+gösterilir. Eski olayların üzerine yazılma sayısı ve oturum kimliği raporlanır;
+okuma yalnız `stop/join` sonrasındadır.
+
+Bu geçmiş PCM içermez, callback'te dosyaya yazmaz, bellek ayırmaz ve her turda
+ek sürücü isteği yapmaz. Varsayılan kullanımda kapalıdır. Tanı modunun ek worker
+QPC/kuyruk örnekleri ve rapor kopyaları zamanlamayı etkileyebilir; normal kabul
+yerine kullanılmaz. Kullanıcı olay saatleri QPC tabanlı 100 ns birimleridir;
+kernel InterruptTime saatinden doğrudan çıkarılamaz. STATUS/WRITE başlangıç ve
+bitiş farkları çağrı sırasında iş parçacığının çalıştırılmadığı süreyi de
+içerebilir; salt kernel yürütme süresi değildir. Kuyruk değerleri ayrı gözlemler
+ve son STATUS çıktısıdır, aynı anda alınmış gerçek kernel/upstream durumu değildir.
+Zamanlayıcının deadline'ı, `SetWaitableTimerEx` öncesi QPC örneğine göre amaçlanan
+cadence noktasıdır; gerçek Windows timer kurulma/sona erme zamanı değildir.
+Gözlenen deadline gecikmesi, timer kurulmadan önce iş parçacığının çalıştırılmadığı
+süreyi, çağrı yürütmesini ve beklemeden dönüş gecikmesini de içerebilir.
+
 [Güncel sonuçlar](VALIDATION.md) · [Kabul durumu](ACCEPTANCE.md)

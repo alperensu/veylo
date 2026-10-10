@@ -5,6 +5,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "../src/worker_timer.hpp"
+#include "../src/worker_trace.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -19,6 +20,59 @@ static_assert((SES_IOCTL_DIAGNOSTICS&3u)==0u); // METHOD_BUFFERED
 static_assert(((SES_IOCTL_DIAGNOSTICS>>14)&3u)==3u); // Same read/write access
 static unsigned checks=0;
 static void check(bool ok,const char* name){++checks;if(!ok){std::fprintf(stderr,"FAIL %s\n",name);std::exit(1);}}
+static void workerTrace(){
+    using namespace ses;
+    static_assert(std::is_trivially_copyable_v<WorkerTrace>);
+    static_assert(sizeof(WorkerTrace)<16384);
+    WorkerTrace trace;WorkerTraceEvent event{},read{};
+    trace.reset(true,17);trace.connected(1,20);
+    event.kind=WorkerTraceKind::Status;event.begin100ns=2;event.end100ns=3;
+    check(trace.append(event)&&!trace.readAfterStop(0,read),"Live timeline cannot expose worker-owned events before stop");
+    event.begin100ns=4;event.end100ns=3;
+    check(!trace.append(event)&&trace.rejected()==1&&trace.count()==2,"Reversed operation interval is rejected without corrupting history");
+    event.begin100ns=1;event.end100ns=4;
+    check(!trace.append(event)&&trace.rejected()==2,"Overlapping or backward operations are rejected");
+    event.begin100ns=4;event.end100ns=5;event.kind=static_cast<WorkerTraceKind>(99);
+    check(!trace.append(event)&&trace.rejected()==3,"Unknown event kind is rejected");
+    event.kind=WorkerTraceKind::Wait;event.deadlineAvailable=true;event.scheduleSample100ns=4;event.deadline100ns=4;
+    check(!trace.append(event)&&trace.rejected()==4,"Invalid intended cadence deadline cannot fabricate wake lateness");
+    event.deadline100ns=6;event.wakeLatenessAvailable=true;event.wakeLateness100ns=7;
+    check(!trace.append(event)&&trace.rejected()==5,"Wake lateness must match the actual end and deadline");
+    trace.reset(true,18);trace.connected(1,40);
+    for(size_t i=0;i<WorkerTrace::capacity+7;++i){
+        event={};event.kind=WorkerTraceKind::Status;event.begin100ns=2+i*2;event.end100ns=3+i*2;event.result=static_cast<uint32_t>(i);
+        check(trace.append(event),"Bounded timeline accepts chronological status operations");
+    }
+    const auto last=event.end100ns;
+    check(trace.count()==WorkerTrace::capacity&&trace.overwritten()==8,"Ring overflow counts overwritten operations including generation marker");
+    check(!trace.observeUnderruns(40,last)&&trace.observeUnderruns(41,last),"Only an observed underrun increase freezes first-event evidence");
+    check(!trace.append(event)&&!trace.freeze(WorkerTraceFreeze::TerminalRequest,last+1)&&
+          !trace.observeUnderruns(42,last+2),"Frozen first failure rejects later writes, queries and underrun overwrite");
+    trace.stopped(last+3);
+    check(trace.readAfterStop(0,read)&&read.result==7&&read.connectionGeneration==1,
+          "Wrapped export begins with oldest surviving operation and its connection generation");
+    check(trace.readAfterStop(WorkerTrace::capacity-1,read)&&read.result==WorkerTrace::capacity+6&&
+          trace.reason()==WorkerTraceFreeze::FirstUnderrun&&trace.freeze100ns()==last&&
+          trace.freezeOldUnderruns()==40&&trace.freezeNewUnderruns()==41,
+          "Stop retains exact first-rise counter transition and chronological tail");
+    check(!trace.readAfterStop(WorkerTrace::capacity,read)&&!trace.append(event),"Stopped export rejects out-of-range reads and worker mutation");
+    trace.reset(true,19);trace.connected(1,100);trace.connected(2,5);
+    check(!trace.observeUnderruns(5,2)&&trace.observeUnderruns(6,3),"Reconnect rebaselines underruns instead of attributing old-session counters");
+    trace.stopped(4);
+    check(trace.startGeneration()==19&&trace.count()==2&&trace.overwritten()==0&&trace.rejected()==0&&
+          trace.readAfterStop(1,read)&&read.connectionGeneration==2&&trace.freezeOldUnderruns()==5,
+          "Start reset removes old history and reconnect context remains per event");
+    trace.reset(true,20);trace.connected(5,0);
+    check(!trace.freeze(WorkerTraceFreeze::None,5)&&!trace.freeze(WorkerTraceFreeze::TerminalRequest,4)&&
+          trace.freeze(WorkerTraceFreeze::TerminalRequest,6),"Explicit terminal request can freeze only valid chronology before diagnostics");
+    trace.stopped(7);
+    check(trace.reason()==WorkerTraceFreeze::TerminalRequest&&trace.freeze100ns()==6,"Stop cannot replace the pre-diagnostics terminal freeze");
+    trace.reset(true,21);trace.connected(5,0);trace.stopped(8);
+    check(trace.reason()==WorkerTraceFreeze::WorkerStopped&&trace.freeze100ns()==8,"Missing terminal request retains explicitly labeled stopped history");
+    trace.reset(false,22);trace.connected(1,0);trace.stopped(2);
+    check(!trace.enabled()&&trace.count()==0&&trace.reason()==WorkerTraceFreeze::None&&
+          !trace.readAfterStop(0,read),"Opt-out reset exposes no prior-session history");
+}
 static void monotonicWorkerCadence(){
     ses::WorkerCadence cadence;uint64_t delay=123;
     check(!cadence.delay(100000,0,delay)&&delay==123,"Zero interval does not initialize cadence or modify output");
@@ -64,7 +118,14 @@ static void workerTimer(){
     check(timer.wait(stop,0)==WAIT_FAILED,"Zero cadence is rejected");
     check(timer.wait(stop,501)==WAIT_FAILED,"Oversized cadence is rejected");
     check(timer.wait(stop,2)==WAIT_OBJECT_0+1,"Private cadence wakes without stop");
+    ses::WorkerWaitTiming timing{};
+    check(timer.wait(stop,2,&timing)==WAIT_OBJECT_0+1&&timing.deadlineAvailable&&timing.wakeAvailable&&
+          timing.deadline100ns>timing.scheduleSample100ns&&timing.wake100ns>=timing.scheduleSample100ns&&
+          timing.wakeLateness100ns==(timing.wake100ns>timing.deadline100ns?timing.wake100ns-timing.deadline100ns:0),
+          "Opt-in timer records pre-arm QPC sample, intended cadence deadline, wake and total nonnegative lateness");
     SetEvent(stop);
+    check(timer.wait(stop,500,&timing)==WAIT_OBJECT_0&&!timing.deadlineAvailable&&!timing.wakeAvailable&&
+          timing.scheduleSample100ns==0&&timing.deadline100ns==0,"Stop preemption clears prior wait timing instead of inventing a timer wake");
     check(timer.wait(stop,500)==WAIT_OBJECT_0,"Stop preempts a pending worker timer");
     timer.close();
     check(timer.wait(stop,2)==WAIT_FAILED,"Closed cadence fails rather than polling");
@@ -302,5 +363,5 @@ static void captureDiagnostics(){
     diagnostics.successfulWrite(true,10349999);
     check(diagnostics.snapshot().last_successful_write_gap_hns==0,"Backward simulated write tick cannot create a huge gap");
 }
-int main(){monotonicWorkerCadence();workerTimer();clockAndFormat();reserveAndDrift(10000,true);reserveAndDrift(9990,false);reserveAndDrift(10010,false);workerCadence(48);workerCadence(240);workerCadence(480);workerCadence(960);captureDiagnostics();
+int main(){workerTrace();monotonicWorkerCadence();workerTimer();clockAndFormat();reserveAndDrift(10000,true);reserveAndDrift(9990,false);reserveAndDrift(10010,false);workerCadence(48);workerCadence(240);workerCadence(480);workerCadence(960);captureDiagnostics();
     std::printf("%u portable driver validation checks passed; no kernel or installation test was run\n",checks);}

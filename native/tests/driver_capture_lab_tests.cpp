@@ -88,7 +88,69 @@ struct KernelDiagnosticRecord {
     uint32_t sourceSession=0,queryError=ERROR_NOT_READY;
     bool available=false;
     SesDriverDiagnostics data{};
+    bool timelineAvailable=false;
+    ses::WorkerTrace timeline;
 };
+const char* workerTraceKind(ses::WorkerTraceKind kind){
+    switch(kind){
+    case ses::WorkerTraceKind::Connect:return "CONNECT";
+    case ses::WorkerTraceKind::Status:return "STATUS";
+    case ses::WorkerTraceKind::Write:return "WRITE";
+    case ses::WorkerTraceKind::Dequeue:return "DEQUEUE";
+    case ses::WorkerTraceKind::Wait:return "WAIT";
+    case ses::WorkerTraceKind::Connection:return "CONNECTED_GENERATION";
+    }
+    return "invalid";
+}
+const char* workerTraceFreeze(ses::WorkerTraceFreeze reason){
+    switch(reason){
+    case ses::WorkerTraceFreeze::None:return "none";
+    case ses::WorkerTraceFreeze::FirstUnderrun:return "first_STATUS_underrun_rise";
+    case ses::WorkerTraceFreeze::TerminalRequest:return "explicit_terminal_request_before_DIAGNOSTICS";
+    case ses::WorkerTraceFreeze::WorkerStopped:return "worker_stopped_without_earlier_freeze";
+    }
+    return "invalid";
+}
+bool writeWorkerTimeline(FILE* file,const KernelDiagnosticRecord& record){
+    const auto& trace=record.timeline;
+    const bool available=record.timelineAvailable&&trace.enabled()&&trace.isStopped();
+    bool ok=std::fprintf(file,"{\"available\":%s,\"capacity\":%zu,\"count\":%zu,"
+        "\"clock\":\"QPC_monotonic_100ns\",\"time_units\":\"100ns\",\"queue_units\":\"frames\","
+        "\"read_contract\":\"after_worker_stop_join_only\","
+        "\"timing_effect\":\"extra_worker_QPC_and_queue_samples_until_freeze_bounded_ring_append_and_postjoin_evidence_copies\","
+        "\"operation_duration_scope\":\"worker_wall_elapsed_includes_API_wait_and_thread_preemption_not_pure_kernel_execution\","
+        "\"deadline_scope\":\"intended_QPC_cadence_deadline_before_SetWaitableTimerEx_not_actual_OS_timer_expiry\","
+        "\"wake_lateness_scope\":\"QPC_wake_minus_intended_deadline_includes_prearm_descheduling_API_execution_and_wake_resume_not_only_postexpiry_scheduler_delay\","
+        "\"generation_scope\":\"CONNECT_attempt_precedes_CONNECTED_GENERATION_marker_other_events_use_current_successful_connection\","
+        "\"queue_scope\":\"independent_transfer_queue_samples_and_last_STATUS_kernel_queue_not_simultaneous_current_state\","
+        "\"result_scope\":\"IOCTL_Win32_error_or_WAIT_return_code_DEQUEUE_take_0_not_attempted_1_empty_or_expired_2_packet\","
+        "\"start_generation\":%llu,\"connection_generation\":%u,\"overwritten_events\":%llu,\"rejected_events\":%llu,"
+        "\"freeze_reason\":\"%s\",\"freeze_100ns\":%llu,\"freeze_old_underruns\":%u,\"freeze_new_underruns\":%u,\"events\":[",
+        available?"true":"false",ses::WorkerTrace::capacity,available?trace.count():0,
+        static_cast<unsigned long long>(trace.startGeneration()),trace.connectionGeneration(),
+        static_cast<unsigned long long>(trace.overwritten()),static_cast<unsigned long long>(trace.rejected()),
+        workerTraceFreeze(trace.reason()),static_cast<unsigned long long>(trace.freeze100ns()),
+        trace.freezeOldUnderruns(),trace.freezeNewUnderruns())>0;
+    if(available)for(size_t i=0;i<trace.count();++i){
+        ses::WorkerTraceEvent event{};
+        if(!trace.readAfterStop(i,event))return false;
+        ok=std::fprintf(file,"%s{\"kind\":\"%s\",\"begin_100ns\":%llu,\"end_100ns\":%llu,"
+            "\"connection_generation\":%u,\"result\":%u,\"wait_error\":%u,"
+            "\"kernel_STATUS_available\":%s,\"upstream_samples_available\":%s,"
+            "\"kernel_queued_STATUS_frames\":%u,\"underruns\":%u,"
+            "\"upstream_before_frames\":%u,\"upstream_after_frames\":%u,\"gate_open\":%s,\"take\":%u,"
+            "\"timer_deadline_available\":%s,\"schedule_sample_100ns\":%llu,\"deadline_100ns\":%llu,"
+            "\"wake_lateness_available\":%s,\"wake_lateness_100ns\":%llu}",
+            i?",":"",workerTraceKind(event.kind),static_cast<unsigned long long>(event.begin100ns),
+            static_cast<unsigned long long>(event.end100ns),event.connectionGeneration,event.result,event.waitError,
+            event.kernelStatusAvailable?"true":"false",event.upstreamSamplesAvailable?"true":"false",
+            event.kernelQueued,event.underruns,event.upstreamBefore,event.upstreamAfter,event.gateOpen?"true":"false",
+            static_cast<uint32_t>(event.take),event.deadlineAvailable?"true":"false",
+            static_cast<unsigned long long>(event.scheduleSample100ns),static_cast<unsigned long long>(event.deadline100ns),
+            event.wakeLatenessAvailable?"true":"false",static_cast<unsigned long long>(event.wakeLateness100ns))>0&&ok;
+    }
+    return std::fprintf(file,"]}")>0&&ok;
+}
 bool validKernelDiagnostics(const SesDriverDiagnostics& d) {
     return d.version==SES_DRIVER_DIAGNOSTICS_VERSION&&d.size==sizeof(d)&&d.reserved0==0&&d.reserved1==0&&
         d.first_underrun_present<=1&&d.max_pull_chunk_frames<=SES_DRIVER_FRAMES&&
@@ -99,7 +161,7 @@ bool validKernelDiagnostics(const SesDriverDiagnostics& d) {
             d.first_underrun_capture_frames>=d.first_underrun_remaining_frames&&
             d.first_underrun_new_count>d.first_underrun_old_count));
 }
-bool writeKernelDiagnosticRecord(FILE* file,const KernelDiagnosticRecord& record) {
+bool writeKernelDiagnosticRecord(FILE* file,const KernelDiagnosticRecord& record,bool includeTimeline=true) {
     bool ok=std::fprintf(file,"{\"source_session\":%u,\"available\":%s,\"query_error\":%u,\"data\":{",
         record.sourceSession,record.available?"true":"false",record.queryError)>0;
     const auto& d=record.data;bool first=true;
@@ -120,7 +182,12 @@ bool writeKernelDiagnosticRecord(FILE* file,const KernelDiagnosticRecord& record
     SES_DIAGNOSTIC_FIELD(first_underrun_successful_write_tick_hns);SES_DIAGNOSTIC_FIELD(first_underrun_received_frames);
     SES_DIAGNOSTIC_FIELD(first_underrun_silence_before);SES_DIAGNOSTIC_FIELD(first_underrun_silence_after);
 #undef SES_DIAGNOSTIC_FIELD
-    return std::fprintf(file,"}}")>0&&ok;
+    ok=std::fprintf(file,"}")>0&&ok;
+    if(includeTimeline){
+        ok=std::fprintf(file,",\"worker_timeline\":")>0&&ok;
+        ok=writeWorkerTimeline(file,record)&&ok;
+    }else ok=std::fprintf(file,",\"worker_timeline_record_source_session\":%u",record.sourceSession)>0&&ok;
+    return std::fprintf(file,"}")>0&&ok;
 }
 struct ExtendedEvidence {
     bool requested=false, ran=false;
@@ -242,7 +309,7 @@ struct Report {
             if(!firstFailure&&validKernelDiagnostics(e.diagnostics[i].data)&&e.diagnostics[i].data.first_underrun_present)firstFailure=&e.diagnostics[i];
         }
         ok=std::fprintf(file,"],\"first_failure_record\":")>0&&ok;
-        if(firstFailure)ok=writeKernelDiagnosticRecord(file,*firstFailure)&&ok;
+        if(firstFailure)ok=writeKernelDiagnosticRecord(file,*firstFailure,false)&&ok;
         else ok=std::fprintf(file,"null")>0&&ok;
         ok=std::fprintf(file,"}}}}\n")>0&&ok;
         return std::fclose(file)==0&&ok;
@@ -1017,6 +1084,7 @@ struct ProductBridgeProducer {
             sessionOpen=false;
             if(kernelDiagnostics&&e.diagnosticCount<e.diagnostics.size()) {
                 auto& record=e.diagnostics[e.diagnosticCount++];record.sourceSession=e.sourceSessions;
+                record.timelineAvailable=bridge.copyWorkerTraceAfterStop(record.timeline);
                 record.queryError=bridge.diagnosticError.load();
                 if(!withinDeadline&&record.queryError==ERROR_NOT_READY)record.queryError=ERROR_TIMEOUT;
                 // Preserve an earlier successful automatic first-event query
@@ -1556,7 +1624,7 @@ void extendedSelfTest(Report& r) {
     check(rejectsRemaining&&rejectsPresent&&!validKernelDiagnostics(badDiagnostic),
         "diagnostic validator rejects malformed first-underrun flag, remaining count and oversized internal chunk");
     ExtendedEvidence diagnosticEvidence{};diagnosticEvidence.diagnosticCount=3;
-    for(unsigned i=0;i<3;++i)diagnosticEvidence.diagnostics[i]={i+1,ERROR_SUCCESS,true,diagnostic};
+    for(unsigned i=0;i<3;++i)diagnosticEvidence.diagnostics[i]={i+1,ERROR_SUCCESS,true,diagnostic,false,{}};
     check(!completeKernelDiagnostics(diagnosticEvidence),"a terminal-query underrun cannot pass instrumented acceptance even when previous status was healthy");
     for(auto& record:diagnosticEvidence.diagnostics)record.data.first_underrun_present=0;
     check(completeKernelDiagnostics(diagnosticEvidence),"optional diagnostic acceptance requires three complete sequential owner-session records");
@@ -1568,7 +1636,7 @@ void extendedSelfTest(Report& r) {
         "optional diagnostic gate rejects missing sessions, unsupported old-driver query and duplicate owner-session evidence");
     FILE* diagnosticFile=std::tmpfile();bool serialized=false;
     if(diagnosticFile) {
-        const KernelDiagnosticRecord record{1,ERROR_SUCCESS,true,diagnostic};
+        const KernelDiagnosticRecord record{1,ERROR_SUCCESS,true,diagnostic,false,{}};
         const bool written=writeKernelDiagnosticRecord(diagnosticFile,record);std::fflush(diagnosticFile);std::rewind(diagnosticFile);
         std::array<char,4096> text{};const auto bytes=std::fread(text.data(),1,text.size()-1,diagnosticFile);
         serialized=written&&bytes>0&&std::strstr(text.data(),"\"source_session\":1,\"available\":true,\"query_error\":0")&&
@@ -1578,6 +1646,71 @@ void extendedSelfTest(Report& r) {
         std::fclose(diagnosticFile);
     }
     check(serialized,"diagnostic JSON preserves full-width kernel interrupt timestamps and original first-underrun call context");
+    KernelDiagnosticRecord timelineRecord{};timelineRecord.sourceSession=2;timelineRecord.timelineAvailable=true;
+    timelineRecord.timeline.reset(true,7);timelineRecord.timeline.connected(123456789012345670ULL,9);
+    ses::WorkerTraceEvent traceEvent{};traceEvent.kind=ses::WorkerTraceKind::Status;
+    traceEvent.begin100ns=123456789012345671ULL;traceEvent.end100ns=123456789012345672ULL;
+    traceEvent.kernelStatusAvailable=true;traceEvent.kernelQueued=3;traceEvent.underruns=10;
+    timelineRecord.timeline.append(traceEvent);timelineRecord.timeline.observeUnderruns(10,traceEvent.end100ns);
+    timelineRecord.timeline.stopped(traceEvent.end100ns+1);
+    FILE* timelineFile=std::tmpfile();bool timelineSerialized=false;
+    if(timelineFile){
+        const bool written=writeWorkerTimeline(timelineFile,timelineRecord);std::fflush(timelineFile);std::rewind(timelineFile);
+        std::array<char,8192> text{};const auto bytes=std::fread(text.data(),1,text.size()-1,timelineFile);
+        const char* connected=std::strstr(text.data(),"\"kind\":\"CONNECTED_GENERATION\"");
+        const char* status=std::strstr(text.data(),"\"kind\":\"STATUS\"");
+        timelineSerialized=written&&bytes>0&&connected&&status&&connected<status&&
+            std::strstr(text.data(),"\"begin_100ns\":123456789012345671")&&
+            std::strstr(text.data(),"\"freeze_reason\":\"first_STATUS_underrun_rise\"")&&
+            std::strstr(text.data(),"\"freeze_old_underruns\":9,\"freeze_new_underruns\":10")&&
+            std::strstr(text.data(),"\"kernel_STATUS_available\":true")&&
+            std::strstr(text.data(),"\"schedule_sample_100ns\":")&&!std::strstr(text.data(),"\"arm_100ns\":")&&
+            std::strstr(text.data(),"intended_QPC_cadence_deadline_before_SetWaitableTimerEx_not_actual_OS_timer_expiry")&&
+            std::strstr(text.data(),"includes_prearm_descheduling_API_execution_and_wake_resume")&&
+            std::strstr(text.data(),"\"time_units\":\"100ns\"");
+        std::fclose(timelineFile);
+    }
+    check(timelineSerialized,"worker timeline JSON preserves chronological operation types, full-width times, units and first-rise freeze context");
+    timelineRecord.timeline.reset(false,8);timelineRecord.timeline.stopped(0);
+    timelineFile=std::tmpfile();bool disabledSerialized=false;
+    if(timelineFile){
+        const bool written=writeWorkerTimeline(timelineFile,timelineRecord);std::fflush(timelineFile);std::rewind(timelineFile);
+        std::array<char,2048> text{};const auto bytes=std::fread(text.data(),1,text.size()-1,timelineFile);
+        disabledSerialized=written&&bytes>0&&std::strstr(text.data(),"\"available\":false")&&
+            std::strstr(text.data(),"\"count\":0")&&std::strstr(text.data(),"\"events\":[]")&&
+            !std::strstr(text.data(),"\"kind\":");std::fclose(timelineFile);
+    }
+    check(disabledSerialized,"opt-out timeline never exports stale enabled-session events or claims availability");
+    Report boundedTimelineReport{};boundedTimelineReport.extended.kernelDiagnostics=true;
+    boundedTimelineReport.extended.diagnosticCount=3;
+    for(unsigned source=0;source<3;++source){
+        auto& record=boundedTimelineReport.extended.diagnostics[source];record.sourceSession=source+1;
+        record.data=diagnostic;record.timelineAvailable=true;record.timeline.reset(true,source+1);
+        record.timeline.connected(1,7);
+        for(size_t i=0;i<ses::WorkerTrace::capacity+1;++i){
+            traceEvent={};traceEvent.kind=ses::WorkerTraceKind::Status;
+            traceEvent.begin100ns=2+i*2;traceEvent.end100ns=3+i*2;record.timeline.append(traceEvent);
+        }
+        record.timeline.observeUnderruns(8,traceEvent.end100ns);record.timeline.stopped(traceEvent.end100ns+1);
+    }
+    // Use an existing temp-file fixture; this is offline serialization only.
+    char boundedPath[MAX_PATH]{};char tempDirectory[MAX_PATH]{};
+    bool boundedSerialized=false;
+    if(GetTempPathA(MAX_PATH,tempDirectory)&&GetTempFileNameA(tempDirectory,"ses",0,boundedPath)){
+        const bool written=boundedTimelineReport.json(boundedPath);FILE* file=std::fopen(boundedPath,"rb");
+        if(file){
+            std::fseek(file,0,SEEK_END);const auto bytes=std::ftell(file);std::rewind(file);
+            std::vector<char> text(bytes>0?static_cast<size_t>(bytes)+1:1);
+            const auto read=std::fread(text.data(),1,text.size()-1,file);
+            const char* firstFailure=std::strstr(text.data(),"\"first_failure_record\":");
+            boundedSerialized=written&&bytes>0&&bytes<1024*1024&&read==static_cast<size_t>(bytes)&&
+                firstFailure&&std::strstr(firstFailure,"\"worker_timeline_record_source_session\":1")&&
+                !std::strstr(firstFailure,"\"worker_timeline\":");
+            std::fclose(file);
+        }
+        DeleteFileA(boundedPath);
+    }
+    check(boundedSerialized,"three full wrapped worker timelines stay below 1 MiB JSON and first-failure kernel data references its original timeline");
     check(productDeliveryComplete(3,1440,4800,3360)&&!productDeliveryComplete(3,960,4320,3360)&&
         !productDeliveryComplete(3,1440,4320,3360)&&!productDeliveryComplete(3,1440,5280,3360),
         "product terminal gate requires every callback and independent owner-session received-frame delta exactly");

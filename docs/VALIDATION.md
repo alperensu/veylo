@@ -1,3 +1,107 @@
+# Opt-in bridge worker event history — 2026-10-10
+
+Passed: a preallocated 128-event worker-owned numeric history labels CONNECT,
+STATUS, WRITE, dequeue and timer waits. It preserves the first observed STATUS
+underrun rise before further delivery or DIAGNOSTICS; an explicit final query
+and stopped worker have distinct freeze reasons. Reconnect/start generations,
+overwrite/rejection counts, full-width QPC times and queue/take observations
+are retained. Export is permitted only after stop/join. The JSON first-failure
+summary references its source-session history without duplicating it; three
+full records remain below the existing 1 MiB result limit. No PCM, pointer,
+callback logging, dynamic history allocation or extra per-iteration IOCTL
+was added. Disabled mode has no extra QPC sampling. Protocol 1, ABI 5,
+driver binary, buffer reserves and acceptance gates are unchanged.
+
+Passed: 120,840 portable validation checks and 81 offline analyzer checks.
+All eight Release groups passed in 16.75 seconds and eight ASan groups in
+17.65 seconds. Independent read-only Sol correctness review found a P2
+timestamp-label issue: the pre-SetWaitableTimerEx QPC sample was labelled as
+an actual timer arm. It was renamed schedule_sample_100ns; metadata/tests
+now distinguish intended cadence deadline from actual OS expiry and include
+pre-arm descheduling/API/wake-resume time. Affected Release tests passed
+again and affected ASan tests passed 2/2 in 0.61 seconds. Both independent
+correctness/security re-reviews passed, with no remaining scoped findings.
+Final product build and actual offline JSON parsing passed (81 checks, zero
+failures, no active capture claimed). Staged capture tool SHA256:
+36484336820b2d0f67b8cd6e8b3ffc3faeec3c112cc0eaa626bca8a500884e72.
+
+The history diagnoses elapsed worker operations, not pure kernel execution
+or physical audio latency. Its extra lab sampling and post-join report copies
+may affect timing; no reliability improvement or complete hour is claimed
+from these offline checks. [Interpretation](DRIVER-ACCEPTANCE.md).
+
+# Bridge worker monotonic cadence — 2026-10-10
+
+Passed: code commit d9e636c anchors private worker waits to monotonic QPC
+deadlines. IOCTL work consumes the existing interval instead of adding a full
+relative 2 ms delay. Missed intervals are skipped in O(1) to a strictly future
+deadline; no catch-up spin, global timer-resolution change or callback syscall
+was added. Stop precedence, timer lifetime and failed-state preservation are
+checked. Ring reserves, protocol 1, ABI 5 and acceptance thresholds are unchanged.
+Deterministic tests cover delayed work, phase preservation, long stalls,
+backward clocks, interval changes and conversion/deadline overflow. Portable
+driver validation passed 120,685 checks; eight Release groups passed in 16.55
+seconds and eight ASan groups in 17.45 seconds. Both independent read-only Sol
+correctness/security reviews passed. This scheduling improvement does not by
+itself prove the earlier VM underrun resolved.
+Both complete Windows CI runs for d9e636c passed: push 38029256566 and pull
+request 38029260951, including native/managed/UI verification, analysis,
+application ZIP and installer checks. The actual staged capture tool SHA256 is
+e3de09657ea5a503c5eb4db67feee159a25ac2531842c65b24ccf5adb96c92b4.
+
+Passed: current 0.5.4 same-version removal/reinstallation in the isolated
+guest. The exact ROOT\MEDIA\0000 instance was removed (exit 0), absence was
+confirmed, verified seed INF installation returned exit 0, and the resulting
+sole device had ConfigManagerErrorCode 0. Upgrade/rollback and sleep/resume
+are outside this result. The prior seed and disk are preserved; guest files
+were refreshed only from the already verified read-only media. Evidence:
+retained-packets-054-reinstall-serial.log. Before staging the new capture tool,
+the guest shut down normally, both process identities disappeared and exclusive
+disk access passed; snapshot retained-packets-054-events-shutdown-20261010
+and retained-packets-events-normal-shutdown-serial.log preserve that state.
+
+Passed: after that current-version reinstall, the actual new product-bridge
+capture tool completed 60,002 ms, 36 checks/zero failures and process exit 0.
+Two shared WASAPI clients in one process had zero position gaps/timestamp
+errors and null first-invalid records; reconnect and two fresh-silence checks
+per client passed. Steady underruns, overruns and transfer drops were zero;
+maximum completed WRITE gap was 13,064 us. Sole-target Code Integrity Verifier
+0x021209bb remained active, HVCI was not. Evidence:
+worker-cadence-normal-60-serial.log. This remains a short synthetic-input result,
+not physical-microphone, separate-application or actual-hour acceptance.
+
+Findings: the subsequent instrumented 3,600-second request with the new
+cadence stopped after 768,028 ms, 37 checks/10 failures and exit 1. One steady
+underrun occurred; overruns and transfer drops were zero. Both shared WASAPI
+clients had zero position gaps/timestamp errors and null first-invalid records.
+The first kernel underrun requested 52 frames with only three queued frames;
+it produced 50 silent frames, 21.7614 ms after the last successful kernel WRITE.
+Maximum capture call size was 363 frames, so this first event does not establish
+an oversized capture request. The kernel maximum WRITE gap was 21.821 ms;
+the user-side completion maximum was 22.197 ms. The untagged maximum IOCTL
+duration of 14.868 ms includes diagnostic queries and cannot be assigned to
+the failing STATUS or WRITE call. Upstream observations just before failure
+were 417 and 197 us late. These establish a feed gap, but do not distinguish
+worker scheduling, STATUS delay or WRITE delay. The cadence change alone did
+not resolve actual-hour acceptance. Evidence:
+worker-cadence-instrumented-hour-failed-serial.log. After collecting the result,
+normal guest shutdown completed; both owned process identities were absent,
+exclusive disk access passed and stopped snapshot
+worker-cadence-hour-failed-stopped-20261010 was preserved. Shutdown evidence:
+worker-cadence-hour-normal-shutdown-serial.log. No acceptance gates were relaxed.
+
+Findings: the unchanged 0.5.4 instrumented hour request emitted heartbeats
+through 120 seconds, then both owned VM process identities disappeared before
+a terminal result. Active Windows evaluation had 128,277 grace minutes at the
+preceding normal test. The stopped, exclusively unlocked disk was preserved as
+retained-packets-054-interrupted-20261010 before reboot. On reboot the guest
+recorded events 41 and 6008; the latest event 41 had BugcheckCode 0 and all four
+bugcheck parameters zero. These do not prove a driver bugcheck or explain the
+host process termination. No complete-hour result is claimed. Serial/stderr
+evidence: retained-packets-054-instrumented-no-terminal-serial.log and
+retained-packets-054-instrumented-no-terminal-qemu.log; guest event screenshots:
+retained-packets-guest-events.png and retained-packets-guest-bugcheck-fresh.png.
+
 # Driver 0.5.4 retained packets and producer-session isolation — 2026-10-10
 
 Passed: the notification path assembles PCM into a preallocated private queue
