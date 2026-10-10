@@ -46,6 +46,10 @@ Son 0.5.2 saatlik istek 197,207 saniyede, tampon boşalması olmadan bir adet
 10 ms ses paketi atlamasıyla başarısız oldu. 0.5.3'te ayrı bir zaman damgası
 sözleşme hatası düzeltildi; WDK/INF/katalog, Release/ASan ve iki bağımsız
 inceleme geçti. Bu düzeltme paket atlamasının çözümü sayılmıyor.
+0.5.3 gerçek kernel testinde 269 kontrol ve normal ürün yolu üzerinden
+60,010 saniyelik capture koşusunda 36 kontrol geçti; paket atlaması,
+normal akış tampon boşalması ve kuyruk kaybı sıfırdı. Bu kısa ve sentetik
+test, bir saatlik veya fiziksel mikrofon kabulünün yerine geçmez.
 [Güncel kanıt ve sınırlar](VALIDATION.md).
 
 Mevcut ölçüm bilgisayarı: Windows 11 Home, 10.0.26300; Ryzen 5 7600,

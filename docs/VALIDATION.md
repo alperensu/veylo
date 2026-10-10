@@ -23,6 +23,32 @@ material; no host trust store changed. Signed SYS SHA256:
 29b8a30c3174db2b66864cf121c44d02cfcb6018aef88effb9d5feec0e2a58fe;
 capture tool: 7469235b6e97761607d9afac011b96bb4c04a9e81508880727e21324088868dd.
 
+Passed: actual 0.5.3 guest installation (DevCon success) and 269 live kernel
+IOCTL checks, zero failures/exit 0. The installed service image SHA256 matched
+the signed SYS above. Ordinary production-bridge capture completed 60,010 ms,
+36 checks/zero failures, process exit 0; two shared WASAPI clients in one
+process, three source sessions, consumer reconnect and both fresh-silence
+observations passed. Steady underruns, overruns and queue drops were zero;
+both clients had zero position gaps/timestamp errors and null first-invalid
+records. Minimum observed queue was 502 frames, maximum completed WRITE gap
+13,095 us, producer lateness 2 ms and maximum consumer drain gap 9,759 us.
+Active sole-target Code Integrity Verifier 0x021209bb was verified; HVCI
+remained Not run. Extra kernel diagnostics were disabled. These are synthetic
+inputs through the actual product bridge/kernel, not physical-microphone
+latency or separate-application acceptance. This short result does not
+resolve the earlier intermittent missing packet or prove an actual hour.
+Evidence: packet-time-053-normal-60-serial.log, packettime-ioctl-screen.png,
+packettime-driver-hash-screen.png and packettime-install-screen2.png.
+Normal guest shutdown was requested; both process identities were absent and
+exclusive disk access passed before preserving snapshot
+packet-time-053-normal-60-pass-20261010. The capture and shutdown serial
+evidence is packet-time-053-normal-60-shutdown-serial.log. Host driver, trust
+stores, security and audio defaults were unchanged.
+
+Passed: both complete Windows CI runs for code commit beb2692 (push
+38018640558 and pull-request 38018643237), including managed/native/UI tests,
+analysis, ASan, application packaging, installer lifecycle and checksums.
+
 Findings: the preceding 0.5.2 instrumented hour request stopped after
 197,207 ms, 37 checks/nine failures, exit 1. Steady ring underruns, overruns
 and transfer drops were zero; minimum observed queue was 441 frames.
