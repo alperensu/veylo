@@ -5,6 +5,15 @@ kontrolün geçtiğini; **Partial** uygulama ve bazı testler bulunmasına rağm
 kabulün eksik olduğunu; **Not run** ilgili gerçek koşulun denenmediğini belirtir.
 Güncel geliştirme paketi: **0.7.5-dev**. Ayrıntılı geçmiş: [VALIDATION.md](VALIDATION.md).
 
+**En yeni sürücü denemeleri:** Faz ölçümlü 3.600 saniyelik istek 1.229,701
+saniyede bir normal akış tampon boşalmasıyla başarısız oldu. Hata yakınındaki
+IOCTL'ler hemen tamamlandı; pending I/O beklemesi yoktu. Ardından tanı kapalı
+60 saniyelik normal ürün isteği 40,580 saniyede bir alıcıda 480 frame/10 ms
+paket atlamasıyla başarısız oldu; o koşuda tampon boşalması sıfırdı. İkisi de
+tamamlanmış süre kabulü değildir. Yeni ölçüm kodunun sekiz Release ve sekiz
+ASan grubu, iki bağımsız incelemesi ve iki tam Windows CI koşusu geçti;
+bunlar canlı ses hatalarını giderilmiş saydırmaz. [Kanıt ve sınırlar](VALIDATION.md).
+
 **Güncel kullanıcı geri bildirimi:** 8 Ekim 2026'da kullanıcı, seslerin şu an
 temizlendiğini ve sorun olmadığını bildirdi. Kendi mevcut kurulumu için gürültü
 temizliği kullanıcı tarafından doğrulandı; kullanılan build/preset veya ayrı

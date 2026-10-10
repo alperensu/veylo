@@ -21,10 +21,75 @@ run active capture. Staged tool SHA256:
 3e8c9e7137f18dd96cba9e820ef9e46010518c4e19783781eac71def097b87ac.
 The installed driver package SYS remains
 77e13a0e6391cdeec9f783fb8b94f753281136d7e2d8365829bbb8dc459a341a.
+Both complete Windows CI runs for code commit 04aa556 passed: push
+38033847698 and pull request 38033850693, including managed/offscreen UI,
+dependency/secret/static analysis, ASan, application ZIP and installer checks.
 
-Live phase-instrumented acceptance is pending. No underrun fix, completed
-hour, physical audio/performance, HVCI or production signing is claimed by
-these source/offline checks. [Measurement contract](DRIVER-ACCEPTANCE.md).
+Findings: actual phase-instrumented 3,600-second request stopped after
+1,229,701 ms, 37 checks/10 failures, exit 1, with one steady underrun.
+Overruns, transfer drops, both clients' position gaps and timestamp errors
+were zero; first-invalid records were null. The first producer session
+recorded no underrun. The failure was in session two after the intentional
+first lifecycle pause, not in the healthy session-one terminal history.
+Upstream maximum lateness was 3 ms; maximum user WRITE completion gap was
+16.627 ms and maximum IOCTL wall duration 10.480 ms. Source two's kernel
+maximum WRITE gap was 15.9281 ms. Its first underrun requested 299 frames
+with 272 queued, produced 27 silent frames and occurred 12.8715 ms after
+the last successful kernel WRITE. Maximum capture call was 299 frames.
+Sole-target Code Integrity Verifier 0x021209bb was active; HVCI was not.
+
+Passed, diagnostic observation only: both histories retained 128
+chronological events, zero rejected events and no pending I/O. Session two
+froze at the first STATUS underrun rise. All 49 retained IOCTL events in that
+history returned immediate success; none waited for pending completion or
+called GetOverlappedResult. Near the failure: an immediate 0.1565 ms WRITE,
+a 4.1591 ms WAIT (3.2700 ms late), 1.1127 ms STATUS, an empty dequeue,
+7.7062 ms WAIT (6.0910 ms late), 0.4339 ms STATUS reporting 122 queued
+frames/zero underruns, a ready 480-frame dequeue and immediate 0.2229 ms
+WRITE. The following STATUS reported underrun one and took 10.4808 ms,
+of which 10.4687 ms was the immediate DeviceIoControl wall interval.
+That delayed observation is not evidence that STATUS caused the preceding
+underrun, nor a kernel CPU measurement. Absolute QPC and InterruptTime
+values were not subtracted. Scheduler/VM effects, burst capture timing and
+reserve behavior still require causal validation; no reserve or gate was
+relaxed. Evidence: io-phase-hour-serial.log.
+
+Findings: subsequent diagnostics-opt-out ordinary product-bridge request
+for 60 seconds stopped at 40,580 ms, 36 checks/six failures and exit 1.
+Steady underruns, overruns, transfer drops and timestamp errors were zero.
+Client zero had one position gap: a 480-frame packet at position 1,948,320
+followed expected position 1,947,840, flags 1; packet timestamps advanced
+20 ms instead of 10 ms. Client one's position gaps were zero and its first
+invalid record null. Two fresh-silence checks per client completed and client
+one reopened once, but the third source session, producer reconnect and
+final waveform stage did not complete.
+Maximum consumer drain gap was 10.510 ms, upstream lateness 2 ms, user
+WRITE completion gap 15.221 ms and IOCTL wall duration 3.754 ms. This
+separate packet-continuity failure cannot be attributed solely to the
+opt-in phase measurement. No kernel diagnostic query was requested.
+Evidence: io-phase-normal60-serial.log. Both failures remain visible;
+neither request counts as its completed-duration acceptance.
+
+Passed: normal guest shutdown completed after collecting both terminal
+results; both owned process identities were absent, exclusive disk access
+passed and stopped snapshot io-phase-two-failed-stopped-20261010 was preserved.
+Evidence: io-phase-normal-shutdown-serial.log. Host driver, security and audio
+defaults were unchanged.
+
+The packet gap needs a separate lifecycle ledger of source close/connect,
+phase publication, client-one reopen and nearby client packet observations.
+Generation changes deliberately invalidate unread private packets; source
+CONNECT can run before phase four is published. That is a possible mechanism,
+not a causal conclusion or reason to waive continuity. Real negotiated WASAPI
+buffer size and kernel private-packet drop/generation evidence are missing.
+The healthy session's kernel maximum WRITE gap (16.2646 ms) exceeded the
+failed session's 15.9281 ms: maximum gap alone is not a failure threshold.
+The 720-frame occupancy center is not a guaranteed reserve floor. Scheduling,
+bursty capture and reserve behavior need a separate deterministic reproduction
+and correlated operation evidence before a behavior fix is claimed.
+
+The requested hour remains failed/incomplete. No physical audio/performance,
+HVCI or production signing is claimed. [Measurement contract](DRIVER-ACCEPTANCE.md).
 
 # Opt-in bridge worker event history — 2026-10-10
 
