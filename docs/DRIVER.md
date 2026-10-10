@@ -10,8 +10,11 @@ Güncel sürücü geliştirme sürümü 0.5.4'tür; günlük bilgisayara yüklen
 test sertifikasıyla SYS ve CAT imzası taşır; bu Microsoft üretim imzası değildir.
 0.5.4 ile izole Windows 11 build 26100 guest'te kurulum, 269 kernel IOCTL kontrolü,
 aynı sürümü kaldırma/yeniden kurma ve yeni zamanlamayla 60,002 saniyelik normal
-ürün aktarımı geçti. Yeni zamanlamalı bir saatlik tanılı istek 768,028 saniyede
-bir tampon boşalmasıyla başarısız oldu. [Güncel kanıt](VALIDATION.md)
+ürün aktarımı geçti. Yeni zamanlamalı bir saatlik tanılı istek 768,028 saniyede;
+olay geçmişi eklenen sonraki istek 478,756 saniyede bir tampon boşalmasıyla
+başarısız oldu. Son kayıtta paket hazırken WRITE çağrısının kapsadığı süre
+14,7974 ms'ye uzadı; kernel yürütmesi ile scheduling henüz ayrılmadı.
+[Güncel kanıt](VALIDATION.md)
 geçen kısa testleri ve başarısız uzun koşuları ayrı saklar. Bu test-policy sonucudur; üretim kernel
 politikası, HVCI, geniş yaşam döngüsü ve alıcı uygulama kabulü tamamlanmadı. Uygulama ZIP'i üretim
 sürücüsü içermez, VB-CABLE ile çalışmaya devam eder. Kur/güncelle üretim paketi yokken

@@ -24,6 +24,45 @@ correctness/security re-reviews passed, with no remaining scoped findings.
 Final product build and actual offline JSON parsing passed (81 checks, zero
 failures, no active capture claimed). Staged capture tool SHA256:
 36484336820b2d0f67b8cd6e8b3ffc3faeec3c112cc0eaa626bca8a500884e72.
+Both complete Windows CI runs for code commit 75e1660 passed: push
+38031910415 and pull request 38031912981, including managed/offscreen UI,
+dependency/secret/static analysis, ASan, application ZIP and installer checks.
+
+Findings: actual new-tool instrumented hour request stopped at 478,756 ms,
+37 checks/nine failures, exit 1, with one steady underrun. Both shared WASAPI
+clients had zero position gaps/timestamp errors and null first-invalid records;
+overruns and transfer drops were zero. The first kernel event requested 306
+frames with 286 queued, produced 19 silent frames, and occurred 21.4403 ms
+after the last successful kernel WRITE. Maximum capture size was 425 frames.
+The kernel maximum WRITE gap was 27.7007 ms; user completion maximum was
+27.789 ms. Upstream maximum lateness was 9 ms. Sole-target Code Integrity
+Verifier 0x021209bb was active; HVCI was not.
+
+Passed: the new history was available, chronological, contained 128 events,
+reported zero rejected events and froze at the first STATUS underrun rise
+(0 to 1), before the diagnostic query. Failure-near events include an 8.4315 ms
+WAIT (7.3551 ms past the intended cadence deadline), a 1.2051 ms STATUS
+reporting 447 queued frames/underrun zero, a successful 480-frame dequeue,
+a 14.7974 ms WRITE wall interval and the next STATUS reporting underrun one.
+The previous WRITE completion to this WRITE start was 12.9916 ms; start to
+completion was 14.7974 ms. Thus the critical dequeue had a ready upstream
+packet and an open gate. These observations narrow the delayed segment but
+do not distinguish API/pending wait, preemption, spinlock contention or
+Verifier/WHPX effects. No absolute QPC-minus-InterruptTime comparison was made.
+The source contains no deliberate long WRITE wait; its elapsed interval is
+not a driver CPU execution measurement. A platform scheduler/ReadyThread,
+CSwitch and DPC/ISR trace is needed to separate these possibilities before
+a further behavior fix can be justified. No reserve, latency or acceptance
+threshold was changed. Instrumentation overhead remains part of this run.
+
+Evidence: worker-timeline-hour-serial.log. Normal guest shutdown subsequently
+completed, both owned process identities were absent, exclusive disk access
+passed and stopped snapshot worker-timeline-hour-failed-stopped-20261010 was
+preserved; worker-timeline-hour-normal-shutdown-serial.log contains the request.
+The requested hour remains failed/incomplete. HVCI, current-version remaining
+lifecycle cases, physical audio/performance and Microsoft production signing
+remain open. VB-CABLE remains the daily route; host security/audio defaults
+are unchanged.
 
 The history diagnoses elapsed worker operations, not pure kernel execution
 or physical audio latency. Its extra lab sampling and post-join report copies
