@@ -144,7 +144,7 @@ def stream(s):
     s=s[:a]+'''    KIRQL oldIrql;
     KeAcquireSpinLock(&m_PositionSpinLock,&oldIrql);
     const uint64_t generation=SesBridgeGeneration();
-    if(generation!=m_captureGeneration){m_capturePackets.discard();m_captureGeneration=generation;}
+    if(generation!=m_captureGeneration){m_capturePackets.silencePending();m_captureGeneration=generation;}
     const auto packet=m_capturePackets.peek();
     uint64_t firstSampleQpc=0;
     NTSTATUS result=STATUS_DEVICE_NOT_READY;
@@ -173,7 +173,7 @@ def stream(s):
         const ULONG packetBytes=m_capturePackets.packetBytes();
         if(!packetBytes)return;
         const uint64_t generation=SesBridgeGeneration();
-        if(generation!=m_captureGeneration){m_capturePackets.discard();m_captureGeneration=generation;}
+        if(generation!=m_captureGeneration){m_capturePackets.silencePending();m_captureGeneration=generation;}
         const uint64_t finalLinear=m_ullLinearPosition+ByteDisplacement;
         // At most eight packet spans are produced per update, even after a
         // long suspension. A skipped interval stays visible as a position gap.

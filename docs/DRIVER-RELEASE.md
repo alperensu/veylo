@@ -1,6 +1,6 @@
 # Veylo Mikrofon: son sürüme geçiş
 
-Geliştirme sürücüsü **0.5.4.0**, uygulama **0.7.5-dev**, ABI **5**, ses
+Geliştirme sürücüsü **0.5.5.0**, uygulama **0.7.5-dev**, ABI **5**, ses
 protokolü **1**. Test imzası ve imzasız Microsoft gönderim taslağı, günlük
 Windows'a kurulabilen son sürüm değildir. VB-CABLE günlük yönlendirme olarak kalır.
 

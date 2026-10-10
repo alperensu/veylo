@@ -3,7 +3,7 @@ Signature="$Windows NT$"
 Class=MEDIA
 ClassGUID={4d36e96c-e325-11ce-bfc1-08002be10318}
 Provider=%Provider%
-DriverVer=10/10/2026,0.5.4.0
+DriverVer=10/10/2026,0.5.5.0
 CatalogFile=SesMicrophone.cat
 PnpLockdown=1
 

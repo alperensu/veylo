@@ -846,7 +846,7 @@ struct ProducerPublication {
     ExtendedEvidence evidence;
     uint64_t began=0,phaseEpoch=0;
     unsigned phase=0;
-    bool ready=false,done=false;
+    bool ready=false,done=false,resumePending=false;
     const char* failure=nullptr;
 };
 // Exactly one publisher and one reader. A preempted reader can pin an old
@@ -890,6 +890,26 @@ public:
         return cached;
     }
 };
+// Publish the upcoming phase before CONNECT or prefill can change captured
+// PCM. Keep the scheduler paused until the operation actually finishes: the
+// original lifecycle deadline remains in force throughout the transition.
+void publishResumeBoundary(ProducerMailbox& mailbox,ProducerPublication& state,const ProducerSchedule& schedule,uint64_t now) {
+    state.phase=schedule.phase+1;state.phaseEpoch=now;state.resumePending=true;
+    if(!mailbox.publish(state))std::terminate();
+}
+bool publishResumeComplete(ProducerMailbox& mailbox,ProducerPublication& state,ProducerSchedule& schedule,uint64_t now) {
+    if(schedule.lifecycleExpired(now))return false;
+    schedule.resume(now);state.phase=schedule.phase;state.phaseEpoch=schedule.phaseEpoch;state.resumePending=false;
+    if(!mailbox.publish(state))std::terminate();
+    return true;
+}
+bool packetPositionContiguous(bool hadPacket,uint64_t position,uint64_t expected) {
+    return !hadPacket||position==expected;
+}
+bool zeroPositionGaps(const ExtendedClientEvidence& client){return client.gaps==0;}
+bool packetEligible(uint64_t stamp,uint64_t cutoff,const ProducerPublication& published,unsigned phase,uint64_t epoch) {
+    return stamp>=cutoff&&!published.resumePending&&published.phase==phase&&published.phaseEpoch==epoch;
+}
 bool productDeliveryComplete(uint64_t submitted,uint64_t sent,uint64_t received,uint64_t baseline) {
     return submitted<=std::numeric_limits<uint64_t>::max()/SES_DRIVER_FRAMES&&received>=baseline&&
         sent==submitted*SES_DRIVER_FRAMES&&received-baseline==sent;
@@ -1012,14 +1032,16 @@ struct ExtendedProducer {
                     now=qpc100ns();
                     if(schedule.lifecycleExpired(now)){fail("consumer silence/reconnect lifecycle acknowledgement deadline");break;}
                     if(schedule.resumeDue(now,resumePermit.load())) {
+                        publishResumeBoundary(publication,state,schedule,qpc100ns());
                         if(schedule.phase==3) {
                             if(!connect()){fail("producer reconnect protocol status");break;}
                             ++e.producerReconnects;
                         }
                         bool prefilled=true;for(unsigned i=0;i<3;++i)if(!write(false)){prefilled=false;break;}
                         if(!prefilled){fail("producer resume bounded prefill");break;}
-                        schedule.resume(qpc100ns());state.phase=schedule.phase;state.phaseEpoch=schedule.phaseEpoch;
-                        haveSteadyStatus=false;publish(state);
+                        if(!publishResumeComplete(publication,state,schedule,qpc100ns())) {
+                            fail("producer reconnect or prefill exceeds existing lifecycle deadline");break;}
+                        haveSteadyStatus=false;
                     }
                     now=qpc100ns();
                     if(!schedule.paused()&&now>=schedule.nextWrite) {
@@ -1190,10 +1212,12 @@ struct ProductBridgeProducer {
                 now=qpc100ns();
                 if(schedule.lifecycleExpired(now)){fail("product consumer silence/reconnect lifecycle acknowledgement deadline");break;}
                 if(schedule.resumeDue(now,resumePermit.load())) {
+                    publishResumeBoundary(publication,state,schedule,qpc100ns());
                     if(!connect()){fail("real DriverBridge reconnect, ownership, protocol or worker MMCSS");break;}
                     if(schedule.lifecycleExpired(qpc100ns())){fail("product bridge reconnect exceeds existing lifecycle deadline");break;}
                     if(schedule.phase==3)++e.producerReconnects;
-                    schedule.resume(qpc100ns());state.phase=schedule.phase;state.phaseEpoch=schedule.phaseEpoch;publish(state);
+                    if(!publishResumeComplete(publication,state,schedule,qpc100ns())) {
+                        fail("product bridge resume publication exceeds existing lifecycle deadline");break;}
                 }
                 now=qpc100ns();
                 if(!schedule.paused()&&now>=schedule.nextWrite) {
@@ -1249,7 +1273,7 @@ template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Rep
     if(!state.ready){producer.finish();r.check(false,state.failure?state.failure:"producer startup deadline");return false;}
     const uint64_t began=state.began,deadline=began+seconds*10000000ULL;
     uint64_t nextHeartbeat=began+50000000;
-    unsigned phase=0,stage=0;bool paused=false,ok=true;
+    unsigned phase=0,stage=0;uint64_t phaseEpoch=state.phaseEpoch;bool paused=false,ok=true;
     for(auto& consumer:consumers)consumer.cutoff=state.phaseEpoch+2500000;
     auto abortRun=[&](const char* reason){std::printf("Findings extended capture stopped: %s\n",reason);ok=false;};
     auto copyProducerEvidence=[&](const ExtendedEvidence& source) {
@@ -1265,10 +1289,11 @@ template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Rep
         if(state.failure){abortRun(state.failure);break;}
         if(state.done){if(qpc100ns()<deadline)abortRun("producer exited before measured consumer duration");break;}
         if(analyzer.failed){abortRun("periodic waveform fidelity");break;}
-        if(state.phase!=phase) {
-            phase=state.phase;paused=phase==1||phase==3;stage=phase/2;
+        if(state.phase!=phase||state.phaseEpoch!=phaseEpoch) {
+            const bool phaseChanged=state.phase!=phase;
+            phase=state.phase;phaseEpoch=state.phaseEpoch;paused=phase==1||phase==3;stage=phase/2;
             for(auto& consumer:consumers){consumer.signal.clear();consumer.quiet.clear();consumer.cutoff=state.phaseEpoch+2500000;}
-            if(phase==3) {
+            if(phaseChanged&&phase==3) {
                 if(!consumers[1].open(device)){abortRun("second capture client reconnect");break;}
                 ++e.clients[1].reconnects;consumers[1].cutoff=std::max(consumers[1].cutoff,qpc100ns()+2500000);
             }
@@ -1289,15 +1314,15 @@ template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Rep
                 ++evidence.packets;evidence.frames+=frames;consumer.lastPacketMs=GetTickCount64();
                 if(flags&AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY)++evidence.discontinuities;
                 if(flags&AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)++evidence.timestampErrors;
-                const bool gap=consumer.hadPacket&&position!=consumer.previousPosition;if(gap)++evidence.gaps;
+                const bool gap=!packetPositionContiguous(consumer.hadPacket,position,consumer.previousPosition);if(gap)++evidence.gaps;
                 bool valid=frames>0&&frames<=rate&&((flags&AUDCLNT_BUFFERFLAGS_SILENT)||data)&&
                     position<=std::numeric_limits<uint64_t>::max()-frames&&stamp<=qpc100ns()+100000&&
-                    (!consumer.hadPacket||(position>=consumer.previousPosition&&stamp>consumer.previousStamp));
+                    !gap&&(!consumer.hadPacket||(position>=consumer.previousPosition&&stamp>consumer.previousStamp));
                 // A phase published during this drain is processed next turn,
                 // after releasing this COM buffer. Do not enqueue across epochs.
-                const bool eligible=stamp>=consumer.cutoff&&producer.snapshot().phase==phase;
+                const bool eligible=packetEligible(stamp,consumer.cutoff,producer.snapshot(),phase,phaseEpoch);
                 if(eligible) {
-                    if(!freshPacket(stamp,consumer.cutoff,flags)||gap)valid=false;
+                    if(!freshPacket(stamp,consumer.cutoff,flags))valid=false;
                     if(valid)for(UINT32 i=0;i<frames;++i) {
                         const double value=flags&AUDCLNT_BUFFERFLAGS_SILENT?0:decode(data,32,i);
                         if(paused) {
@@ -1380,6 +1405,7 @@ template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Rep
     r.check(ok&&!analyzer.failed,"extended capture keeps bounded memory, packet integrity, waveform fidelity and driver counters");
     r.check(e.elapsedMs>=seconds*1000ULL&&e.elapsedMs<=seconds*1000ULL+1000,"extended capture completes requested measured duration within bounded shutdown guard");
     for(unsigned i=0;i<2;++i) {
+        r.check(zeroPositionGaps(e.clients[i]),"each shared client has zero observed position gaps including lifecycle guards");
         r.check(e.elapsedMs>1000&&e.clients[i].frames>=(e.elapsedMs-1000)*rate/1000,
             "each shared client captures frames covering measured run apart from bounded startup/reconnect allowance");
         bool allStages=true;
@@ -1417,7 +1443,8 @@ void mailboxSelfTest(Report& r) {
     constexpr uint64_t terminal=11002;
     auto makePublication=[&](uint64_t generation) {
         ProducerPublication state{};state.began=generation;state.phaseEpoch=generation*7;state.phase=static_cast<unsigned>(generation%5);
-        state.ready=true;state.done=generation==terminal;state.failure=generation%2?oddFailure:evenFailure;
+        state.ready=true;state.done=generation==terminal;state.resumePending=generation%3==0;
+        state.failure=generation%2?oddFailure:evenFailure;
         auto& e=state.evidence;e.writes=generation*11;e.driverReceivedFrames=generation*480;
         e.driverSilenceFrames=generation*13;e.steadyUnderruns=static_cast<uint32_t>(generation%31);
         e.statusHistory.count=64;e.statusHistory.next=0;
@@ -1431,7 +1458,7 @@ void mailboxSelfTest(Report& r) {
     auto consistent=[&](const ProducerPublication& state) {
         const uint64_t generation=state.began;const auto& e=state.evidence;
         if(!generation||state.phaseEpoch!=generation*7||state.phase!=generation%5||!state.ready||
-            state.done!=(generation==terminal)||state.failure!=(generation%2?oddFailure:evenFailure)||
+            state.done!=(generation==terminal)||state.resumePending!=(generation%3==0)||state.failure!=(generation%2?oddFailure:evenFailure)||
             e.writes!=generation*11||e.driverReceivedFrames!=generation*480||e.driverSilenceFrames!=generation*13||
             e.steadyUnderruns!=generation%31||e.statusHistory.count!=64||e.statusHistory.next!=0)return false;
         for(size_t i=0;i<64;++i) {
@@ -1501,6 +1528,55 @@ void extendedSelfTest(Report& r) {
         workerPublicationAge(std::numeric_limits<uint64_t>::max(),1)==std::numeric_limits<uint64_t>::max()-1,
         "missing or newer worker timestamp cannot underflow publication age");
     auto check=[&](bool ok,const char* label){++r.selfTests;r.check(ok,label);};
+    // Model CONNECT synchronously between the two actual publication helpers.
+    // No scheduling luck or endpoint API is needed to expose the old ordering.
+    ProducerSchedule reconnectSchedule(10000000,12);
+    reconnectSchedule.phase=3;reconnectSchedule.phaseEpoch=90000000;
+    const uint64_t transitionBegan=reconnectSchedule.phaseEpoch+5500000;
+    ProducerPublication reconnectState{};reconnectState.ready=true;reconnectState.phase=3;
+    reconnectState.phaseEpoch=reconnectSchedule.phaseEpoch;
+    ProducerMailbox reconnectMailbox;
+    check(reconnectMailbox.publish(reconnectState),"initialize deterministic paused reconnect publication");
+    publishResumeBoundary(reconnectMailbox,reconnectState,reconnectSchedule,transitionBegan);
+    const auto duringConnect=reconnectMailbox.snapshot(); // Fake CONNECT side effect observes this boundary.
+    check(duringConnect.phase==4&&duringConnect.phaseEpoch==transitionBegan&&duringConnect.resumePending&&
+        reconnectSchedule.phase==3&&reconnectSchedule.phaseEpoch==90000000,
+        "upcoming phase is published before reconnect side effects while actual paused scheduler epoch stays unchanged");
+    check(!packetEligible(transitionBegan+5000000,transitionBegan+2500000,duringConnect,4,transitionBegan)&&
+        reconnectSchedule.lifecycleExpired(100000001),
+        "even a delayed reconnect cannot make pending waveform eligible or erase the original one-second lifecycle deadline");
+    const uint64_t actualResume=transitionBegan+2000000;
+    const bool resumeCompleted=publishResumeComplete(reconnectMailbox,reconnectState,reconnectSchedule,actualResume);
+    const auto afterConnect=reconnectMailbox.snapshot();
+    check(resumeCompleted&&afterConnect.phase==4&&!afterConnect.resumePending&&afterConnect.phaseEpoch==actualResume&&
+        reconnectSchedule.nextWrite==actualResume+ProducerSchedule::packetPeriod&&!reconnectSchedule.schedulerExpired(actualResume),
+        "successful reconnect publishes actual resume epoch and begins unchanged write schedule only after completion");
+    check(!packetEligible(actualResume+2500000,actualResume+2500000,afterConnect,4,transitionBegan)&&
+        !packetEligible(actualResume+2499999,actualResume+2500000,afterConnect,4,actualResume)&&
+        packetEligible(actualResume+2500000,actualResume+2500000,afterConnect,4,actualResume),
+        "same-phase completion requires the actual resume epoch and full existing fresh waveform guard");
+    reconnectSchedule.phase=3;reconnectSchedule.phaseEpoch=90000000;
+    const uint64_t originalNextWrite=reconnectSchedule.nextWrite;
+    publishResumeBoundary(reconnectMailbox,reconnectState,reconnectSchedule,transitionBegan);
+    const bool lateCompleted=publishResumeComplete(reconnectMailbox,reconnectState,reconnectSchedule,100000001);
+    const auto afterLateConnect=reconnectMailbox.snapshot();
+    check(!lateCompleted&&reconnectSchedule.phase==3&&reconnectSchedule.phaseEpoch==90000000&&
+        reconnectSchedule.nextWrite==originalNextWrite&&reconnectState.resumePending&&
+        reconnectState.phaseEpoch==transitionBegan&&afterLateConnect.resumePending&&afterLateConnect.phaseEpoch==transitionBegan,
+        "expired reconnect plus prefill completion preserves paused schedule and pending publication without resetting lifecycle deadline");
+    const bool exactCompleted=publishResumeComplete(reconnectMailbox,reconnectState,reconnectSchedule,100000000);
+    const auto afterExactConnect=reconnectMailbox.snapshot();
+    check(exactCompleted&&reconnectSchedule.phase==4&&reconnectSchedule.phaseEpoch==100000000&&
+        reconnectSchedule.nextWrite==100100000&&!afterExactConnect.resumePending&&afterExactConnect.phaseEpoch==100000000,
+        "reconnect completion at exact original one-second lifecycle deadline passes without tolerance changes");
+    ExtendedClientEvidence continuity{};
+    check(packetPositionContiguous(false,1948320,0)&&packetPositionContiguous(true,1947840,1947840)&&zeroPositionGaps(continuity),
+        "first capture packet establishes a baseline and exact next packet positions pass zero-gap acceptance");
+    const bool guardEligible=packetEligible(actualResume,actualResume+2500000,afterConnect,4,actualResume);
+    if(!packetPositionContiguous(true,1948320,1947840))++continuity.gaps;
+    check(!guardEligible&&continuity.gaps==1&&!zeroPositionGaps(continuity)&&
+        !packetPositionContiguous(true,1947360,1947840),
+        "forward or backward position gaps fail even when packet is inside an ineligible lifecycle guard");
     ProducerStatusHistory history;
     check(history.count==0&&history.next==0&&history.observations.size()==64,
         "producer telemetry starts empty with exactly 64 fixed observations");

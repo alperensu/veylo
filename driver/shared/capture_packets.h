@@ -81,8 +81,15 @@ public:
         if(!storage_||number!=next_unread_||number>=completedPackets())return false;
         ++next_unread_;pending_dropped_=0;return true;
     }
-    // Producer session changes invalidate pending complete AND partial PCM,
-    // preserving the device timeline so any lost interval remains observable.
+    // Producer disconnect/replacement invalidates PCM, not elapsed capture
+    // time. Deliver retained packets as silence at their original positions
+    // and timestamps. Also clear the partial prefix before new PCM joins it.
+    // No DMA is touched; the OS read path still owns publication. Real drops
+    // from overflow/skipTo remain observable and are never acknowledged here.
+    void silencePending() {
+        if(storage_)for(uint32_t i=0;i<packet_bytes_*StorageSlots;++i)storage_[i]=0;
+    }
+    // Explicit data loss preserves the timeline and exposes lost intervals.
     void discard() {
         if(!storage_)return;
         const uint64_t completed=completedPackets();

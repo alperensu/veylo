@@ -167,9 +167,59 @@ static void savedTimestampAndProducerDiscard() {
           "Replacement voice carries only its new timing and keeps the discarded packet gap visible");
     check(all(packet.data,192,0)&&all(packet.data+192,bytes-192,0x52),"Replacement assembly contains no old voice");
 }
+static void producerSilenceKeepsTimeline(uint32_t align) {
+    const uint32_t bytes=480*align,prefix=48*align;
+    std::array<unsigned char,1920*CapturePackets::StorageSlots> storage{};
+    std::array<unsigned char,1920> dma{};
+    CapturePackets packets;
+    check(packets.configure(storage.data(),sizeof(storage),bytes,align),"Configure producer-generation fixture");
+    // Wrap the private ring and acknowledge earlier packets. The unread
+    // complete packet plus partial successor must survive CONNECT as silence.
+    for(uint64_t i=0;i<CapturePackets::StorageSlots+2;++i) {
+        auto span=packets.writeSpan();std::memset(span.data,0x41,bytes);
+        check(packets.commit(bytes,1000000+i*100000),"Commit exact source timestamp through ring wrap");
+        if(i<CapturePackets::StorageSlots+1) {
+            const auto packet=packets.peek();std::memcpy(dma.data(),packet.data,bytes);
+            check(packets.consume(packet.number),"Acknowledge source packet before generation change");
+        }
+    }
+    const auto before=packets.peek();const uint64_t linear=packets.linearBytes();
+    auto span=packets.writeSpan();std::memset(span.data,0x61,prefix);
+    check(packets.commit(prefix,before.startHns+100000),"Partial successor saves original first sample");
+    packets.silencePending();packets.silencePending(); // Close followed by CONNECT.
+    auto packet=packets.peek();
+    check(packet.data&&packet.number==before.number&&packet.startHns==before.startHns&&
+          packet.dropped==0&&!packet.moreData&&packets.linearBytes()==linear+prefix,
+          "Close and CONNECT retain unread ordinal, timestamp and elapsed position");
+    check(all(storage.data(),bytes*CapturePackets::StorageSlots,0),"Generation change removes all complete and partial old PCM");
+    check(all(dma.data(),bytes,0x41),"Invalidation cannot overwrite DMA still owned by the OS");
+    std::memcpy(dma.data(),packet.data,bytes);check(packets.consume(packet.number),"OS publishes retained silence at expected ordinal");
+    check(all(dma.data(),bytes,0),"First post-generation OS read receives only safe silence");
+    span=packets.writeSpan();std::memset(span.data,0x52,bytes-prefix);
+    check(packets.commit(bytes-prefix,90000000),"New producer completes existing partial capture interval");
+    packet=packets.peek();
+    check(packet.data&&packet.number==before.number+1&&packet.startHns==before.startHns+100000&&packet.dropped==0,
+          "Replacement PCM has contiguous ordinal and original sampling timestamp");
+    check(all(packet.data,prefix,0)&&all(packet.data+prefix,bytes-prefix,0x52),"New source cannot expose stale partial prefix");
+    check(packets.consume(packet.number)&&packets.droppedPackets()==0,"Lifecycle creates no artificial packet loss");
+    // A source reset must not conceal loss which already happened for another
+    // reason, or reset its report before the OS successfully reads it.
+    for(uint32_t i=0;i<CapturePackets::Capacity+2;++i)produce(packets,bytes,0x77);
+    const auto overflow=packets.peek();packets.silencePending();packet=packets.peek();
+    check(packet.number==overflow.number&&packet.dropped==overflow.dropped&&packet.dropped==2&&
+          packets.droppedPackets()==2&&all(packet.data,bytes,0),
+          "Generation invalidation preserves real overflow ordinal and pending drop report");
+    const uint64_t skipped=packets.linearBytes()+bytes*3+prefix;
+    check(packets.skipTo(skipped),"Real suspension advances timeline after source invalidation");
+    const uint64_t dropped=packets.droppedPackets();packets.silencePending();
+    produce(packets,bytes-prefix,0x22);packet=packets.peek();
+    check(packet.number==skipped/bytes&&packet.dropped==dropped&&dropped>2,
+          "Silencing cannot conceal real suspension position gaps");
+}
 int main() {
     validation();coalescedAndPartialOverwrite(2);coalescedAndPartialOverwrite(4);
     overflowAndFailedRead();suspendResetAndWrap();longCadence();savedTimestampAndProducerDiscard();
+    producerSilenceKeepsTimeline(2);producerSilenceKeepsTimeline(4);
     std::printf("%u capture packet retention checks, zero failures. Portable tests do not claim a live WaveRT run.\n",checks);
     return 0;
 }

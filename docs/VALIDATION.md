@@ -1,3 +1,50 @@
+# Producer-generation capture continuity — 2026-10-10
+
+Driver 0.5.5 fixes a deterministic loss mechanism in 0.5.4: clearing stale
+producer PCM discarded unread complete packets while retaining elapsed byte
+position, creating an artificial packet-number gap. Generation invalidation
+now clears the bounded private PCM storage without changing unread ordinals,
+first-sample timestamps, partial assembly position or pending real-drop counts.
+The OS receives retained intervals as silence. DMA publication remains owned
+by GetReadPacket and the synchronized bridge generation check is unchanged.
+Overflow and suspended-time skips still expose genuine loss.
+
+The lab harness publishes a pending resume boundary before CONNECT/prefill
+side effects, then the actual resume epoch only after the original lifecycle
+deadline is checked. All observed position gaps fail independently of waveform
+eligibility, including lifecycle guards. A review found that raw-producer
+prefill could cross the deadline; the common completion helper now rejects
+that case without changing the old schedule or pending publication.
+
+Passed: eight Release groups (17.67 s), eight ASan groups (19.46 s), 17,174
+capture-retention checks, and the subsequently rebuilt final Release/ASan
+offline analyzer with 90 checks each. The final fixtures include exact-deadline
+success and deadline-plus-one-tick rejection. Pinned EWDK compilation and
+recommended WDK analysis, InfVerif/Inf2Cat, eight package-integrity and 30 lab
+signing-integrity checks passed. The product build completed without warnings.
+Two independent read-only Sol correctness/security reviews passed after the
+P2 deadline finding was fixed. Temporary fixed-VM staging/typing preparation
+was also independently reviewed; unsupported-key and split-command issues
+were fixed before execution, with whole-command parser/character preflight.
+
+Passed: final test-only SYS/CAT cryptography, catalog membership, fixed archive
+inventory and transient private-key deletion. No host certificate store,
+driver, security policy or audio routing change was made. The stopped owned
+VM was preserved before staging. Protocol 1, ABI 5, packet capacity, buffer
+reserves and scheduling thresholds are unchanged.
+
+Final test-signed SYS SHA256:
+fae3146eeecba75994dcd04654f35151dade6f76f75d87dbe25a1c42142ff789.
+Final lab executable SHA256:
+2ee2dab7e1b325798e8894f997d80fb7af054e39eff73b85fb4f0bb829e6ba35.
+
+Live 0.5.5 capture is pending. The prior 40.580 s failure is consistent with
+the corrected mechanism but lacks a generation/CONNECT event ledger, so its
+specific cause is not claimed proven. The prior hour-request underrun is a
+separate unresolved acceptance failure. Active HVCI, remaining current-version
+lifecycle cases, physical audio/performance/latency, separate applications and
+Microsoft production signing are still open; VB-CABLE remains the daily route.
+
 # Opt-in driver I/O phase observations — 2026-10-10
 
 Passed: lab-only worker events now distinguish DeviceIoControl issue wall
