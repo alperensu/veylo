@@ -39,9 +39,27 @@ constexpr unsigned rate = 48000;
 constexpr unsigned minSignalFrames = 24000;
 constexpr unsigned minSilenceFrames = 4800;
 constexpr size_t maxCaptureFrames = 96000;
+struct InvalidPacketEvidence {
+    bool present=false;
+    uint32_t frames=0,flags=0;
+    uint64_t position=0,expectedPosition=0,stamp=0,previousStamp=0,observedAt=0,drainGap100ns=0;
+    bool hadPrevious=false,eligible=false;
+    void retain(const InvalidPacketEvidence& value){if(!present)*this=value;}
+};
+bool writeInvalidPacket(FILE* file,const InvalidPacketEvidence& p) {
+    if(!p.present)return std::fprintf(file,"null")>0;
+    return std::fprintf(file,"{\"frames\":%u,\"flags\":%u,\"position_frames\":%llu,\"expected_position_frames\":%llu,"
+        "\"timestamp_hns\":%llu,\"previous_timestamp_hns\":%llu,\"observed_at_qpc_hns\":%llu,"
+        "\"max_consumer_drain_gap_us\":%llu,\"had_previous\":%s,\"eligible\":%s}",p.frames,p.flags,
+        static_cast<unsigned long long>(p.position),static_cast<unsigned long long>(p.expectedPosition),
+        static_cast<unsigned long long>(p.stamp),static_cast<unsigned long long>(p.previousStamp),
+        static_cast<unsigned long long>(p.observedAt),static_cast<unsigned long long>(p.drainGap100ns/10),
+        p.hadPrevious?"true":"false",p.eligible?"true":"false")>0;
+}
 struct ExtendedClientEvidence {
     uint64_t packets=0, frames=0, discontinuities=0, timestampErrors=0, gaps=0;
     unsigned windows[3]{}, silenceChecks=0, reconnects=0;
+    InvalidPacketEvidence firstInvalid;
 };
 struct ProducerStatusObservation {
     uint64_t sample=0,elapsed100ns=0,due100ns=0,lateness100ns=0,statusDuration100ns=0;
@@ -174,10 +192,12 @@ struct Report {
         for(unsigned i=0;i<2;++i) {
             const auto& c=e.clients[i];
             ok=std::fprintf(file,"%s{\"packets\":%llu,\"frames\":%llu,\"discontinuities\":%llu,\"timestamp_errors\":%llu,"
-                "\"position_gaps\":%llu,\"waveform_windows_by_signal_stage\":[%u,%u,%u],\"fresh_silence_checks\":%u,\"reconnects\":%u}",
+                "\"position_gaps\":%llu,\"waveform_windows_by_signal_stage\":[%u,%u,%u],\"fresh_silence_checks\":%u,\"reconnects\":%u,\"first_invalid_packet\":",
                 i?",":"",static_cast<unsigned long long>(c.packets),static_cast<unsigned long long>(c.frames),
                 static_cast<unsigned long long>(c.discontinuities),static_cast<unsigned long long>(c.timestampErrors),
                 static_cast<unsigned long long>(c.gaps),c.windows[0],c.windows[1],c.windows[2],c.silenceChecks,c.reconnects)>0&&ok;
+            ok=writeInvalidPacket(file,c.firstInvalid)&&ok;
+            ok=std::fprintf(file,"}")>0&&ok;
         }
         ok=std::fprintf(file,"],\"producer_status_history\":{\"capacity\":%zu,\"count\":%zu,"
             "\"time_origin\":\"producer_measured_QPC_begin\",\"source\":\"%s\",\"status_duration_available\":%s,"
@@ -365,6 +385,23 @@ void selfTest(Report& r) {
     check(freshPacket(2500000,2500000,AUDCLNT_BUFFERFLAGS_SILENT),"timestamp gate accepts new silent packets");
     check(!freshPacket(3000000,2500000,AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR),"timestamp gate rejects invalid timestamp");
     check(!freshPacket(3000000,2500000,AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY),"timestamp gate rejects discontinuity");
+    InvalidPacketEvidence invalid;
+    invalid.retain({true,480,1,9465600,9465120,7203199758,7202999738,7203228333,163110,true,true});
+    invalid.retain({true,1,0,0,0,0,0,0,0,false,false});
+    check(invalid.frames==480&&invalid.position==9465600&&invalid.expectedPosition==9465120,
+        "First invalid packet remains immutable across subsequent failures");
+    FILE* scratch=std::tmpfile();
+    check(scratch!=nullptr,"Offline packet diagnostics scratch file opens");
+    if(scratch){
+        const bool wrote=writeInvalidPacket(scratch,invalid);std::rewind(scratch);
+        std::array<char,1024> output{};const size_t bytesRead=std::fread(output.data(),1,output.size()-1,scratch);
+        check(wrote&&bytesRead>0&&std::strstr(output.data(),"\"position_frames\":9465600")&&
+            std::strstr(output.data(),"\"expected_position_frames\":9465120")&&
+            std::strstr(output.data(),"\"flags\":1")&&std::strstr(output.data(),"\"max_consumer_drain_gap_us\":16311")&&
+            std::strstr(output.data(),"\"had_previous\":true,\"eligible\":true"),
+            "Serialized failure retains exact packet positions, flags, timestamp context and units");
+        std::fclose(scratch);
+    }
     BYTE bytes[4]{};int32_t v32=pcm32(19);std::memcpy(bytes,&v32,4);
     check(std::abs(decode(bytes,32,0)-waveform(19))<1e-8,"PCM32 decoder preserves injected amplitude");
     int16_t v16=static_cast<int16_t>(v32/65536);std::memcpy(bytes,&v16,2);
@@ -1200,6 +1237,8 @@ template<class Producer> bool runExtended(IMMDevice* device,unsigned seconds,Rep
                 consumer.previousPosition=position+frames;consumer.previousStamp=stamp;consumer.hadPacket=true;
                 if(FAILED(consumer.capture->ReleaseBuffer(frames))){abortRun("release capture buffer");break;}
                 if(!valid){
+                    evidence.firstInvalid.retain({true,frames,flags,position,expected,stamp,previousStamp,
+                        qpc100ns(),e.maxConsumerDrainGap100ns,hadPrevious,eligible});
                     std::printf("Extended PCM32 invalid packet: client=%u frames=%u flags=0x%08lx position=%llu expected=%llu stamp=%llu previous=%llu now=%llu had_previous=%s eligible=%s max_consumer_drain_gap_us=%llu\n",
                         index,frames,static_cast<unsigned long>(flags),static_cast<unsigned long long>(position),
                         static_cast<unsigned long long>(expected),static_cast<unsigned long long>(stamp),

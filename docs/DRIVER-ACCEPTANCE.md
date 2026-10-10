@@ -4,6 +4,13 @@ Bu araçlar test imzalı sürücünün **yetkilendirilmiş Windows VM'sinde** de
 içindir. Günlük Windows'a sürücü kurmaz; normal uygulama VB-CABLE ile çalışır.
 Üretim imzası, fiziksel mikrofon ve uygulama uyumluluğu yerine geçmez.
 
+0.5.3 geliştirme sürücüsü paket zamanını ilk örneğe göre bildirir. Capture
+raporundaki `clients[].first_invalid_packet`, ilk geçersiz paketin frame
+konumunu, beklenen konumu, flag'lerini, QPC zamanlarını ve uygunluk durumunu
+saklar; olay yoksa `null` olur. Zamanlar WASAPI'nin QPC tabanlı 100 ns
+birimindedir; kernel tanılarındaki interrupt-time saatinden ayrı tutulur.
+Bu alan tanı içindir; kabul eşikleri gevşetilmez ve PCM kaydı içermez.
+
 ## Sabit ve doğrulanmış test medyası
 
 Önce mevcut [laboratuvar kurulumunu](DRIVER-LAB.md) tamamla. VM kapalıyken:

@@ -5,8 +5,8 @@
 
 ## Mevcut durum
 
-Veylo-driver-0.5.2.0-isolated-lab.zip imzasız geliştirme çıktısıdır; günlük bilgisayara
-yüklenmemelidir. Ayrı `TEST-SIGNED-isolated-lab.zip` paketi dosya tabanlı
+Güncel sürücü geliştirme sürümü 0.5.3'tür; günlük bilgisayara yüklenmemelidir.
+`Veylo-driver-0.5.3.0-TEST-SIGNED-isolated-lab.zip` paketi dosya tabanlı
 test sertifikasıyla SYS ve CAT imzası taşır; bu Microsoft üretim imzası değildir.
 Önceki 0.5.1 sürümüyle izole Windows 11 build 26100 guest'te kurulum, 104 kernel IOCTL kontrolü ve
 PCM16/PCM32 gerçek ses aktarımı geçti. Bu test-policy sonucudur; üretim kernel

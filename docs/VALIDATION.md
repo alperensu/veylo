@@ -1,3 +1,52 @@
+# Driver 0.5.3 packet timestamps and preserved capture failures — 2026-10-10
+
+Passed: corrected GetReadPacket to report the first sample's timestamp,
+as required by the [WDK contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/portcls/nf-portcls-iminiportwavertinputstream-getreadpacket).
+The upstream calculation correlated the packet's end. Integer-only helpers
+preserve fractional PCM16/32 progress, full packet counters across 32-bit wire
+wrap, and safe QPC conversion without an overflowing intermediate product.
+Invalid metadata fails closed. Audio protocol 1, ABI 5, notification behavior,
+ring sizes and acceptance gates are unchanged. This fixes a timestamp contract
+error; it is not claimed to resolve intermittent missing packets.
+
+Passed: pinned EWDK build, recommended WDK analysis, InfVerif and Inf2Cat,
+without warnings/errors. Seven Release groups passed in 16.21 seconds and
+seven ASan groups in 17.37 seconds. Portable validation passed 120,660 checks;
+offline capture passed 78 checks. The latter includes immutable first-invalid
+packet retention and serialization; offline JSON parsing confirmed no hardware
+capture was claimed. Two independent read-only Sol correctness/security
+reviews passed. A staging-helper security finding was fixed and independently
+re-reviewed before execution: its input now requires private ACLs, a pinned
+manifest, actual SYS/CAT cryptography/catalog membership and matching signer.
+Test signing verified fixed ZIP contents and deletion of ephemeral private
+material; no host trust store changed. Signed SYS SHA256:
+29b8a30c3174db2b66864cf121c44d02cfcb6018aef88effb9d5feec0e2a58fe;
+capture tool: 7469235b6e97761607d9afac011b96bb4c04a9e81508880727e21324088868dd.
+
+Findings: the preceding 0.5.2 instrumented hour request stopped after
+197,207 ms, 37 checks/nine failures, exit 1. Steady ring underruns, overruns
+and transfer drops were zero; minimum observed queue was 441 frames.
+The invalid eligible client-0 packet had 480 frames, DATA_DISCONTINUITY
+(flags 1), device position 9,465,600 instead of expected 9,465,120:
+exactly one 10 ms packet was missing. Its QPC-HNS timestamps were
+7,203,199,758 and previous 7,202,999,738; observation 7,203,228,333.
+Maximum consumer drain gap was 16,311 us and kernel WRITE arrival gap
+178,904 HNS. No first ring underrun was recorded. These are not latency
+measurements. Client 1 was not drained after client 0 failed, so its zero
+gap count does not localize the failure to one receiver. A coalesced
+notification/latest-packet-only mechanism remains a hypothesis; DMA
+retention/notification evidence is still needed before changing delivery.
+
+Evidence: kernel-trace-hour-197s-stopped-findings-serial.log and
+kerneltrace-hour-invalid-packet.png. The initial VM exit cause was not
+established; its stopped, exclusive disk was preserved as
+kernel-trace-hour-197s-unknown-exit-20261010. The detailed guest log was then
+retrieved without rerunning capture; normal guest shutdown was requested,
+both owned process identities were absent and exclusive disk access passed
+before snapshot kernel-trace-hour-detail-retrieved-20261010. No failed run
+is counted as a complete hour. Capture JSON now retains each client's first
+invalid packet's numeric context in bounded storage without PCM recordings.
+
 # Driver 0.5.2 additive kernel diagnostics — 2026-10-09
 
 Passed: pinned EWDK build, recommended WDK analysis, InfVerif and Inf2Cat with

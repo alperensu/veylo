@@ -31,4 +31,31 @@ inline uint64_t elapsedHns(uint64_t current,uint64_t previous,uint64_t carry=0) 
     const uint64_t delta=current-previous,max=~uint64_t(0);
     return carry>max-delta?max:delta+carry;
 }
+// GetReadPacket reports the sampling time of the packet's FIRST frame.
+// Use the full counter (not its 32-bit wire number) across packet-number wrap.
+inline bool capturePacketStartHns(uint64_t completed_packets,uint64_t linear_bytes,
+    uint64_t fractional_hns,uint64_t dma_hns,uint32_t packet_bytes,uint32_t byte_rate,
+    uint64_t& start_hns) {
+    const uint64_t max=~uint64_t(0),second=10000000;
+    if(!completed_packets||!packet_bytes||!byte_rate||fractional_hns>=second||
+       completed_packets-1>max/packet_bytes)return false;
+    const uint64_t first_byte=(completed_packets-1)*packet_bytes;
+    if(linear_bytes<first_byte)return false;
+    const uint64_t distance=linear_bytes-first_byte,whole=distance/byte_rate;
+    if(whole>max/second)return false;
+    const uint64_t remainder=(distance%byte_rate)*second/byte_rate;
+    const uint64_t base=whole*second;
+    if(remainder>max-base||fractional_hns>max-base-remainder)return false;
+    const uint64_t age=base+remainder+fractional_hns;
+    if(age>dma_hns)return false;
+    start_hns=dma_hns-age;return true;
+}
+inline bool hnsToQpc(uint64_t hns,uint64_t frequency,uint64_t& qpc) {
+    const uint64_t max=~uint64_t(0),second=10000000;
+    if(!frequency||frequency>max/second||hns/second>max/frequency)return false;
+    const uint64_t whole=(hns/second)*frequency;
+    const uint64_t part=(hns%second)*frequency/second;
+    if(part>max-whole)return false;
+    qpc=whole+part;return true;
+}
 }

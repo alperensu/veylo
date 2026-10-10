@@ -70,6 +70,44 @@ static void clockAndFormat(){
     check(elapsedHns(1,2)==0,"Backward counter cannot underflow");
     check(elapsedHns(20,10,3)==13,"Notification time carries forward exactly");
     check(elapsedHns(~uint64_t(0),0,1)==~uint64_t(0),"Counter addition saturates safely");
+    uint64_t stamp=123;
+    for(uint32_t align:{2u,4u}){
+        const uint32_t packet=480*align,byteRate=SES_DRIVER_RATE*align;
+        check(capturePacketStartHns(1,packet,0,100000,packet,byteRate,stamp)&&stamp==0,
+            "First completed packet is timestamped at first sample, not its end");
+        check(capturePacketStartHns(2,packet*2,0,200000,packet,byteRate,stamp)&&stamp==100000,
+            "Second packet starts exactly one period after capture start");
+        check(capturePacketStartHns(2,packet*2,37,200037,packet,byteRate,stamp)&&stamp==100000,
+            "Sub-frame DMA carry is included in start correlation");
+        const uint64_t completed=0x100000001ull;
+        check(capturePacketStartHns(completed,completed*packet,0,completed*100000,
+            packet,byteRate,stamp)&&stamp==(completed-1)*100000,
+            "Timestamp uses full counter across 32-bit packet-number wrap");
+        for(uint64_t elapsed=100001;elapsed<1000000;elapsed+=7919){
+            const auto progress=advancePcm(elapsed,align,0);
+            const uint64_t count=progress.bytes/packet,expected=(count-1)*100000;
+            check(capturePacketStartHns(count,progress.bytes,progress.fraction/SES_DRIVER_RATE,
+                elapsed,packet,byteRate,stamp)&&stamp>=expected&&stamp-expected<=1,
+                "PCM16/32 fractional DMA progress preserves packet start within one 100ns tick");
+        }
+    }
+    stamp=123;
+    check(!capturePacketStartHns(0,1920,0,100000,1920,192000,stamp)&&stamp==123,"No complete packet cannot publish timestamp");
+    check(!capturePacketStartHns(1,1920,0,100000,0,192000,stamp),"Zero packet size rejected");
+    check(!capturePacketStartHns(1,1920,0,100000,1920,0,stamp),"Zero byte rate rejected");
+    check(!capturePacketStartHns(1,1920,10000000,100000,1920,192000,stamp),"Unbounded fractional time rejected");
+    check(!capturePacketStartHns(2,1919,0,100000,1920,192000,stamp),"Packet ahead of DMA rejected");
+    check(!capturePacketStartHns(1,1920,0,99999,1920,192000,stamp),"Correlation subtraction cannot underflow");
+    check(!capturePacketStartHns(~uint64_t(0),0,0,0,1920,192000,stamp),"Packet start multiplication cannot overflow");
+    check(!capturePacketStartHns(1,~uint64_t(0),0,0,1,1,stamp),"Packet age scaling cannot overflow");
+    check(hnsToQpc(100000,10000000,stamp)&&stamp==100000,"10MHz QPC conversion is exact");
+    check(hnsToQpc(200001,24000000,stamp)&&stamp==480002,"Non-10MHz QPC conversion rounds once");
+    const uint64_t longTime=10000000000000ull;
+    check(hnsToQpc(longTime,24000000,stamp)&&stamp==24000000000000ull,"Long QPC conversion avoids intermediate product overflow");
+    stamp=123;
+    check(!hnsToQpc(1,0,stamp)&&stamp==123,"Invalid frequency leaves output unchanged");
+    check(!hnsToQpc(1,~uint64_t(0),stamp),"Unbounded QPC frequency rejected");
+    check(!hnsToQpc(~uint64_t(0),24000000,stamp),"QPC result overflow rejected");
 }
 static void reserveAndDrift(uint64_t producer_period,bool jitter){
     ses_driver::PcmRing ring;SesDriverHello hello{1,sizeof(hello),48000,1,32,480};

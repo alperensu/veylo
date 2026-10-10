@@ -94,6 +94,20 @@ def stream(s):
 
 '''+s[b:]
     s=replace_required(s,'        _this->m_llPacketCounter++;','        _this->m_llPacketCounter+=static_cast<LONGLONG>(completedIntervals);')
+    a=s.index('    // Compute and return timestamp corresponding to the end of the available packet.')
+    b=s.index('    *PerformanceCounterValue = timeOfAvailablePacketInQpc;',a)
+    s=s[:a]+'''    // Correlate the first sample of the last completed packet with DMA time.
+    // The WDK contract requires its start time, including across 32-bit wrap.
+    uint64_t firstSampleHns=0,firstSampleQpc=0;
+    if(packetCounter<=0||!ses_driver::capturePacketStartHns(
+        static_cast<uint64_t>(packetCounter),ullLinearPosition,hnsElapsedTimeCarryForward,
+        ullDmaTimeStamp,m_ulDmaBufferSize/m_ulNotificationsPerBuffer,m_ulDmaMovementRate,
+        firstSampleHns)||!ses_driver::hnsToQpc(firstSampleHns,
+        static_cast<uint64_t>(m_ullPerformanceCounterFrequency.QuadPart),firstSampleQpc))
+        return STATUS_INVALID_DEVICE_STATE;
+
+'''+s[b:]
+    s=replace_required(s,'    *PerformanceCounterValue = timeOfAvailablePacketInQpc;','    *PerformanceCounterValue = firstSampleQpc;')
     # DMA progress must follow the 1ms emulation clock even when a client asks
     # for a much larger notification period; otherwise the producer stalls.
     s=replace_required(s,'    _this->UpdatePosition(qpc);','')
@@ -174,4 +188,3 @@ for header in ['EndpointsCommon/minwavert.h','EndpointsCommon/minwavertstream.h'
     edit(header,lambda s:re.sub(r'^(?!\s*(?:return|delete|goto|throw)\b)(\s*[\w:*]+\s+\*?\s*m_\w+(?:\[[^\]\n]+\])?)\s*;',r'\1{};',s,flags=re.M))
 edit('TabletAudioSample/micintoptable.h',lambda s:s.replace('ePortConnJack,','ePortConnIntegratedDevice,'))
 print('Verified and adapted',len(lock['files']),'SYSVAD files; one capture endpoint, no render endpoints')
-
