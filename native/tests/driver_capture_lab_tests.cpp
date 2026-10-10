@@ -119,6 +119,7 @@ bool writeWorkerTimeline(FILE* file,const KernelDiagnosticRecord& record){
         "\"read_contract\":\"after_worker_stop_join_only\","
         "\"timing_effect\":\"extra_worker_QPC_and_queue_samples_until_freeze_bounded_ring_append_and_postjoin_evidence_copies\","
         "\"operation_duration_scope\":\"worker_wall_elapsed_includes_API_wait_and_thread_preemption_not_pure_kernel_execution\","
+        "\"io_phase_scope\":\"observed_API_wall_100ns_includes_preemption_not_kernel_CPU_issue_path_0_absent_1_immediate_success_2_immediate_failure_3_pending_result_path_0_absent_1_success_2_failure_3_incomplete_result_duration_sums_probes_excludes_cancel_grace\","
         "\"deadline_scope\":\"intended_QPC_cadence_deadline_before_SetWaitableTimerEx_not_actual_OS_timer_expiry\","
         "\"wake_lateness_scope\":\"QPC_wake_minus_intended_deadline_includes_prearm_descheduling_API_execution_and_wake_resume_not_only_postexpiry_scheduler_delay\","
         "\"generation_scope\":\"CONNECT_attempt_precedes_CONNECTED_GENERATION_marker_other_events_use_current_successful_connection\","
@@ -140,7 +141,7 @@ bool writeWorkerTimeline(FILE* file,const KernelDiagnosticRecord& record){
             "\"kernel_queued_STATUS_frames\":%u,\"underruns\":%u,"
             "\"upstream_before_frames\":%u,\"upstream_after_frames\":%u,\"gate_open\":%s,\"take\":%u,"
             "\"timer_deadline_available\":%s,\"schedule_sample_100ns\":%llu,\"deadline_100ns\":%llu,"
-            "\"wake_lateness_available\":%s,\"wake_lateness_100ns\":%llu}",
+            "\"wake_lateness_available\":%s,\"wake_lateness_100ns\":%llu",
             i?",":"",workerTraceKind(event.kind),static_cast<unsigned long long>(event.begin100ns),
             static_cast<unsigned long long>(event.end100ns),event.connectionGeneration,event.result,event.waitError,
             event.kernelStatusAvailable?"true":"false",event.upstreamSamplesAvailable?"true":"false",
@@ -148,6 +149,18 @@ bool writeWorkerTimeline(FILE* file,const KernelDiagnosticRecord& record){
             static_cast<uint32_t>(event.take),event.deadlineAvailable?"true":"false",
             static_cast<unsigned long long>(event.scheduleSample100ns),static_cast<unsigned long long>(event.deadline100ns),
             event.wakeLatenessAvailable?"true":"false",static_cast<unsigned long long>(event.wakeLateness100ns))>0&&ok;
+        if(event.kind==ses::WorkerTraceKind::Connect||event.kind==ses::WorkerTraceKind::Status||event.kind==ses::WorkerTraceKind::Write){
+            const auto& phases=event.ioPhases;
+            ok=std::fprintf(file,",\"io_issue_path\":%u,\"io_issue_duration_available\":%s,\"io_issue_100ns\":%llu,"
+                "\"io_wait_observed\":%s,\"io_wait_return\":%u,\"io_wait_duration_available\":%s,\"io_wait_100ns\":%llu,"
+                "\"io_result_calls\":%u,\"io_result_last_path\":%u,\"io_result_duration_available\":%s,\"io_result_sum_100ns\":%llu",
+                static_cast<unsigned>(phases.issuePath),(phases.observations&ses::DriverIoPhases::issueAvailable)?"true":"false",
+                static_cast<unsigned long long>(phases.issue100ns),(phases.observations&ses::DriverIoPhases::waitAttempted)?"true":"false",
+                phases.waitReturn,(phases.observations&ses::DriverIoPhases::waitAvailable)?"true":"false",
+                static_cast<unsigned long long>(phases.wait100ns),static_cast<unsigned>(phases.resultCalls),static_cast<unsigned>(phases.resultPath),
+                (phases.observations&ses::DriverIoPhases::resultAvailable)?"true":"false",static_cast<unsigned long long>(phases.result100ns))>0&&ok;
+        }
+        ok=std::fprintf(file,"}")>0&&ok;
     }
     return std::fprintf(file,"]}")>0&&ok;
 }
@@ -1651,6 +1664,10 @@ void extendedSelfTest(Report& r) {
     ses::WorkerTraceEvent traceEvent{};traceEvent.kind=ses::WorkerTraceKind::Status;
     traceEvent.begin100ns=123456789012345671ULL;traceEvent.end100ns=123456789012345672ULL;
     traceEvent.kernelStatusAvailable=true;traceEvent.kernelQueued=3;traceEvent.underruns=10;
+    traceEvent.ioPhases.issuePath=ses::DriverIssuePath::Pending;traceEvent.ioPhases.issue100ns=12;
+    traceEvent.ioPhases.waitReturn=WAIT_FAILED;traceEvent.ioPhases.wait100ns=34;
+    traceEvent.ioPhases.resultCalls=2;traceEvent.ioPhases.resultPath=ses::DriverResultPath::Failure;
+    traceEvent.ioPhases.result100ns=56;traceEvent.ioPhases.observations=15;
     timelineRecord.timeline.append(traceEvent);timelineRecord.timeline.observeUnderruns(10,traceEvent.end100ns);
     timelineRecord.timeline.stopped(traceEvent.end100ns+1);
     FILE* timelineFile=std::tmpfile();bool timelineSerialized=false;
@@ -1667,6 +1684,10 @@ void extendedSelfTest(Report& r) {
             std::strstr(text.data(),"\"schedule_sample_100ns\":")&&!std::strstr(text.data(),"\"arm_100ns\":")&&
             std::strstr(text.data(),"intended_QPC_cadence_deadline_before_SetWaitableTimerEx_not_actual_OS_timer_expiry")&&
             std::strstr(text.data(),"includes_prearm_descheduling_API_execution_and_wake_resume")&&
+            std::strstr(status,"\"io_issue_path\":3,\"io_issue_duration_available\":true,\"io_issue_100ns\":12")&&
+            std::strstr(status,"\"io_wait_observed\":true,\"io_wait_return\":4294967295,\"io_wait_duration_available\":true,\"io_wait_100ns\":34")&&
+            std::strstr(status,"\"io_result_calls\":2,\"io_result_last_path\":2,\"io_result_duration_available\":true,\"io_result_sum_100ns\":56")&&
+            std::strstr(text.data(),"result_duration_sums_probes_excludes_cancel_grace")&&
             std::strstr(text.data(),"\"time_units\":\"100ns\"");
         std::fclose(timelineFile);
     }
@@ -1675,7 +1696,7 @@ void extendedSelfTest(Report& r) {
     timelineFile=std::tmpfile();bool disabledSerialized=false;
     if(timelineFile){
         const bool written=writeWorkerTimeline(timelineFile,timelineRecord);std::fflush(timelineFile);std::rewind(timelineFile);
-        std::array<char,2048> text{};const auto bytes=std::fread(text.data(),1,text.size()-1,timelineFile);
+        std::array<char,4096> text{};const auto bytes=std::fread(text.data(),1,text.size()-1,timelineFile);
         disabledSerialized=written&&bytes>0&&std::strstr(text.data(),"\"available\":false")&&
             std::strstr(text.data(),"\"count\":0")&&std::strstr(text.data(),"\"events\":[]")&&
             !std::strstr(text.data(),"\"kind\":");std::fclose(timelineFile);
@@ -1689,6 +1710,9 @@ void extendedSelfTest(Report& r) {
         record.timeline.connected(1,7);
         for(size_t i=0;i<ses::WorkerTrace::capacity+1;++i){
             traceEvent={};traceEvent.kind=ses::WorkerTraceKind::Status;
+            traceEvent.ioPhases.issuePath=ses::DriverIssuePath::Pending;traceEvent.ioPhases.resultPath=ses::DriverResultPath::Success;
+            traceEvent.ioPhases.issue100ns=traceEvent.ioPhases.wait100ns=traceEvent.ioPhases.result100ns=UINT64_MAX;
+            traceEvent.ioPhases.waitReturn=WAIT_TIMEOUT;traceEvent.ioPhases.resultCalls=2;traceEvent.ioPhases.observations=15;
             traceEvent.begin100ns=2+i*2;traceEvent.end100ns=3+i*2;record.timeline.append(traceEvent);
         }
         record.timeline.observeUnderruns(8,traceEvent.end100ns);record.timeline.stopped(traceEvent.end100ns+1);

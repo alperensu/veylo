@@ -1,3 +1,31 @@
+# Opt-in driver I/O phase observations — 2026-10-10
+
+Passed: lab-only worker events now distinguish DeviceIoControl issue wall
+time, a pending completion wait and the sum of GetOverlappedResult probes.
+Immediate success/failure versus ERROR_IO_PENDING, raw wait return, result
+call count and last result path are separate from timing availability.
+Win32 failure codes are captured before optional clock calls. Missing,
+backward or overflowing measurements are unavailable, not an I/O failure.
+Cancellation/grace is outside the result-duration sum. These are API wall
+intervals including thread preemption, not kernel CPU execution time.
+The default path makes no added phase clock calls. The 128-event trace stays
+below 16 KiB and three maximum-width JSON histories stay below 1 MiB.
+No kernel binary, IOCTL, protocol 1, ABI 5, reserve or acceptance gate changed.
+
+Passed: all eight Release groups (16.51 seconds) and eight ASan groups
+(17.89 seconds); 626 deterministic driver-I/O checks, 120,840 portable
+validation checks and 81 offline analyzer checks. Independent read-only Sol
+correctness and security reviews passed with no scoped findings. The normal
+product build and offline JSON parsing passed; the offline analyzer did not
+run active capture. Staged tool SHA256:
+3e8c9e7137f18dd96cba9e820ef9e46010518c4e19783781eac71def097b87ac.
+The installed driver package SYS remains
+77e13a0e6391cdeec9f783fb8b94f753281136d7e2d8365829bbb8dc459a341a.
+
+Live phase-instrumented acceptance is pending. No underrun fix, completed
+hour, physical audio/performance, HVCI or production signing is claimed by
+these source/offline checks. [Measurement contract](DRIVER-ACCEPTANCE.md).
+
 # Opt-in bridge worker event history — 2026-10-10
 
 Passed: a preallocated 128-event worker-owned numeric history labels CONNECT,

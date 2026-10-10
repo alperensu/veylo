@@ -277,4 +277,15 @@ cadence noktasıdır; gerçek Windows timer kurulma/sona erme zamanı değildir.
 Gözlenen deadline gecikmesi, timer kurulmadan önce iş parçacığının çalıştırılmadığı
 süreyi, çağrı yürütmesini ve beklemeden dönüş gecikmesini de içerebilir.
 
+IOCTL olaylarında `DeviceIoControl` çağrısı, pending tamamlama beklemesi ve
+`GetOverlappedResult` yoklamalarının toplam süresi ayrı alanlarda gösterilir.
+İstek hemen başarı/hata ile döndü mü, `ERROR_IO_PENDING` mi verdi ve bekleme
+hangi kodla döndü, ölçüm kullanılabilirliğinden bağımsız olarak belirtilir.
+Birden fazla sonuç yoklamasında süre toplamı ve son yoklamanın sonucu saklanır;
+iptal/grace beklemesi bu toplamın dışındadır. Saat örneği başarısız, geriye giden
+veya toplam taşan durumda ilgili süre kullanılabilir gösterilmez; I/O sonucu
+ve hata kodu ölçüm yüzünden değiştirilmez. Bu alt süreler de API yürütmesi ve
+iş parçacığının çalıştırılmadığı süreyi kapsar; kernel CPU süresi değildir.
+Varsayılan akışta ek faz saat örneklemesi yoktur.
+
 [Güncel sonuçlar](VALIDATION.md) · [Kabul durumu](ACCEPTANCE.md)

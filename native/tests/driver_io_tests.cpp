@@ -14,7 +14,7 @@ static void check(bool ok,const char* name){++checks;if(!ok){std::fprintf(stderr
 // Windows events are real; every device/IOCTL leaf is fake. This executable
 // never opens a driver path, installs a device, or accesses the registry.
 struct FakeApi {
-    enum class Mode { Immediate, Pending, Abort, Never, CancelRace, WrongBytes, Failure, CancelFailure };
+    enum class Mode { Immediate, Pending, Abort, Never, CancelRace, WrongBytes, Failure, CancelFailure, PendingReady, SpuriousReady, WaitFailure };
     inline static Mode mode=Mode::Immediate;
     inline static std::mutex mutex;
     inline static unsigned created=0,closed=0,cancels=0,issues=0;
@@ -40,6 +40,8 @@ struct FakeApi {
         input=in;inputBytes=inBytes;output=out;outputBytes=outBytes;returned=bytes;ov=overlapped;completionError=0;
         if(mode==Mode::Failure){pending=false;SetLastError(ERROR_ACCESS_DENIED);return FALSE;}
         if(mode==Mode::Immediate||mode==Mode::WrongBytes){completeLocked();if(mode==Mode::WrongBytes)*bytes=outBytes?outBytes-1:1;return TRUE;}
+        if(mode==Mode::PendingReady){completeLocked();SetLastError(ERROR_IO_PENDING);return FALSE;}
+        if(mode==Mode::SpuriousReady){pending=true;SetEvent(ov->hEvent);SetLastError(ERROR_IO_PENDING);return FALSE;}
         pending=true;if(issueSignal)SetEvent(issueSignal);SetLastError(ERROR_IO_PENDING);return FALSE;
     }
     static BOOL result(HANDLE,OVERLAPPED* overlapped,DWORD* bytes){
@@ -57,12 +59,82 @@ struct FakeApi {
         if(mode!=Mode::Never)completeLocked(ERROR_OPERATION_ABORTED);
         return TRUE;
     }
-    static DWORD wait(HANDLE stop,HANDLE event,DWORD ms){HANDLE handles[]{stop,event};return WaitForMultipleObjects(2,handles,FALSE,ms);}
+    static DWORD wait(HANDLE stop,HANDLE event,DWORD ms){
+        if(mode==Mode::WaitFailure){SetLastError(ERROR_INVALID_HANDLE);return WAIT_FAILED;}
+        HANDLE handles[]{stop,event};return WaitForMultipleObjects(2,handles,FALSE,ms);
+    }
     static DWORD grace(HANDLE event,DWORD ms){return WaitForSingleObject(event,ms);}
 };
 using Io=ses::BoundedDriverIo<FakeApi>;
 struct Stop {HANDLE h=CreateEventW(nullptr,TRUE,FALSE,nullptr);~Stop(){CloseHandle(h);}};
 static void attach(Io& io){check(io.open(),"Acquire process lease and stable request");const HANDLE device=FakeApi::event();check(device!=nullptr,"Create private fake device token");io.attach(device);}
+struct PhaseClock {
+    inline static std::array<uint64_t,8> ticks{10,20,30,60,70,90,100,120};
+    inline static unsigned calls=0,failAt=99;
+    static void reset(){ticks={10,20,30,60,70,90,100,120};calls=0;failAt=99;}
+    static bool read(uint64_t& value){
+        const unsigned index=calls++;
+        SetLastError(ERROR_CRC); // QPC/custom observers must not replace an I/O failure.
+        value=index<ticks.size()?ticks[index]:0;
+        return index<ticks.size()&&index!=failAt;
+    }
+};
+static void phaseObservations(){
+    using ses::DriverIoPhases;using ses::DriverIssuePath;using ses::DriverResultPath;
+    Stop stop;Io io;attach(io);std::array<unsigned char,48> output{};DriverIoPhases phases;
+    auto call=[&]{return io.call(stop.h,SES_IOCTL_STATUS,nullptr,0,output.data(),48,&phases,PhaseClock::read);};
+    FakeApi::mode=FakeApi::Mode::Immediate;PhaseClock::reset();
+    check(io.call(stop.h,SES_IOCTL_STATUS,nullptr,0,output.data(),48,nullptr,PhaseClock::read)&&PhaseClock::calls==0,
+        "Disabled phase observer invokes no clock even with an injected observer function");
+    check(call()&&PhaseClock::calls==2&&phases.issuePath==DriverIssuePath::ImmediateSuccess&&
+        phases.issue100ns==10&&phases.observations==DriverIoPhases::issueAvailable&&
+        phases.waitReturn==WAIT_FAILED&&phases.resultCalls==0&&phases.resultPath==DriverResultPath::NotAttempted,
+        "Immediate issue records only its wall duration and explicitly absent wait/result");
+    FakeApi::mode=FakeApi::Mode::WrongBytes;PhaseClock::reset();output.fill(0x33);
+    check(!call()&&io.error()==ERROR_INVALID_DATA&&output.front()==0x33&&phases.issuePath==DriverIssuePath::ImmediateSuccess,
+        "Successful API issue with wrong output size remains invalid without publishing data");
+    FakeApi::mode=FakeApi::Mode::Failure;PhaseClock::reset();
+    check(!call()&&io.error()==ERROR_ACCESS_DENIED&&phases.issuePath==DriverIssuePath::ImmediateFailure&&PhaseClock::calls==2,
+        "Immediate failure saves its LastError before observer clock clobbers it");
+    FakeApi::mode=FakeApi::Mode::PendingReady;PhaseClock::reset();
+    check(call()&&PhaseClock::calls==6&&phases.issuePath==DriverIssuePath::Pending&&phases.issue100ns==10&&
+        phases.waitReturn==WAIT_OBJECT_0+1&&phases.wait100ns==30&&phases.result100ns==20&&phases.resultCalls==1&&
+        phases.resultPath==DriverResultPath::Success&&phases.observations==15,
+        "Pending path records raw completion wait and a separate successful result probe");
+    FakeApi::mode=FakeApi::Mode::SpuriousReady;PhaseClock::reset();
+    check(!call()&&io.error()==ERROR_TIMEOUT&&!io.fatal()&&PhaseClock::calls==8&&phases.resultCalls==2&&
+        phases.result100ns==40&&phases.resultPath==DriverResultPath::Failure,
+        "Incomplete completion signal records both result probes while retaining cancellation behavior");
+    FakeApi::mode=FakeApi::Mode::WaitFailure;PhaseClock::reset();
+    check(!call()&&io.error()==ERROR_INVALID_HANDLE&&!io.fatal()&&phases.waitReturn==WAIT_FAILED&&phases.resultCalls==1,
+        "Failed pending wait retains its original error across clock and cancellation/result phases");
+    SetEvent(stop.h);FakeApi::mode=FakeApi::Mode::CancelRace;PhaseClock::reset();
+    check(!call()&&io.error()==ERROR_OPERATION_ABORTED&&!io.fatal()&&phases.waitReturn==WAIT_OBJECT_0&&
+        phases.resultPath==DriverResultPath::Success&&phases.resultCalls==1,
+        "Successful completion during cancellation remains aborted with observed stop and result phases");
+    ResetEvent(stop.h);FakeApi::mode=FakeApi::Mode::Abort;PhaseClock::reset();
+    check(!call()&&io.error()==ERROR_TIMEOUT&&!io.fatal()&&phases.waitReturn==WAIT_TIMEOUT&&phases.resultPath==DriverResultPath::Failure,
+        "Deadline timeout records a timeout wait without changing terminal cancellation ownership");
+    FakeApi::mode=FakeApi::Mode::Failure;PhaseClock::reset();PhaseClock::failAt=0;
+    check(!call()&&io.error()==ERROR_ACCESS_DENIED&&phases.issue100ns==0&&phases.observations==0,
+        "Clock sampling failure marks duration unavailable without replacing API failure");
+    FakeApi::mode=FakeApi::Mode::Immediate;PhaseClock::reset();PhaseClock::ticks[0]=20;PhaseClock::ticks[1]=10;
+    check(call()&&io.error()==ERROR_SUCCESS&&phases.observations==0&&phases.issue100ns==0,
+        "Backward clock marks duration unavailable while preserving successful returned data");
+    FakeApi::mode=FakeApi::Mode::PendingReady;PhaseClock::reset();PhaseClock::failAt=5;
+    check(call()&&phases.resultCalls==1&&phases.resultPath==DriverResultPath::Success&&
+        !(phases.observations&DriverIoPhases::resultAvailable)&&phases.result100ns==0,
+        "Failed result end sample cannot invent a zero-duration successful measurement");
+    FakeApi::mode=FakeApi::Mode::SpuriousReady;PhaseClock::reset();PhaseClock::ticks={0,0,0,0,0,UINT64_MAX,0,1};
+    check(!call()&&io.error()==ERROR_TIMEOUT&&phases.resultCalls==2&&phases.result100ns==0&&
+        !(phases.observations&DriverIoPhases::resultAvailable),"Overflow in summed result elapsed marks measurement unavailable");
+    uint64_t converted=0;
+    check(!ses::WorkerCadence::qpcToHns(UINT64_MAX,1,converted)&&!ses::WorkerCadence::qpcToHns(1,0,converted),
+        "Phase clock conversion rejects overflow and invalid frequency");
+    PhaseClock::reset();const unsigned issued=FakeApi::issues;
+    check(!io.call(stop.h,SES_IOCTL_STATUS,nullptr,0,nullptr,48,&phases,PhaseClock::read)&&FakeApi::issues==issued&&
+        phases.issuePath==DriverIssuePath::NotAttempted&&PhaseClock::calls==0,"Invalid request has no attempted phase or observer calls");
+}
 static void immediateAndValidation(){
     Stop stop;Io io;attach(io);
     std::array<unsigned char,48> output{};
@@ -192,7 +264,11 @@ static void neverCompletes(){
     std::thread worker([&]{
         Io io;attach(io);
         SesDriverHello hello{1,sizeof(hello),48000,1,32,480};SesDriverStatus output{};
-        check(!io.call(stop.h,SES_IOCTL_CONNECT,&hello,sizeof(hello),&output,sizeof(output)),"Never-completing cancellation returns to caller");
+        ses::DriverIoPhases phases;PhaseClock::reset();
+        check(!io.call(stop.h,SES_IOCTL_CONNECT,&hello,sizeof(hello),&output,sizeof(output),&phases,PhaseClock::read),"Never-completing cancellation returns to caller");
+        check(phases.issuePath==ses::DriverIssuePath::Pending&&phases.resultCalls==1&&
+            phases.resultPath==ses::DriverResultPath::Incomplete&&phases.waitReturn==WAIT_OBJECT_0,
+            "Quarantined cancellation preserves pending/stop/incomplete phase evidence");
         check(io.fatal()&&io.error()==ERROR_TIMEOUT&&Io::poisoned(),"Fatal timeout is latched process-wide");
         check(!io.connected(),"Fatal worker relinquishes pending request to quarantine");
         check(output.version==0,"Uncompleted output never escapes into stack caller");
@@ -216,4 +292,4 @@ static void neverCompletes(){
     Io blocked;check(!blocked.open()&&blocked.fatal(),"Late completion never automatically reattaches poisoned process");
     std::printf("Cancellation grace measured under1000ms; retained exactly one request and two private handles until process exit\n");
 }
-int main(){immediateAndValidation();diagnosticOutput();pendingAndCancellation();repeatAndLease();uncompletedDiagnostic();neverCompletes();std::printf("%u offline bounded driver I/O checks passed; no kernel driver opened\n",checks.load());}
+int main(){immediateAndValidation();diagnosticOutput();pendingAndCancellation();phaseObservations();repeatAndLease();uncompletedDiagnostic();neverCompletes();std::printf("%u offline bounded driver I/O checks passed; no kernel driver opened\n",checks.load());}

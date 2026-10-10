@@ -50,10 +50,13 @@ class DriverBridge {
     }
     bool call(BoundedDriverIo<>& io,DWORD code,const void* input,DWORD in,void* output,DWORD out){
         const uint64_t begin=qpc100ns();
-        const bool ok=io.call(stopEvent,code,input,in,output,out);
+        const bool tracing=trace.recording();
+        DriverIoPhases phases{};
+        const bool ok=io.call(stopEvent,code,input,in,output,out,tracing?&phases:nullptr);
         const uint64_t end=qpc100ns(),duration=end-begin;
         if(trace.recording()){
             WorkerTraceEvent event{};event.begin100ns=begin;event.end100ns=end;
+            event.ioPhases=phases;
             event.kind=code==SES_IOCTL_WRITE?WorkerTraceKind::Write:code==SES_IOCTL_CONNECT?WorkerTraceKind::Connect:WorkerTraceKind::Status;
             event.result=ok?ERROR_SUCCESS:io.error();
             if(ok&&output&&(code==SES_IOCTL_STATUS||code==SES_IOCTL_CONNECT)){

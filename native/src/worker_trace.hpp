@@ -2,6 +2,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include "driver_io_phases.hpp"
 
 namespace ses {
 enum class WorkerTraceKind : std::uint32_t { Connect=1, Status=2, Write=3, Dequeue=4, Wait=5, Connection=6 };
@@ -18,6 +19,7 @@ struct WorkerTraceEvent {
     WorkerTraceTake take=WorkerTraceTake::NotAttempted;
     bool gateOpen=false,deadlineAvailable=false,wakeLatenessAvailable=false;
     bool kernelStatusAvailable=false,upstreamSamplesAvailable=false;
+    DriverIoPhases ioPhases{};
 };
 // Exactly one worker mutates this ring. Readers must obtain a copy after join;
 // completion of an IOCTL/request ticket does not make this storage safe to read.
@@ -89,4 +91,5 @@ public:
     std::uint32_t freezeOldUnderruns()const{return freezeOld_;}
     std::uint32_t freezeNewUnderruns()const{return freezeNew_;}
 };
+static_assert(sizeof(WorkerTrace)<16384,"Worker evidence must retain its bounded copy/stack footprint");
 }
